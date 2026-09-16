@@ -1,36 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Agent Village
 
-## Getting Started
+Maya is the default engineering lead in the Telegram bot. In a direct chat with the bot, you can also address [Theo](lib/theo.ts) (architect), [Sam](lib/sam.ts) (builder), [Quinn](lib/quinn.ts) (reviewer), or [Susie](lib/susie.ts) (product designer) with a command at the start of a message:
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```text
+/theo Define the auth boundary
+/sam Sketch the smallest implementation
+/quinn Review these acceptance criteria
+/susie Improve this onboarding flow
+/maya Help me scope the release
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Messages without a command go to Maya. A command by itself returns usage guidance. Each question makes one independent OpenAI Responses API request, and the answer goes back to the same Telegram chat. Model answers from the other personas include their names so you know who answered.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Run locally
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Use Node.js 24 and install dependencies with `npm ci`. Create `.env.local` with:
 
-## Learn More
+```env
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_WEBHOOK_SECRET=your-telegram-webhook-secret
+OPENAI_API_KEY=your-openai-api-key
+TELEGRAM_ALLOWED_USER_ID=your-numeric-telegram-user-id
+# Optional. Defaults to gpt-4.1-mini.
+OPENAI_MODEL=gpt-4.1-mini
+```
 
-To learn more about Next.js, take a look at the following resources:
+Run `npm run dev`. Telegram needs a public HTTPS webhook, so local testing requires a tunnel or a Vercel deployment. Add the same environment variables to Vercel and register `https://YOUR-DOMAIN/api/telegram` as the bot webhook with the matching `secret_token`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The bot has no conversation memory, repository access, coding tools, or ability to delegate yet. These personas are conversational specialists, not autonomous workers. Their instructions tell them not to claim capabilities they do not have. OpenAI response storage is disabled with `store: false`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The webhook accepts model requests only from `TELEGRAM_ALLOWED_USER_ID` in a private chat. It silently ignores other senders and group messages. If the ID is missing, the bot ignores all normal messages. To set it up, deploy the webhook without the ID, send `/whoami` in your private bot chat, then add the returned ID to `.env.local` and the Vercel Production environment and redeploy. `/whoami` does not call the model. Keep the webhook secret configured as well; it authenticates Telegram's delivery, while the user ID restricts who can use the bot.
 
-## Deploy on Vercel
+## Check changes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm test
+npm run lint
+npm run build
+```
