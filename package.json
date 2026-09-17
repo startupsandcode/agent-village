@@ -7,8 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test": "node --test app/api/telegram/route.test.ts"
+    "lint": "eslint"
   },
   "dependencies": {
     "next": "16.3.5",

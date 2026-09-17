@@ -1,40 +1,40 @@
 # Agent Village
 
-Maya is the default engineering lead in the Telegram bot. In a direct chat with the bot, you can also address [Theo](lib/theo.ts) (architect), [Sam](lib/sam.ts) (builder), [Quinn](lib/quinn.ts) (reviewer), or [Susie](lib/susie.ts) (product designer) with a command at the start of a message:
+Agent Village is a repo based workflow for managing software work with Codex. GitHub Issues holds the ticket queue; Codex in VS Code is the working surface. The main Codex conversation coordinates specialized agents for architecture, implementation, review, and product design when a task benefits from them.
+
+The GitHub Issues and Codex workflow requires no running service, webhook, Vercel deployment, or API keys. The earlier Next.js proof of concept remains in the repo for now, but its Telegram endpoint has been removed.
+
+## Start here
+
+1. Open this repository in VS Code with the Codex extension.
+2. Connect to GitHub for issue and pull request work. If you use the GitHub CLI, sign in with `gh auth login`.
+3. Describe a piece of work to Codex and ask it to draft a GitHub Issue from the [work item template](.github/ISSUE_TEMPLATE/work-item.md).
+4. Once the issue is ready, ask Codex to work on its number. Review the branch, verification evidence, and linked pull request before merging.
+
+For example:
 
 ```text
-/theo Define the auth boundary
-/sam Sketch the smallest implementation
-/quinn Review these acceptance criteria
-/susie Improve this onboarding flow
-/maya Help me scope the release
+Draft a GitHub Issue for this request. Make the outcome and acceptance criteria concrete before creating it: ...
+
+Work on issue #12. Read its acceptance criteria, inspect the relevant code, make the smallest change on a branch, verify it, and prepare a PR linked to the issue. Ask Theo or Susie for input only if the design needs it; ask Quinn to review the result.
 ```
 
-Messages without a command go to Maya. A command by itself returns usage guidance. Each question makes one independent OpenAI Responses API request, and the answer goes back to the same Telegram chat. Model answers from the other personas include their names so you know who answered.
+## Agents
 
-## Run locally
+The project scoped definitions in [`.codex/agents/`](.codex/agents/) are available to Codex as custom agents:
 
-Use Node.js 24 and install dependencies with `npm ci`. Create `.env.local` with:
+| Agent | Focus |
+| --- | --- |
+| Maya | Scope, priorities, and coordination |
+| Theo | Architecture and technical tradeoffs |
+| Sam | Implementation |
+| Quinn | Independent review |
+| Susie | Product design and usability |
 
-```env
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-TELEGRAM_WEBHOOK_SECRET=your-telegram-webhook-secret
-OPENAI_API_KEY=your-openai-api-key
-TELEGRAM_ALLOWED_USER_ID=your-numeric-telegram-user-id
-# Optional. Defaults to gpt-4.1-mini.
-OPENAI_MODEL=gpt-4.1-mini
-```
+These agents are invoked from a Codex task. They do not watch GitHub Issues or run on a schedule. The shared working rules are in [AGENTS.md](AGENTS.md).
 
-Run `npm run dev`. Telegram needs a public HTTPS webhook, so local testing requires a tunnel or a Vercel deployment. Add the same environment variables to Vercel and register `https://YOUR-DOMAIN/api/telegram` as the bot webhook with the matching `secret_token`.
+## Reuse for a client
 
-The bot has no conversation memory, repository access, coding tools, or ability to delegate yet. These personas are conversational specialists, not autonomous workers. Their instructions tell them not to claim capabilities they do not have. OpenAI response storage is disabled with `store: false`.
+Fork or copy the repo, adapt `AGENTS.md` and the agent definitions to the client's delivery process, and use that repo's GitHub Issues for its queue. Keep client credentials and project data in the client's own environment. Add automation only after the manual issue-to-PR loop works reliably for that team.
 
-The webhook accepts model requests only from `TELEGRAM_ALLOWED_USER_ID` in a private chat. It silently ignores other senders and group messages. If the ID is missing, the bot ignores all normal messages. To set it up, deploy the webhook without the ID, send `/whoami` in your private bot chat, then add the returned ID to `.env.local` and the Vercel Production environment and redeploy. `/whoami` does not call the model. Keep the webhook secret configured as well; it authenticates Telegram's delivery, while the user ID restricts who can use the bot.
-
-## Check changes
-
-```bash
-npm test
-npm run lint
-npm run build
-```
+The earlier Telegram bot is a proof of concept and is not part of the current workflow. Its persona prompts remain in `lib/` as historical material; the active Codex definitions are in `.codex/agents/`.
