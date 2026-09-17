@@ -16,12 +16,12 @@ For example:
 ```text
 Maya, help me turn this request into a GitHub Issue. Make the outcome and acceptance criteria concrete before creating it: ...
 
-Maya, coordinate issue #12. Read its acceptance criteria, inspect the relevant code, make the smallest change on a branch, verify it, and prepare a PR linked to the issue. Ask Theo or Susie for input only if the design needs it; ask Quinn to review the result.
+Maya, coordinate issue #12. Read its acceptance criteria, give Sam a bounded implementation task if this is a substantive code issue, integrate and verify the result, and prepare a PR linked to the issue. Bring in Theo or Susie when relevant, and have Quinn independently review the code change before merge.
 ```
 
 ## Agents
 
-Maya is the default lead because [AGENTS.md](AGENTS.md) instructs the primary Codex conversation. The project scoped definitions in [`.codex/agents/`](.codex/agents/) are optional custom agents:
+Maya is the default lead because [AGENTS.md](AGENTS.md) instructs the primary Codex conversation. The project scoped definitions in [`.codex/agents/`](.codex/agents/) are specialist agents:
 
 | Agent | Focus |
 | --- | --- |
@@ -30,7 +30,7 @@ Maya is the default lead because [AGENTS.md](AGENTS.md) instructs the primary Co
 | Quinn | Independent review |
 | Susie | Product design and usability |
 
-Ask Maya to delegate a focused task to one of these agents when useful. They do not watch GitHub Issues or run on a schedule.
+For substantive code issues, Maya delegates a bounded implementation task to Sam and requests Quinn's independent review before merge. Theo and Susie join when architecture or product design calls for them. Maya remains accountable for the result. Agents do not watch GitHub Issues or run on a schedule.
 
 ## Reuse for a client
 
