@@ -2,7 +2,7 @@
 
 Agent Village is a repo based workflow for managing software work with Codex. GitHub Issues holds the ticket queue; Codex in VS Code is the working surface. The main Codex conversation acts as Maya, the engineering lead, and coordinates specialized agents for architecture, implementation, review, and product design when a task benefits from them.
 
-The workflow runs in VS Code with Codex and GitHub access. There is no application to install, build, or host.
+The workflow runs in VS Code with Codex and GitHub access. There is no application to install, build, or host. The former Vercel project is disconnected from this repository, so pushes do not deploy a site.
 
 ## Start here
 
