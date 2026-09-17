@@ -2,7 +2,7 @@
 
 Agent Village is a repo based workflow for managing software work with Codex. GitHub Issues holds the ticket queue; Codex in VS Code is the working surface. The main Codex conversation acts as Maya, the engineering lead, and coordinates specialized agents for architecture, implementation, review, and product design when a task benefits from them.
 
-The GitHub Issues and Codex workflow requires no running service, webhook, Vercel deployment, or API keys. The earlier Next.js proof of concept remains in the repo for now, but its Telegram endpoint has been removed.
+The workflow runs in VS Code with Codex and GitHub access. There is no application to install, build, or host.
 
 ## Start here
 
@@ -36,4 +36,4 @@ Ask Maya to delegate a focused task to one of these agents when useful. They do 
 
 Fork or copy the repo, adapt `AGENTS.md` and the agent definitions to the client's delivery process, and use that repo's GitHub Issues for its queue. Keep client credentials and project data in the client's own environment. Add automation only after the manual issue-to-PR loop works reliably for that team.
 
-The earlier Telegram bot is a proof of concept and is not part of the current workflow. Its persona prompts remain in `lib/` as historical material; the active Codex instructions are in `AGENTS.md` and `.codex/agents/`.
+The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired proof of concept is available in Git history.
