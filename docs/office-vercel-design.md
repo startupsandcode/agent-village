@@ -14,7 +14,7 @@ The local server and CLI check-in flow remain available for local use. Hosted de
 
 ## Credential choice
 
-Use a fine-grained personal access token restricted to the single `agent-village` repository, with **Issues: Read-only** and GitHub's required Metadata read permission. No Contents, Pull requests, or write permission is required for the issue board. Store it as a Sensitive project environment variable named `GITHUB_ISSUES_TOKEN` in the private Vercel project only. Do not put it in the public demo project or a file in this repository. A GitHub App can replace the token when there are multiple repositories, customers, or an operational need for short-lived installation tokens.
+Use a fine-grained personal access token restricted to the single `agent-village` repository, with **Issues: Read-only** and GitHub's required Metadata read permission. No Contents, Pull requests, or write permission is required for the issue board. Store it as a Secret project environment variable named `GITHUB_ISSUES_TOKEN` in the private Vercel project only. Do not put it in the public demo project or a file in this repository. A GitHub App can replace the token when there are multiple repositories, customers, or an operational need for short-lived installation tokens.
 
 ## Release checks
 
