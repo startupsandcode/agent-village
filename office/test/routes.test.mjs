@@ -24,14 +24,35 @@ test('anonymous and uninvited office API requests never fetch GitHub', async () 
   }
 });
 
-test('private page returns HTML only after authorization', async () => {
+test('anonymous private page waits for an explicit sign-in and never reads private HTML', async () => {
   let reads = 0;
   const readPage = async () => { reads++; return '<h1>private</h1>'; };
+  const handler = createPrivatePageHandler({ auth: { authorize: () => ({ status: 401 }) }, readPage });
   const denied = response();
-  await createPrivatePageHandler({ auth: { authorize: () => ({ status: 401 }) }, readPage })({ method: 'GET', headers: {} }, denied);
-  assert.equal(denied.statusCode, 302);
-  assert.equal(denied.headers.location, '/api/auth/login');
+  await handler({ method: 'GET', headers: {} }, denied);
+  assert.equal(denied.statusCode, 200);
+  assert.match(denied.headers['content-type'], /^text\/html/);
+  assert.equal(denied.headers['cache-control'], 'no-store');
+  assert.equal(denied.headers['x-content-type-options'], 'nosniff');
+  assert.equal(denied.headers.location, undefined);
+  assert.match(denied.body, /href="\/api\/auth\/login"/);
+  assert.doesNotMatch(denied.body, /private/);
   assert.equal(reads, 0);
+
+  const head = response();
+  await handler({ method: 'HEAD', headers: {} }, head);
+  assert.equal(head.statusCode, 200);
+  assert.match(head.headers['content-type'], /^text\/html/);
+  assert.equal(head.headers['cache-control'], 'no-store');
+  assert.equal(head.headers['x-content-type-options'], 'nosniff');
+  assert.equal(head.headers.location, undefined);
+  assert.equal(head.body, undefined);
+  assert.equal(reads, 0);
+});
+
+test('private page returns private HTML only after authorization', async () => {
+  let reads = 0;
+  const readPage = async () => { reads++; return '<h1>private</h1>'; };
   const allowed = response();
   await createPrivatePageHandler({ auth: { authorize: () => ({ status: 200 }) }, readPage })({ method: 'GET', headers: {} }, allowed);
   assert.equal(allowed.statusCode, 200);
