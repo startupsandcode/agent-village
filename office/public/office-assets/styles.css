@@ -36,6 +36,9 @@ button { font: inherit; }
 .site-header nav a:hover { border-color: var(--coral); }
 .private-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #315e62; white-space: nowrap; }
 .private-badge span { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 4px #dceceb; }
+.logout-form { margin: 0; }
+.logout-button { padding: 9px 13px; border: 1px solid #9bb9bd; border-radius: 999px; background: transparent; color: var(--ink); font-size: 13px; font-weight: 800; white-space: nowrap; cursor: pointer; }
+.logout-button:hover { background: white; }
 
 .intro { display: flex; justify-content: space-between; align-items: end; gap: 48px; padding: 68px 0 64px; }
 .intro-copy { max-width: 760px; }
@@ -158,6 +161,7 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
   .site-header nav { display: none; }
   .private-badge { font-size: 0; gap: 0; }
   .private-badge span { width: 10px; height: 10px; }
+  .logout-button { padding: 8px 11px; font-size: 12px; }
   .intro { display: block; padding: 52px 0 45px; }
   h1 { font-size: clamp(50px, 12vw, 78px); }
   .intro-text { font-size: 16px; }
