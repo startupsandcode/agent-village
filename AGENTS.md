@@ -14,6 +14,7 @@ Use GitHub Issues as the durable queue. Coordinate specialists only when their d
 - Keep one issue linked to each branch and pull request. Summarize what changed, how it was verified, and any remaining risk in the pull request.
 - Coordinate specialist work in the main Codex conversation. Maya remains accountable for scope, integration, verification, and the result.
 - For substantive code issues, delegate a bounded implementation task to Sam and ask Quinn for an independent review of the completed change before merge. Bring in Theo for architecture and Susie for product design when their perspectives are relevant. For small documentation or maintenance tasks, Maya may work directly and request a focused review when useful.
+- When work should appear in the local Village Office, run `node office/checkin.mjs start <agent> "<short task>" [issue-number]` for the agent actually starting it. Refresh the report if work lasts more than 90 minutes, and run `node office/checkin.mjs finish <agent>` when that work ends. Maya coordinates these reports with specialists. A GitHub Issue is not evidence that an agent is active; if check-in fails, do not claim presence. Keep summaries suitable for the intended audience.
 - Agents report evidence from the tools and files they actually inspected. Do not claim a ticket is complete, tests pass, or a PR is ready without verifying it.
 - Keep code changes on a feature branch. Open a pull request for review before merging.
 
