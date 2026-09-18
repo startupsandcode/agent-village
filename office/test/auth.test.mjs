@@ -30,7 +30,7 @@ function makeFetch(nonce, { user = { sub: 'user-123', email: 'invited@example.co
   return { fetchImpl, calls };
 }
 
-test('login uses a fixed callback, PKCE S256, and signed short-lived flow cookie', () => {
+test('login uses a registered callback, PKCE S256, and signed short-lived flow cookie', () => {
   const auth = createAuth({ env, now: () => NOW });
   const { url, cookie } = auth.begin();
   const target = new URL(url);
@@ -45,6 +45,29 @@ test('login uses a fixed callback, PKCE S256, and signed short-lived flow cookie
   assert.equal(flow.state, target.searchParams.get('state'));
   assert.equal(flow.nonce, target.searchParams.get('nonce'));
   assert.equal(target.searchParams.get('code_challenge'), createHash('sha256').update(flow.verifier).digest('base64url'));
+});
+
+test('custom-domain login exchanges the code with its own registered callback', async () => {
+  const first = createAuth({ env, now: () => NOW });
+  const { url, cookie } = first.begin('agent-village.startupsandcode.com');
+  const callback = 'https://agent-village.startupsandcode.com/api/auth/callback';
+  assert.equal(new URL(url).searchParams.get('redirect_uri'), callback);
+  const flow = first.readFlow(cookie.split(';')[0]);
+  const { fetchImpl, calls } = makeFetch(flow.nonce);
+  const auth = createAuth({ env, now: () => NOW, fetchImpl });
+  await auth.complete({ code: 'one-use-code', state: flow.state, cookie, host: 'agent-village.startupsandcode.com' });
+  assert.equal(new URLSearchParams(calls[0].options.body).get('redirect_uri'), callback);
+});
+
+test('OAuth rejects unregistered hosts and a callback on a different host before token exchange', async () => {
+  const first = createAuth({ env, now: () => NOW });
+  assert.throws(() => first.begin('attacker.example'), /host|origin|callback/i);
+  const { cookie } = first.begin('agent-village.startupsandcode.com');
+  const flow = first.readFlow(cookie.split(';')[0]);
+  let called = false;
+  const auth = createAuth({ env, now: () => NOW, fetchImpl: async () => { called = true; } });
+  await assert.rejects(auth.complete({ code: 'code', state: flow.state, cookie, host: 'agent-village-six.vercel.app' }), /host|origin|callback/i);
+  assert.equal(called, false);
 });
 
 test('callback accepts only signed state, valid nonce, and a verified invited email', async () => {

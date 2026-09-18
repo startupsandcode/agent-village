@@ -10,7 +10,7 @@ export function createLoginHandler({ auth = createAuth() } = {}) {
       return;
     }
     try {
-      const { url, cookie } = auth.begin();
+      const { url, cookie } = auth.begin(request.headers?.host);
       response.statusCode = 302;
       response.setHeader('Location', url);
       response.setHeader('Set-Cookie', cookie);

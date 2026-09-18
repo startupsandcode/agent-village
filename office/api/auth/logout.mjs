@@ -1,4 +1,4 @@
-import { clearAuthCookies } from '../../lib/auth.mjs';
+import { clearAuthCookies, officeOriginForHost } from '../../lib/auth.mjs';
 
 export function createLogoutHandler() {
   return function handler(request, response) {
@@ -9,7 +9,9 @@ export function createLogoutHandler() {
       response.end();
       return;
     }
-    if (request.headers?.origin !== 'https://agent-village-six.vercel.app') {
+    let officeOrigin;
+    try { officeOrigin = officeOriginForHost(request.headers?.host); } catch { /* fail closed */ }
+    if (request.headers?.origin !== officeOrigin) {
       response.statusCode = 403;
       response.end();
       return;

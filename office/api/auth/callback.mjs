@@ -14,7 +14,7 @@ export function createCallbackHandler({ auth = createAuth() } = {}) {
     try {
       const params = new URL(request.url, 'https://agent-village-six.vercel.app').searchParams;
       if (params.has('error')) throw new Error('Authorization denied');
-      const result = await auth.complete({ code: params.get('code'), state: params.get('state'), cookie: request.headers?.cookie });
+      const result = await auth.complete({ code: params.get('code'), state: params.get('state'), cookie: request.headers?.cookie, host: request.headers?.host });
       response.statusCode = 302;
       response.setHeader('Set-Cookie', [clearAuthCookies()[0], result.sessionCookie]);
       response.setHeader('Location', '/office');

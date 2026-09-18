@@ -1,6 +1,10 @@
 import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify } from 'node:crypto';
 
-const CALLBACK = 'https://agent-village-six.vercel.app/api/auth/callback';
+const DEFAULT_HOST = 'agent-village-six.vercel.app';
+const OFFICE_ORIGINS = new Map([
+  [DEFAULT_HOST, 'https://agent-village-six.vercel.app'],
+  ['agent-village.startupsandcode.com', 'https://agent-village.startupsandcode.com'],
+]);
 const AUTH_URL = 'https://vercel.com/oauth/authorize';
 const TOKEN_URL = 'https://api.vercel.com/login/oauth/token';
 const USERINFO_URL = 'https://api.vercel.com/login/oauth/userinfo';
@@ -9,6 +13,16 @@ const FLOW_COOKIE = '__Host-office_oauth';
 const SESSION_COOKIE = '__Host-office_session';
 const FLOW_MS = 10 * 60_000;
 const SESSION_MS = 60 * 60_000;
+
+export function officeOriginForHost(host) {
+  const origin = typeof host === 'string' ? OFFICE_ORIGINS.get(host.toLowerCase()) : null;
+  if (!origin) throw new Error('Unregistered office host');
+  return origin;
+}
+
+function callbackForHost(host) {
+  return `${officeOriginForHost(host)}/api/auth/callback`;
+}
 
 function getCookie(header, name) {
   if (typeof header !== 'string') return null;
@@ -86,15 +100,16 @@ async function verifyIdToken(token, expected, fetchImpl, now) {
 }
 
 export function createAuth({ env = process.env, fetchImpl = fetch, now = Date.now } = {}) {
-  function begin() {
+  function begin(host = DEFAULT_HOST) {
     const settings = config(env);
+    const callback = callbackForHost(host);
     const state = randomBytes(32).toString('base64url');
     const nonce = randomBytes(32).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
     const url = new URL(AUTH_URL);
-    for (const [key, value] of Object.entries({ client_id: settings.clientId, redirect_uri: CALLBACK, response_type: 'code', scope: 'openid email', state, nonce, code_challenge: challenge, code_challenge_method: 'S256' })) url.searchParams.set(key, value);
-    return { url: url.toString(), cookie: cookie(FLOW_COOKIE, seal({ state, nonce, verifier, exp: now() + FLOW_MS }, settings.signingSecret), 600) };
+    for (const [key, value] of Object.entries({ client_id: settings.clientId, redirect_uri: callback, response_type: 'code', scope: 'openid email', state, nonce, code_challenge: challenge, code_challenge_method: 'S256' })) url.searchParams.set(key, value);
+    return { url: url.toString(), cookie: cookie(FLOW_COOKIE, seal({ state, nonce, verifier, callback, exp: now() + FLOW_MS }, settings.signingSecret), 600) };
   }
 
   function readFlow(header) {
@@ -104,11 +119,13 @@ export function createAuth({ env = process.env, fetchImpl = fetch, now = Date.no
     return flow;
   }
 
-  async function complete({ code, state, cookie: cookieHeader }) {
+  async function complete({ code, state, cookie: cookieHeader, host = DEFAULT_HOST }) {
     const settings = config(env);
     const flow = readFlow(cookieHeader);
     if (typeof code !== 'string' || !code || !equal(state, flow.state)) throw new Error('Invalid OAuth state');
-    const tokenResponse = await fetchImpl(TOKEN_URL, { method: 'POST', body: new URLSearchParams({ grant_type: 'authorization_code', client_id: settings.clientId, client_secret: settings.clientSecret, code, code_verifier: flow.verifier, redirect_uri: CALLBACK }) });
+    const callback = callbackForHost(host);
+    if (flow.callback !== callback) throw new Error('Invalid OAuth callback host');
+    const tokenResponse = await fetchImpl(TOKEN_URL, { method: 'POST', body: new URLSearchParams({ grant_type: 'authorization_code', client_id: settings.clientId, client_secret: settings.clientSecret, code, code_verifier: flow.verifier, redirect_uri: callback }) });
     if (!tokenResponse.ok) throw new Error('Invalid authorization code');
     const tokens = await tokenResponse.json();
     if (typeof tokens.access_token !== 'string' || !tokens.access_token) throw new Error('Invalid access token');
