@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#dcecef" />
-    <meta name="description" content="A clear view of reported agent activity and the Agent Village task queue." />
-    <title>Village Office · Agent Village</title>
+    <meta name="description" content="Explore a Village Office demo with synthetic agents and issues. No private GitHub data is shown." />
+    <title>Village Office Demo · Agent Village</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main">Skip to office</a>
+    <a class="skip-link" href="#main">Skip to main content</a>
     <div class="site-shell">
       <header class="site-header">
         <a class="brand" href="/" aria-label="Agent Village office home">
@@ -22,19 +22,23 @@
           <a href="#work-board">Work board</a>
           <a href="#office">Office</a>
         </nav>
-        <span class="private-badge"><span aria-hidden="true"></span> Private office</span>
+        <span class="private-badge"><span aria-hidden="true"></span> Public demo · sample data</span>
       </header>
 
       <main id="main">
         <section class="intro" aria-labelledby="page-title">
           <div class="intro-copy">
-            <p class="intro-kicker">Welcome to the village office</p>
+            <p class="intro-kicker">Agent Village · public demo</p>
             <h1 id="page-title">The work has<br /><em>a place to sit.</em></h1>
-            <p class="intro-text">See what Emma and the team have reported, and what is waiting in the issue queue. Each desk tells you when its update was made.</p>
+            <p class="intro-text">Explore what a team office can look like. Every agent, task, and time on this page is synthetic. A real office is invite-only.</p>
+            <div class="intro-action">
+              <a class="office-link" href="/office">Open private office <span aria-hidden="true">↗</span></a>
+              <span>Access for invited viewers</span>
+            </div>
           </div>
           <div class="intro-note" aria-label="How activity is shown">
             <span class="note-sun" aria-hidden="true">✳</span>
-            <p>Presence is reported by an agent and expires. An open ticket alone never means someone is working.</p>
+            <p>This sample shows reported work and an issue queue. It never connects to a real GitHub repository.</p>
           </div>
         </section>
 
@@ -44,13 +48,13 @@
               <p class="section-index">The work board</p>
               <h2 id="work-title">What’s on the list?</h2>
             </div>
-            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
+            <p id="task-sync" class="board-sync">Loading sample issues…</p>
           </div>
           <div class="board-frame">
             <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
             <div id="task-list" class="task-list"></div>
           </div>
-          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
+          <p class="board-footnote">Sample issues only. This demo makes no request to the private Village Office or GitHub.</p>
         </section>
 
         <div class="section-heading room-heading" id="office">
@@ -67,7 +71,6 @@
           </div>
         </div>
 
-        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>Live desk check-ins are not connected to this hosted office yet. The work board still reads GitHub issues.</p>
         <div id="fetch-message" class="fetch-message" role="status" aria-live="polite" hidden></div>
         <div id="change-message" class="sr-only" role="status" aria-live="polite"></div>
 
@@ -91,14 +94,15 @@
             <p id="active-caption" class="active-caption">Checking reported activity</p>
             <div class="sidebar-divider"></div>
             <h3>How this room works</h3>
-            <p>A lit desk means a fresh check-in. Each report carries a time and expires after 90 minutes unless the agent updates it. If reports are unavailable, the desk says so.</p>
-            <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
+            <p>A lit desk means a fresh check-in. Each report carries a time and expires after 90 minutes unless the agent updates it.</p>
+            <p>The sample issue queue is separate from reported work. It does not set anyone’s status.</p>
             <span class="sidebar-stamp">Reported, not guessed</span>
           </aside>
         </section>
+
       </main>
 
-      <footer class="site-footer"><span>Agent Village</span><span>Made for the humans watching the work.</span></footer>
+      <footer class="site-footer"><span>Agent Village demo</span><span>Made by <a href="https://startupsandcode.com">Startups and Code</a>.</span></footer>
     </div>
   </body>
 </html>

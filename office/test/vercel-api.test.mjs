@@ -4,6 +4,7 @@ import { createOfficeHandler } from '../api/office.mjs';
 
 const NOW = Date.parse('2026-09-18T12:00:00.000Z');
 const TOKEN = 'secret-test-token-never-send-to-client';
+const AUTH = { authorize: () => ({ status: 200, email: 'invited@example.com' }) };
 
 function responseRecorder() {
   const response = {
@@ -25,7 +26,7 @@ test('hosted API sends token only to GitHub and returns selected issue fields', 
       { number: 8, title: 'PR title', html_url: 'https://github.com/startupsandcode/agent-village/pull/8', updated_at: '2026-09-18T11:05:00Z', pull_request: { url: 'https://api.github.com/repos/startupsandcode/agent-village/pulls/8' } },
     ] };
   };
-  const handler = createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW });
+  const handler = createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW, auth: AUTH });
   const response = responseRecorder();
   await handler({ method: 'GET' }, response);
   assert.equal(request.url, 'https://api.github.com/repos/startupsandcode/agent-village/issues?state=open&per_page=100');
@@ -48,7 +49,7 @@ test('hosted API sends token only to GitHub and returns selected issue fields', 
 });
 
 test('hosted API does not call GitHub without a token', async () => {
-  const handler = createOfficeHandler({ token: '', fetchImpl: async () => { throw new Error('Unexpected fetch'); }, now: () => NOW });
+  const handler = createOfficeHandler({ token: '', fetchImpl: async () => { throw new Error('Unexpected fetch'); }, now: () => NOW, auth: AUTH });
   const response = responseRecorder();
   await handler({ method: 'GET' }, response);
   assert.deepEqual(JSON.parse(response.body).tasks, { status: 'error', updatedAt: null, items: [] });
@@ -61,14 +62,14 @@ test('hosted API uses existing GITHUB_AGENT_TOKEN when the preferred variable is
     return { ok: true, json: async () => [] };
   };
   const fallback = responseRecorder();
-  await createOfficeHandler({ env: { GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW })({ method: 'GET' }, fallback);
+  await createOfficeHandler({ env: { GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW, auth: AUTH })({ method: 'GET' }, fallback);
   assert.deepEqual(sent, [`Bearer ${TOKEN}`]);
   assert.equal(JSON.parse(fallback.body).tasks.status, 'ok');
   assert.equal(fallback.body.includes(TOKEN), false);
 
   const preferred = 'preferred-test-token-never-send-to-client';
   const primary = responseRecorder();
-  await createOfficeHandler({ env: { GITHUB_ISSUES_TOKEN: preferred, GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW })({ method: 'GET' }, primary);
+  await createOfficeHandler({ env: { GITHUB_ISSUES_TOKEN: preferred, GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW, auth: AUTH })({ method: 'GET' }, primary);
   assert.deepEqual(sent, [`Bearer ${TOKEN}`, `Bearer ${preferred}`]);
   assert.equal(primary.body.includes(preferred), false);
   assert.equal(primary.body.includes(TOKEN), false);
@@ -81,7 +82,7 @@ test('hosted API hides GitHub failures and malformed issue data', async () => {
     async () => ({ ok: true, json: async () => [{ number: 7, title: 'Bad', html_url: 'javascript:bad', updated_at: 'bad' }] }),
   ];
   for (const fetchImpl of cases) {
-    const handler = createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW });
+    const handler = createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW, auth: AUTH });
     const response = responseRecorder();
     await handler({ method: 'GET' }, response);
     assert.deepEqual(JSON.parse(response.body).tasks, { status: 'error', updatedAt: null, items: [] });
@@ -91,7 +92,7 @@ test('hosted API hides GitHub failures and malformed issue data', async () => {
 
 test('hosted API supports HEAD without a body and rejects other methods without fetching', async () => {
   let calls = 0;
-  const handler = createOfficeHandler({ token: TOKEN, fetchImpl: async () => { calls++; return { ok: true, json: async () => [] }; }, now: () => NOW });
+  const handler = createOfficeHandler({ token: TOKEN, fetchImpl: async () => { calls++; return { ok: true, json: async () => [] }; }, now: () => NOW, auth: AUTH });
   const head = responseRecorder();
   await handler({ method: 'HEAD' }, head);
   assert.equal(head.statusCode, 200);
@@ -118,7 +119,7 @@ test('hosted API returns issues on page two after a full page of pull requests',
     }] };
   };
   const response = responseRecorder();
-  await createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW })({ method: 'GET' }, response);
+  await createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW, auth: AUTH })({ method: 'GET' }, response);
   assert.deepEqual(urls, [
     'https://api.github.com/repos/startupsandcode/agent-village/issues?state=open&per_page=100',
     'https://api.github.com/repos/startupsandcode/agent-village/issues?state=open&per_page=100&page=2',
@@ -139,7 +140,7 @@ test('hosted API reports an error rather than silently truncating a full final p
     })) };
   };
   const response = responseRecorder();
-  await createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW })({ method: 'GET' }, response);
+  await createOfficeHandler({ token: TOKEN, fetchImpl, now: () => NOW, auth: AUTH })({ method: 'GET' }, response);
   assert.equal(urls.length, 10);
   assert.deepEqual(JSON.parse(response.body).tasks, { status: 'error', updatedAt: null, items: [] });
   assert.equal(response.body.includes(TOKEN), false);

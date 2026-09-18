@@ -37,13 +37,16 @@ button { font: inherit; }
 .private-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #315e62; white-space: nowrap; }
 .private-badge span { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 4px #dceceb; }
 
-.intro { display: flex; justify-content: space-between; align-items: end; gap: 48px; padding: 68px 0 64px; }
+.intro { display: flex; justify-content: space-between; align-items: end; gap: 48px; padding: 68px 0 36px; }
 .intro-copy { max-width: 760px; }
 .intro-kicker, .section-index { margin: 0 0 16px; color: var(--teal); font-size: 14px; font-weight: 800; letter-spacing: .01em; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 24px; font-size: clamp(48px, 6.7vw, 102px); line-height: .99; letter-spacing: -.075em; font-weight: 800; }
 h1 em { color: var(--teal); font-style: normal; }
 .intro-text { max-width: 610px; margin-bottom: 0; color: #4e6872; font-size: clamp(16px, 1.5vw, 20px); line-height: 1.6; }
+.intro-action { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 28px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.office-link { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 48px; padding: 11px 18px; border-radius: 999px; background: var(--ink); color: white; font-size: 14px; font-weight: 800; text-decoration: none; }
+.office-link:hover { background: var(--teal); }
 .intro-note { width: 255px; min-width: 255px; min-height: 180px; position: relative; padding: 33px 25px 22px; background: var(--gold); color: #263744; transform: rotate(3deg); box-shadow: 5px 7px 0 #e7e7d8; }
 .intro-note::before { content: ""; position: absolute; width: 32px; height: 12px; top: -6px; left: calc(50% - 16px); background: #bdcfc8a8; transform: rotate(-4deg); }
 .note-sun { display: block; font-size: 36px; line-height: 1; margin-bottom: 16px; }
@@ -59,7 +62,6 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
 .refresh-button:disabled { cursor: wait; opacity: .6; }
 .refresh-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .fetch-message { margin: 0 0 16px; padding: 12px 16px; border-left: 4px solid var(--coral); background: #fff0e9; font-size: 14px; }
-.desk-connectivity-note { margin: 0 0 16px; padding: 12px 16px; border-left: 4px solid var(--teal); background: #e7f2f1; color: var(--ink); font-size: 14px; line-height: 1.5; }
 
 .office-layout { display: grid; grid-template-columns: minmax(0, 1fr) 252px; align-items: stretch; gap: 16px; }
 .office-room { min-width: 0; min-height: 700px; padding: 86px 35px 50px; position: relative; overflow: hidden; isolation: isolate; border: 2px solid #89afb3; border-radius: 22px; background: var(--wall); box-shadow: inset 0 10px 0 #c8e0e3; }
@@ -102,7 +104,6 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
 .status-working .agent-state { background: #d8f1e7; color: #205f59; }
 .status-stale .agent-state { background: #fff1d2; color: #76581f; }
 .status-unavailable .agent-state { background: #ffe2dd; color: #852f34; }
-.status-not-connected .agent-state { background: #e2f0ef; color: #21575e; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .agent-task { margin: 10px 0 0; color: #354e57; font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 .agent-detail { margin-top: auto; padding-top: 10px; display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--muted); font-size: 11px; }
@@ -158,7 +159,7 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
   .site-header nav { display: none; }
   .private-badge { font-size: 0; gap: 0; }
   .private-badge span { width: 10px; height: 10px; }
-  .intro { display: block; padding: 52px 0 45px; }
+  .intro { display: block; padding: 52px 0 24px; }
   h1 { font-size: clamp(50px, 12vw, 78px); }
   .intro-text { font-size: 16px; }
   .intro-note { width: auto; min-width: 0; min-height: 0; margin: 35px 7px 0 2px; display: flex; align-items: center; gap: 18px; padding: 17px 22px; transform: rotate(1deg); }

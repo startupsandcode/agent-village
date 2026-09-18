@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#dcecef" />
+    <meta name="description" content="A clear view of reported agent activity and the Agent Village task queue." />
+    <title>Village Office · Agent Village</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/office-assets/styles.css" />
+    <script src="/office-assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to office</a>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Agent Village office home">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+          <span>Agent Village</span>
+        </a>
+        <nav aria-label="Page sections">
+          <a href="#work-board">Work board</a>
+          <a href="#office">Office</a>
+          <a href="/">Public demo</a>
+        </nav>
+        <span class="private-badge"><span aria-hidden="true"></span> Private office</span>
+        <form class="logout-form" action="/api/auth/logout" method="post">
+          <button class="logout-button" type="submit">Sign out of office</button>
+        </form>
+      </header>
+
+      <main id="main">
+        <section class="intro" aria-labelledby="page-title">
+          <div class="intro-copy">
+            <p class="intro-kicker">Welcome to the village office</p>
+            <h1 id="page-title">The work has<br /><em>a place to sit.</em></h1>
+            <p class="intro-text">See what Emma and the team have reported, and what is waiting in the issue queue. Each desk tells you when its update was made.</p>
+          </div>
+          <div class="intro-note" aria-label="How activity is shown">
+            <span class="note-sun" aria-hidden="true">✳</span>
+            <p>Presence is reported by an agent and expires. An open ticket alone never means someone is working.</p>
+          </div>
+        </section>
+
+        <section id="work-board" class="work-section" aria-labelledby="work-title">
+          <div class="section-heading board-heading">
+            <div>
+              <p class="section-index">The work board</p>
+              <h2 id="work-title">What’s on the list?</h2>
+            </div>
+            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
+          </div>
+          <div class="board-frame">
+            <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
+            <div id="task-list" class="task-list"></div>
+          </div>
+          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
+        </section>
+
+        <div class="section-heading room-heading" id="office">
+          <div>
+            <p class="section-index">The room</p>
+            <h2>Who’s at their desk?</h2>
+          </div>
+          <div class="update-tools">
+            <span id="last-updated" class="update-time">Checking for updates…</span>
+            <button id="refresh-button" class="refresh-button" type="button" aria-label="Refresh office and tasks">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.3 9.1a6.3 6.3 0 1 0-1.5 4.8M16.3 4.9v4.2h-4.2" /></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>Live desk check-ins are not connected to this hosted office yet. The work board still reads GitHub issues.</p>
+        <div id="fetch-message" class="fetch-message" role="status" aria-live="polite" hidden></div>
+        <div id="change-message" class="sr-only" role="status" aria-live="polite"></div>
+
+        <section class="office-layout" aria-label="Agent activity and task board">
+          <div class="office-room" aria-label="Illustrated office with five agent desks">
+            <div class="room-window" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="room-sign" aria-hidden="true">GOOD WORK HAPPENS HERE</div>
+            <div class="room-plant plant-left" aria-hidden="true"><span></span></div>
+            <div class="room-plant plant-right" aria-hidden="true"><span></span></div>
+            <div id="agent-grid" class="agent-grid"></div>
+            <div class="room-rug" aria-hidden="true"></div>
+            <div class="room-door" aria-hidden="true"><span></span></div>
+          </div>
+
+          <aside class="office-sidebar" aria-label="Office summary">
+            <div class="sidebar-top">
+              <span class="sidebar-icon" aria-hidden="true">✳</span>
+              <p>At a glance</p>
+            </div>
+            <strong id="active-count" class="active-count">—</strong>
+            <p id="active-caption" class="active-caption">Checking reported activity</p>
+            <div class="sidebar-divider"></div>
+            <h3>How this room works</h3>
+            <p>A lit desk means a fresh check-in. Each report carries a time and expires after 90 minutes unless the agent updates it. If reports are unavailable, the desk says so.</p>
+            <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
+            <span class="sidebar-stamp">Reported, not guessed</span>
+          </aside>
+        </section>
+      </main>
+
+      <footer class="site-footer"><span>Agent Village</span><span>Made for the humans watching the work.</span></footer>
+    </div>
+  </body>
+</html>

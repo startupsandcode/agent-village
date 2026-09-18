@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-09-18T13:00:00.000Z",
+  "agents": [
+    { "name": "Emma", "role": "Engineering lead", "status": "working", "summary": "Planning a fictional customer dashboard", "issueNumber": 14, "updatedAt": "2026-09-18T13:00:00.000Z", "expiresAt": "2026-09-18T14:30:00.000Z" },
+    { "name": "Sam", "role": "Implementation", "status": "working", "summary": "Building the sample reporting view", "issueNumber": 15, "updatedAt": "2026-09-18T12:58:00.000Z", "expiresAt": "2026-09-18T14:28:00.000Z" },
+    { "name": "Quinn", "role": "Independent review", "status": "stale", "summary": "Reviewed sample API behavior", "issueNumber": 12, "updatedAt": "2026-09-18T09:30:00.000Z", "expiresAt": "2026-09-18T11:00:00.000Z" },
+    { "name": "Theo", "role": "Architecture", "status": "unknown", "summary": null, "issueNumber": null, "updatedAt": null, "expiresAt": null },
+    { "name": "Susie", "role": "Product design", "status": "unknown", "summary": null, "issueNumber": null, "updatedAt": null, "expiresAt": null }
+  ],
+  "tasks": {
+    "status": "ok",
+    "updatedAt": "2026-09-18T13:00:00.000Z",
+    "items": [
+      { "number": 14, "title": "Shape a dashboard for a fictional team", "url": "", "updatedAt": "2026-09-18T12:55:00.000Z" },
+      { "number": 15, "title": "Build a sample reporting view", "url": "", "updatedAt": "2026-09-18T12:40:00.000Z" },
+      { "number": 16, "title": "Review mobile layout and keyboard navigation", "url": "", "updatedAt": "2026-09-18T11:20:00.000Z" }
+    ]
+  }
+}
