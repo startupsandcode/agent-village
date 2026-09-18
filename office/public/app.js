@@ -133,7 +133,7 @@ async function refresh() {
     const deskAnnouncement = checkinsConfigured
       ? `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}.`
       : 'Live desk check-ins are not connected.';
-    const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open issues.`}`;
+    const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open ${issueCount === 1 ? 'issue' : 'issues'}.`}`;
     if (lastAnnouncement !== announcement) document.querySelector('#change-message').textContent = announcement;
     lastAnnouncement = announcement;
   } catch {
