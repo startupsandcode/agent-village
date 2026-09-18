@@ -45,7 +45,7 @@ test('hosted API sends token only to GitHub and returns selected issue fields', 
   ] });
   assert.equal(body.agents.length, 5);
   assert.deepEqual(body.agents.map(agent => agent.status), Array(5).fill('unavailable'));
-  assert.deepEqual(body.agents[0], { name: 'Maya', role: 'Engineering lead', status: 'unavailable', summary: null, issueNumber: null, updatedAt: null, expiresAt: null });
+  assert.deepEqual(body.agents[0], { name: 'Emma', role: 'Engineering lead', status: 'unavailable', summary: null, issueNumber: null, updatedAt: null, expiresAt: null });
 });
 
 test('hosted API does not call GitHub without a token', async () => {
