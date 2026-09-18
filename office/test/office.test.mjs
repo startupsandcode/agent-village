@@ -89,6 +89,28 @@ test('office API returns documented shape and blocks static traversal', async ()
   }
 });
 
+test('local server serves private office at /office after the public demo becomes home', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'village-office-'));
+  const publicDir = join(dir, 'public');
+  const privatePageFile = join(dir, 'private.html');
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(publicDir);
+  await writeFile(join(publicDir, 'index.html'), '<h1>Synthetic demo</h1>');
+  await writeFile(privatePageFile, '<h1>Local office</h1>');
+  const server = createOfficeServer({ publicDir, privatePageFile });
+  try {
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    assert.equal(await (await fetch(`${base}/`)).text(), '<h1>Synthetic demo</h1>');
+    const office = await fetch(`${base}/office`);
+    assert.equal(office.status, 200);
+    assert.equal(await office.text(), '<h1>Local office</h1>');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('one malformed report does not erase other agent activity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'village-office-'));
   const dir = join(root, 'checkins');

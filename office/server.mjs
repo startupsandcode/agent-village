@@ -35,6 +35,7 @@ async function serveStatic(pathname, response, publicDir, head) {
 export function createOfficeServer({
   checkinDir = resolve(officeDir, '.local', 'checkins'),
   publicDir = resolve(officeDir, 'public'),
+  privatePageFile = resolve(officeDir, 'private', 'index.html'),
   now = Date.now,
   getTasks = createTaskLoader(),
 } = {}) {
@@ -53,6 +54,10 @@ export function createOfficeServer({
       return respond(response, 200, body, 'application/json; charset=utf-8', head);
     }
     if (pathname.startsWith('/api/')) return respond(response, 404, 'Not found', undefined, head);
+    if (pathname === '/office') {
+      try { return respond(response, 200, await readFile(privatePageFile), 'text/html; charset=utf-8', head); }
+      catch { return respond(response, 404, 'Not found', undefined, head); }
+    }
     return serveStatic(pathname, response, publicDir, head);
   });
 }

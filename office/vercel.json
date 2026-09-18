@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/office", "destination": "/api/private-page" }
+  ],
+  "functions": {
+    "api/private-page.mjs": { "includeFiles": "private/index.html" }
+  }
 }

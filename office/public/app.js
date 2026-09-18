@@ -14,6 +14,19 @@ let lastSuccessfulUpdate = null;
 let latestData = null;
 let lastAnnouncement = null;
 
+function stampSampleTimes(data) {
+  const now = Date.now();
+  data.generatedAt = new Date(now).toISOString();
+  for (const agent of data.agents || []) {
+    if (agent.status !== 'working' && agent.status !== 'stale') continue;
+    const reported = now - (agent.status === 'working' ? 5 : 240) * 60_000;
+    agent.updatedAt = new Date(reported).toISOString();
+    agent.expiresAt = new Date(reported + 90 * 60_000).toISOString();
+  }
+  if (data.tasks) data.tasks.updatedAt = data.generatedAt;
+  return data;
+}
+
 function node(tag, className, content) {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -28,16 +41,9 @@ function timeLabel(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
 
-function safeIssueLink(number) {
-  const issue = Number(number);
-  if (!Number.isSafeInteger(issue) || issue < 1) return null;
-  return `https://github.com/startupsandcode/agent-village/issues/${issue}`;
-}
-
-function renderAgent(profile, report, checkinsConfigured = true) {
+function renderAgent(profile, report) {
   const status = ['working', 'stale', 'unavailable'].includes(report?.status) ? report.status : 'unknown';
-  const displayStatus = status === 'unavailable' && !checkinsConfigured ? 'not-connected' : status;
-  const card = node('article', `agent-card tone-${profile.tone} status-${displayStatus}`);
+  const card = node('article', `agent-card tone-${profile.tone} status-${status}`);
   card.setAttribute('aria-label', `${profile.name}, ${profile.role}`);
 
   const illustration = node('div', 'desk-illustration');
@@ -48,33 +54,23 @@ function renderAgent(profile, report, checkinsConfigured = true) {
   names.append(node('h3', '', profile.name), node('p', '', profile.role));
   identity.append(names, node('span', 'desk-light'));
 
-  const statusText = status === 'working' ? 'Working · reported' : status === 'stale' ? 'Last reported' : status === 'unavailable' ? (checkinsConfigured ? 'Report unavailable' : 'Check-ins not connected') : 'No activity reported';
+  const statusText = status === 'working' ? 'Working · reported' : status === 'stale' ? 'Last reported' : status === 'unavailable' ? 'Report unavailable' : 'No activity reported';
   const state = node('span', 'agent-state', statusText);
-  const description = node('p', 'agent-task', status === 'unknown' ? 'This desk has no current report.' : status === 'unavailable' ? (checkinsConfigured ? 'The latest report could not be read.' : 'Local desk reports are not available on this hosted site yet.') : report.summary || 'No task summary supplied.');
+  const description = node('p', 'agent-task', status === 'unknown' ? 'This desk has no current report.' : status === 'unavailable' ? 'The latest report could not be read.' : report.summary || 'No task summary supplied.');
   card.append(illustration, identity, state, description);
 
   if (status === 'working' || status === 'stale') {
     const detail = node('div', 'agent-detail');
     detail.append(node('span', '', `Updated ${timeLabel(report.updatedAt)}`));
-    const href = safeIssueLink(report.issueNumber);
-    if (href) {
-      const link = node('a', '', `Issue #${report.issueNumber}`);
-      link.href = href;
-      detail.append(link);
-    }
+    if (Number.isSafeInteger(report.issueNumber)) detail.append(node('span', '', `Sample issue #${report.issueNumber}`));
     card.append(detail);
   }
   return card;
 }
 
-function renderAgents(agents = [], checkinsConfigured = true) {
+function renderAgents(agents = []) {
   const byName = new Map(Array.isArray(agents) ? agents.map((agent) => [agent.name, agent]) : []);
-  grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name), checkinsConfigured)));
-  if (!checkinsConfigured) {
-    document.querySelector('#active-count').textContent = '—';
-    document.querySelector('#active-caption').textContent = 'live desk check-ins not connected';
-    return;
-  }
+  grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name))));
   const active = roster.filter((profile) => byName.get(profile.name)?.status === 'working').length;
   document.querySelector('#active-count').textContent = String(active);
   document.querySelector('#active-caption').textContent = active === 1 ? 'agent has a fresh work report' : 'agents have fresh work reports';
@@ -85,16 +81,16 @@ function renderTasks(tasks) {
   const sync = document.querySelector('#task-sync');
   if (!tasks || tasks.status !== 'ok') {
     count.textContent = 'Unavailable';
-    sync.textContent = 'GitHub could not be reached';
+    sync.textContent = 'Sample data unavailable';
     const message = node('div', 'board-empty');
-    message.append(node('strong', '', 'The task board could not refresh.'), node('p', '', 'Ask the office owner to check the server connection, then use Refresh to try again.'));
+    message.append(node('strong', '', 'The task board could not refresh.'), node('p', '', 'Reload the demo data, then use Refresh to try again.'));
     taskList.replaceChildren(message);
     return;
   }
 
   const items = Array.isArray(tasks.items) ? tasks.items : [];
   count.textContent = `${items.length} open`;
-  sync.textContent = `From GitHub · ${timeLabel(tasks.updatedAt)}`;
+  sync.textContent = `Sample data · ${timeLabel(tasks.updatedAt)}`;
   if (items.length === 0) {
     const empty = node('div', 'board-empty');
     empty.append(node('strong', '', 'The board is clear.'), node('p', '', 'There are no open issues. The next request can start with Maya.'));
@@ -103,12 +99,9 @@ function renderTasks(tasks) {
   }
 
   const rows = items.map((item) => {
-    const row = node('a', 'task-row');
-    const href = safeIssueLink(item.number);
-    if (href) row.href = href;
+    const row = node('div', 'task-row');
     const text = node('span', 'task-title', item.title || `Issue #${item.number}`);
-    row.append(node('span', 'task-number', `#${item.number}`), text, node('span', 'task-arrow', '↗'));
-    row.setAttribute('aria-label', `Issue ${item.number}: ${item.title || 'Untitled issue'}`);
+    row.append(node('span', 'task-number', `#${item.number}`), text);
     return row;
   });
   taskList.replaceChildren(...rows);
@@ -118,29 +111,24 @@ async function refresh() {
   refreshButton.disabled = true;
   fetchMessage.hidden = true;
   try {
-    const response = await fetch('/api/office', { cache: 'no-store' });
+    const response = await fetch('/demo-data.json', { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
+    const data = stampSampleTimes(await response.json());
     latestData = data;
     lastSuccessfulUpdate = data.generatedAt || new Date().toISOString();
-    const checkinsConfigured = data.checkinsConfigured !== false;
-    document.querySelector('#desk-connectivity-note').hidden = checkinsConfigured;
-    renderAgents(data.agents, checkinsConfigured);
+    renderAgents(data.agents);
     renderTasks(data.tasks);
     document.querySelector('#last-updated').textContent = `Checked ${timeLabel(lastSuccessfulUpdate)}`;
     const working = Array.isArray(data.agents) ? data.agents.filter(agent => agent.status === 'working').map(agent => agent.name) : [];
     const issueCount = data.tasks?.status === 'ok' ? data.tasks.items.length : null;
-    const deskAnnouncement = checkinsConfigured
-      ? `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}.`
-      : 'Live desk check-ins are not connected.';
-    const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open ${issueCount === 1 ? 'issue' : 'issues'}.`}`;
+    const announcement = `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}. ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open issues.`}`;
     if (lastAnnouncement !== announcement) document.querySelector('#change-message').textContent = announcement;
     lastAnnouncement = announcement;
   } catch {
     fetchMessage.hidden = false;
     fetchMessage.textContent = lastSuccessfulUpdate
       ? `Updates are unavailable. Showing the last view from ${timeLabel(lastSuccessfulUpdate)}.`
-      : 'Office updates are unavailable. Start the local office server, then try again.';
+      : 'Demo data is unavailable. Reload the page to try again.';
     if (!latestData) {
       renderAgents();
       renderTasks(null);
