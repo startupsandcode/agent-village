@@ -27,3 +27,7 @@ After the cutover on 2026-09-18, anonymous GET and HEAD requests to `/` returned
 When changing OAuth settings, invite emails, or access code, repeat those checks from a clean browser session. Sign in with an invited account and confirm `/office` and `/api/office` load the workboard; an uninvited account must be denied. Check that public assets and responses contain no GitHub token or OAuth secrets.
 
 The hosted desks still say that live check-ins are not connected. Local check-in files do not persist to Vercel.
+
+## Web Analytics
+
+Vercel Web Analytics is enabled in the `agent-village` project. The tracking script is included only on the public synthetic demo at `/`; the private office HTML has no analytics script. View page visits in the project's [Analytics dashboard](https://vercel.com/jmanns-projects/agent-village/analytics). Local development may fail to load the Vercel-only script, but the demo still works.

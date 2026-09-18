@@ -11,12 +11,14 @@ test('one deployment serves synthetic home and keeps private HTML outside public
   const home = await read('../public/index.html');
   assert.match(home, /Public demo/i);
   assert.match(home, /href="\/office"/);
+  assert.match(home, /\/_vercel\/insights\/script\.js/);
   assert.doesNotMatch(home, /agent-village-demo-jmanns-projects\.vercel\.app/);
   const data = JSON.parse(await read('../public/demo-data.json'));
   assert.ok(data.tasks.items.length > 0);
   assert.equal(data.tasks.items.some(item => /github\.com\/startupsandcode\/agent-village\/issues\//.test(item.url)), false);
   const privatePage = await read('../private/index.html');
   assert.match(privatePage, /Private office/);
+  assert.doesNotMatch(privatePage, /\/_vercel\/insights\/script\.js|window\.va/);
   assert.match(privatePage, /\/office-assets\/app\.js/);
   await assert.rejects(stat(new URL('../public/office/index.html', import.meta.url)));
   await assert.rejects(stat(new URL('../public/office', import.meta.url)));
