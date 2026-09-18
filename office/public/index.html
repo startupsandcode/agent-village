@@ -19,8 +19,8 @@
           <span>Agent Village</span>
         </a>
         <nav aria-label="Page sections">
-          <a href="#office">Office</a>
           <a href="#work-board">Work board</a>
+          <a href="#office">Office</a>
         </nav>
         <span class="private-badge"><span aria-hidden="true"></span> Private office</span>
       </header>
@@ -38,7 +38,22 @@
           </div>
         </section>
 
-        <div class="section-heading" id="office">
+        <section id="work-board" class="work-section" aria-labelledby="work-title">
+          <div class="section-heading board-heading">
+            <div>
+              <p class="section-index">The work board</p>
+              <h2 id="work-title">What’s on the list?</h2>
+            </div>
+            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
+          </div>
+          <div class="board-frame">
+            <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
+            <div id="task-list" class="task-list"></div>
+          </div>
+          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
+        </section>
+
+        <div class="section-heading room-heading" id="office">
           <div>
             <p class="section-index">The room</p>
             <h2>Who’s at their desk?</h2>
@@ -80,21 +95,6 @@
             <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
             <span class="sidebar-stamp">Reported, not guessed</span>
           </aside>
-        </section>
-
-        <section id="work-board" class="work-section" aria-labelledby="work-title">
-          <div class="section-heading board-heading">
-            <div>
-              <p class="section-index">The work board</p>
-              <h2 id="work-title">What’s on the list?</h2>
-            </div>
-            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
-          </div>
-          <div class="board-frame">
-            <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
-            <div id="task-list" class="task-list"></div>
-          </div>
-          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
         </section>
       </main>
 

@@ -120,7 +120,8 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
 .office-sidebar h3 + p + p { margin-top: 4px; }
 .sidebar-stamp { align-self: flex-start; margin-top: auto; padding: 9px 11px; border: 2px solid #c6d8cb; border-radius: 4px; color: #e5efe3; font-size: 11px; font-weight: 900; transform: rotate(-5deg); }
 
-.work-section { padding: 88px 0 70px; }
+.work-section { padding: 0 0 28px; }
+.room-heading { margin-top: 56px; }
 .board-heading { margin-bottom: 24px; }
 .board-sync { margin: 0 0 4px; }
 .board-frame { border: 2px solid var(--ink); border-radius: 16px; overflow: hidden; background: #fffef8; }
@@ -180,7 +181,8 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
   .active-count { margin-top: 18px; font-size: 72px; text-align: left; }
   .active-caption { max-width: none; margin: 6px 0 0; text-align: left; }
   .office-sidebar h3 { margin-top: 24px; }
-  .work-section { padding-top: 66px; }
+  .work-section { padding-bottom: 20px; }
+  .room-heading { margin-top: 48px; }
   .board-sync { margin: 0; }
   .task-row { grid-template-columns: 42px 1fr 18px; gap: 8px; padding: 14px 15px; }
   .site-footer { align-items: start; flex-direction: column; justify-content: center; gap: 6px; }
