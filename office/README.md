@@ -4,7 +4,7 @@ The existing Vercel `agent-village` project uses `office` as its Root Directory.
 
 ## Sign in with Vercel app
 
-In Vercel Team Settings → Apps, create an app with confidential `client_secret_post` authentication. Register the exact callback URL `https://agent-village-six.vercel.app/api/auth/callback`. Enable only the `openid` and `email` scopes; the office does not request Vercel API permissions or offline access. A viewer must have a Vercel account and an email address on the office invite list.
+In Vercel Team Settings → Apps, create an app with confidential `client_secret_post` authentication. Register both exact callback URLs: `https://agent-village-six.vercel.app/api/auth/callback` and `https://agent-village.startupsandcode.com/api/auth/callback`. The server selects the callback from the registered production host. Enable only the `openid` and `email` scopes; the office does not request Vercel API permissions or offline access. A viewer must have a Vercel account and an email address on the office invite list.
 
 Set these **server-only** environment variables in the existing project for Production (and for Preview if you will use a separately registered callback there):
 
@@ -16,7 +16,7 @@ Set these **server-only** environment variables in the existing project for Prod
 | `OFFICE_ALLOWED_EMAILS` | Comma-separated, exact invited email addresses; compared without case on every private request |
 | `GITHUB_AGENT_TOKEN` | Existing server-only GitHub token with Issues read access (`GITHUB_ISSUES_TOKEN` takes precedence when set) |
 
-Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. The OAuth callback is fixed to the production URL, so a Preview sign-in returns to Production. Register a preview callback and deliberately adapt the server configuration before testing a preview sign-in.
+Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register a preview callback and deliberately adapt the server configuration before testing a preview sign-in.
 
 ## Release sequence
 
