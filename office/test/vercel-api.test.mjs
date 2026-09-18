@@ -53,6 +53,26 @@ test('hosted API does not call GitHub without a token', async () => {
   assert.deepEqual(JSON.parse(response.body).tasks, { status: 'error', updatedAt: null, items: [] });
 });
 
+test('hosted API uses existing GITHUB_AGENT_TOKEN when the preferred variable is absent', async () => {
+  const sent = [];
+  const fetchImpl = async (_url, options) => {
+    sent.push(options.headers.Authorization);
+    return { ok: true, json: async () => [] };
+  };
+  const fallback = responseRecorder();
+  await createOfficeHandler({ env: { GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW })({ method: 'GET' }, fallback);
+  assert.deepEqual(sent, [`Bearer ${TOKEN}`]);
+  assert.equal(JSON.parse(fallback.body).tasks.status, 'ok');
+  assert.equal(fallback.body.includes(TOKEN), false);
+
+  const preferred = 'preferred-test-token-never-send-to-client';
+  const primary = responseRecorder();
+  await createOfficeHandler({ env: { GITHUB_ISSUES_TOKEN: preferred, GITHUB_AGENT_TOKEN: TOKEN }, fetchImpl, now: () => NOW })({ method: 'GET' }, primary);
+  assert.deepEqual(sent, [`Bearer ${TOKEN}`, `Bearer ${preferred}`]);
+  assert.equal(primary.body.includes(preferred), false);
+  assert.equal(primary.body.includes(TOKEN), false);
+});
+
 test('hosted API hides GitHub failures and malformed issue data', async () => {
   const cases = [
     async () => ({ ok: false, status: 401, text: async () => TOKEN }),

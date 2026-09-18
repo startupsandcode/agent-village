@@ -3,7 +3,7 @@ import { createGitHubIssuesLoader } from '../lib/github-issues.mjs';
 
 const unavailableReports = Object.fromEntries(ROSTER.map(({ name }) => [name, { error: true }]));
 
-export function createOfficeHandler({ token = process.env.GITHUB_ISSUES_TOKEN, fetchImpl = fetch, now = Date.now } = {}) {
+export function createOfficeHandler({ env = process.env, token = env.GITHUB_ISSUES_TOKEN || env.GITHUB_AGENT_TOKEN, fetchImpl = fetch, now = Date.now } = {}) {
   const getTasks = createGitHubIssuesLoader({ token, fetchImpl, now });
   return async function handler(request, response) {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
