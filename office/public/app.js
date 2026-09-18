@@ -81,7 +81,7 @@ function renderTasks(tasks) {
     count.textContent = 'Unavailable';
     sync.textContent = 'GitHub could not be reached';
     const message = node('div', 'board-empty');
-    message.append(node('strong', '', 'The task board could not refresh.'), node('p', '', 'Check the GitHub CLI connection, then use Refresh to try again.'));
+    message.append(node('strong', '', 'The task board could not refresh.'), node('p', '', 'Ask the office owner to check the server connection, then use Refresh to try again.'));
     taskList.replaceChildren(message);
     return;
   }
