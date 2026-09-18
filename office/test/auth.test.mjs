@@ -61,7 +61,9 @@ test('callback accepts only signed state, valid nonce, and a verified invited em
   const params = new URLSearchParams(calls[0].options.body);
   assert.equal(params.get('code_verifier'), flow.verifier);
   assert.equal(params.get('client_secret'), env.VERCEL_APP_CLIENT_SECRET);
-  assert.equal(calls.find(call => call.url.endsWith('/userinfo')).options.headers.Authorization, 'Bearer access-token');
+  const userInfoRequest = calls.find(call => call.url.endsWith('/userinfo'));
+  assert.equal(userInfoRequest.options.method, 'POST');
+  assert.equal(userInfoRequest.options.headers.Authorization, 'Bearer access-token');
 });
 
 test('missing configuration fails closed and no OAuth request starts', () => {

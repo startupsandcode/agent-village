@@ -113,7 +113,7 @@ export function createAuth({ env = process.env, fetchImpl = fetch, now = Date.no
     const tokens = await tokenResponse.json();
     if (typeof tokens.access_token !== 'string' || !tokens.access_token) throw new Error('Invalid access token');
     const claims = await verifyIdToken(tokens.id_token, { clientId: settings.clientId, nonce: flow.nonce }, fetchImpl, now());
-    const userResponse = await fetchImpl(USERINFO_URL, { method: 'GET', headers: { Authorization: `Bearer ${tokens.access_token}` } });
+    const userResponse = await fetchImpl(USERINFO_URL, { method: 'POST', headers: { Authorization: `Bearer ${tokens.access_token}` } });
     if (!userResponse.ok) throw new Error('Identity denied');
     const user = await userResponse.json();
     const email = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
