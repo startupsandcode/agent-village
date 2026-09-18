@@ -46,7 +46,7 @@ test('check-in rejects unknown agents, invalid summaries, and invalid issue numb
 test('office API returns documented shape and blocks static traversal', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'village-office-'));
   const file = join(dir, 'checkins');
-  await createCheckin(file, 'Maya', 'Reviewing issue 7', 7, NOW);
+  await createCheckin(file, 'Emma', 'Reviewing issue 7', 7, NOW);
   await writeFile(join(dir, 'index.html'), '<h1>Office</h1>');
   const server = createOfficeServer({
     checkinDir: file,
@@ -63,8 +63,8 @@ test('office API returns documented shape and blocks static traversal', async ()
     const body = await response.json();
     assert.equal(body.generatedAt, '2026-09-18T12:00:00.000Z');
     assert.equal(body.agents.length, 5);
-    assert.deepEqual(body.agents.find(agent => agent.name === 'Maya'), {
-      name: 'Maya', role: 'Engineering lead', status: 'working', summary: 'Reviewing issue 7', issueNumber: 7,
+    assert.deepEqual(body.agents.find(agent => agent.name === 'Emma'), {
+      name: 'Emma', role: 'Engineering lead', status: 'working', summary: 'Reviewing issue 7', issueNumber: 7,
       updatedAt: '2026-09-18T12:00:00.000Z', expiresAt: '2026-09-18T13:30:00.000Z',
     });
     assert.deepEqual(body.tasks.items.map(item => item.number), [7]);
@@ -93,10 +93,10 @@ test('one malformed report does not erase other agent activity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'village-office-'));
   const dir = join(root, 'checkins');
   try {
-    await createCheckin(dir, 'Maya', 'Coordinating issue 7', 7, NOW);
+    await createCheckin(dir, 'Emma', 'Coordinating issue 7', 7, NOW);
     await writeFile(join(dir, 'sam.json'), '{broken');
     const agents = readAgents(await loadCheckins(dir), NOW);
-    assert.equal(agents.find(agent => agent.name === 'Maya').status, 'working');
+    assert.equal(agents.find(agent => agent.name === 'Emma').status, 'working');
     assert.equal(agents.find(agent => agent.name === 'Sam').status, 'unavailable');
     assert.equal(agents.find(agent => agent.name === 'Quinn').status, 'unknown');
   } finally {
@@ -125,7 +125,7 @@ test('concurrent agent check-ins preserve every report', async () => {
   const root = await mkdtemp(join(tmpdir(), 'village-office-'));
   const dir = join(root, 'checkins');
   try {
-    await Promise.all(['Maya', 'Sam', 'Quinn', 'Theo', 'Susie'].map((agent, index) => createCheckin(dir, agent, `Task ${index + 1}`, index + 1, NOW)));
+    await Promise.all(['Emma', 'Sam', 'Quinn', 'Theo', 'Susie'].map((agent, index) => createCheckin(dir, agent, `Task ${index + 1}`, index + 1, NOW)));
     const agents = readAgents(await loadCheckins(dir), NOW);
     assert.deepEqual(agents.map(agent => agent.status), ['working', 'working', 'working', 'working', 'working']);
     assert.deepEqual(agents.map(agent => agent.issueNumber), [1, 2, 3, 4, 5]);
