@@ -38,6 +38,7 @@ test('hosted API sends token only to GitHub and returns selected issue fields', 
   assert.equal(response.body.includes(TOKEN), false);
   const body = JSON.parse(response.body);
   assert.equal(body.generatedAt, '2026-09-18T12:00:00.000Z');
+  assert.equal(body.checkinsConfigured, false);
   assert.deepEqual(body.tasks, { status: 'ok', updatedAt: '2026-09-18T12:00:00.000Z', items: [
     { number: 7, title: 'Build office', url: 'https://github.com/startupsandcode/agent-village/issues/7', updatedAt: '2026-09-18T11:00:00Z' },
   ] });

@@ -18,6 +18,7 @@ export function createOfficeHandler({ env = process.env, token = env.GITHUB_ISSU
     const timestamp = now();
     const body = JSON.stringify({
       generatedAt: new Date(timestamp).toISOString(),
+      checkinsConfigured: false,
       agents: readAgents(unavailableReports, timestamp),
       tasks: await getTasks(),
     });
