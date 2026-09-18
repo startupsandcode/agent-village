@@ -34,9 +34,10 @@ function safeIssueLink(number) {
   return `https://github.com/startupsandcode/agent-village/issues/${issue}`;
 }
 
-function renderAgent(profile, report) {
+function renderAgent(profile, report, checkinsConfigured = true) {
   const status = ['working', 'stale', 'unavailable'].includes(report?.status) ? report.status : 'unknown';
-  const card = node('article', `agent-card tone-${profile.tone} status-${status}`);
+  const displayStatus = status === 'unavailable' && !checkinsConfigured ? 'not-connected' : status;
+  const card = node('article', `agent-card tone-${profile.tone} status-${displayStatus}`);
   card.setAttribute('aria-label', `${profile.name}, ${profile.role}`);
 
   const illustration = node('div', 'desk-illustration');
@@ -47,9 +48,9 @@ function renderAgent(profile, report) {
   names.append(node('h3', '', profile.name), node('p', '', profile.role));
   identity.append(names, node('span', 'desk-light'));
 
-  const statusText = status === 'working' ? 'Working · reported' : status === 'stale' ? 'Last reported' : status === 'unavailable' ? 'Report unavailable' : 'No activity reported';
+  const statusText = status === 'working' ? 'Working · reported' : status === 'stale' ? 'Last reported' : status === 'unavailable' ? (checkinsConfigured ? 'Report unavailable' : 'Check-ins not connected') : 'No activity reported';
   const state = node('span', 'agent-state', statusText);
-  const description = node('p', 'agent-task', status === 'unknown' ? 'This desk has no current report.' : status === 'unavailable' ? 'The latest report could not be read.' : report.summary || 'No task summary supplied.');
+  const description = node('p', 'agent-task', status === 'unknown' ? 'This desk has no current report.' : status === 'unavailable' ? (checkinsConfigured ? 'The latest report could not be read.' : 'Local desk reports are not available on this hosted site yet.') : report.summary || 'No task summary supplied.');
   card.append(illustration, identity, state, description);
 
   if (status === 'working' || status === 'stale') {
@@ -66,9 +67,14 @@ function renderAgent(profile, report) {
   return card;
 }
 
-function renderAgents(agents = []) {
+function renderAgents(agents = [], checkinsConfigured = true) {
   const byName = new Map(Array.isArray(agents) ? agents.map((agent) => [agent.name, agent]) : []);
-  grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name))));
+  grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name), checkinsConfigured)));
+  if (!checkinsConfigured) {
+    document.querySelector('#active-count').textContent = '—';
+    document.querySelector('#active-caption').textContent = 'live desk check-ins not connected';
+    return;
+  }
   const active = roster.filter((profile) => byName.get(profile.name)?.status === 'working').length;
   document.querySelector('#active-count').textContent = String(active);
   document.querySelector('#active-caption').textContent = active === 1 ? 'agent has a fresh work report' : 'agents have fresh work reports';
@@ -117,12 +123,17 @@ async function refresh() {
     const data = await response.json();
     latestData = data;
     lastSuccessfulUpdate = data.generatedAt || new Date().toISOString();
-    renderAgents(data.agents);
+    const checkinsConfigured = data.checkinsConfigured !== false;
+    document.querySelector('#desk-connectivity-note').hidden = checkinsConfigured;
+    renderAgents(data.agents, checkinsConfigured);
     renderTasks(data.tasks);
     document.querySelector('#last-updated').textContent = `Checked ${timeLabel(lastSuccessfulUpdate)}`;
     const working = Array.isArray(data.agents) ? data.agents.filter(agent => agent.status === 'working').map(agent => agent.name) : [];
     const issueCount = data.tasks?.status === 'ok' ? data.tasks.items.length : null;
-    const announcement = `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}. ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open issues.`}`;
+    const deskAnnouncement = checkinsConfigured
+      ? `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}.`
+      : 'Live desk check-ins are not connected.';
+    const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open issues.`}`;
     if (lastAnnouncement !== announcement) document.querySelector('#change-message').textContent = announcement;
     lastAnnouncement = announcement;
   } catch {
