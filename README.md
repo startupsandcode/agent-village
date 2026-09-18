@@ -2,7 +2,7 @@
 
 Agent Village is a repo based workflow for managing software work with Codex. GitHub Issues holds the ticket queue; Codex in VS Code is the working surface. The main Codex conversation acts as Emma, the engineering lead, and coordinates specialized agents for architecture, implementation, review, and product design when a task benefits from them.
 
-The workflow runs in VS Code with Codex and GitHub access. The [Village Office](office/) runs locally with reported agent activity and the open issue queue. The existing `agent-village` Vercel project is being prepared to host the public synthetic demo at `/` and the invited office at `/office`. The [separate demo](demo/) remains online during migration.
+The workflow runs in VS Code with Codex and GitHub access. The [Village Office](office/) runs locally with reported agent activity and the open issue queue. The single `agent-village` Vercel project hosts the [public synthetic demo](https://agent-village.startupsandcode.com/) at `/` and the invited office at `/office`. The former `agent-village-demo` Vercel project has been deleted.
 
 ## Start here
 
@@ -59,7 +59,7 @@ The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired pro
 
 ## Host the office on Vercel
 
-Use the existing `agent-village` Vercel project with Root Directory `office`. Its public root is a synthetic demo; `/office` and `/api/office` require Sign in with Vercel and an invited, verified email. Keep **Vercel Authentication → All Deployments** enabled during the migration. The separate public demo project's Root Directory is `demo` until the single project passes production checks. See the [hosted office setup](office/README.md) for OAuth configuration and the cutover sequence.
+The `agent-village` Vercel project uses Root Directory `office`. Its public root is a synthetic demo; `/office` and `/api/office` require Sign in with Vercel and an invited, verified email through application-level checks. Project-wide Vercel Authentication is disabled so visitors can see the demo. See the [hosted office setup](office/README.md) for OAuth configuration and access checks.
 
 The existing `agent-village` project can use its `GITHUB_AGENT_TOKEN` environment variable if that token can read Issues in `startupsandcode/agent-village`. The function prefers `GITHUB_ISSUES_TOKEN` when both variables exist. If a new credential is needed, create a **fine-grained personal access token** with access to **only** that repository, **Issues: Read-only**, and the required Metadata read permission. Enter it directly in the Vercel project's **Secret** environment variable form as `GITHUB_ISSUES_TOKEN` for each deployment environment you will use. Do not paste either token into source files, chat, or the public demo. Redeploy after changing the environment variable. A GitHub App is useful later when multiple customers or repositories need their own installations and short-lived credentials; the Vercel viewer sign-in does not replace the server's GitHub credential. See [GitHub's endpoint permission](https://docs.github.com/en/rest/issues/issues#fine-grained-access-tokens-for-list-repository-issues), [Vercel environment variables](https://vercel.com/docs/environment-variables), and [Vercel's All Deployments announcement](https://vercel.com/changelog/protect-production-deployments-for-free-on-every-plan).
 

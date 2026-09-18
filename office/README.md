@@ -1,6 +1,6 @@
 # Hosted Agent Village office
 
-The existing Vercel `agent-village` project uses `office` as its Root Directory. It serves the synthetic demo at `/` and the invited office at `/office`. `/api/office` is also private. The old `agent-village-demo` project remains available during migration and can be removed after the new public and private paths have been verified in production.
+The Vercel `agent-village` project uses `office` as its Root Directory. It serves the [synthetic demo](https://agent-village.startupsandcode.com/) at `/` and the invited office at `/office`. `/api/office` is also private. Project-wide Vercel Authentication is disabled; the application enforces office access. The old `agent-village-demo` project has been deleted.
 
 An anonymous visit to `/office` shows a minimal sign-in page. The viewer must choose **Sign in with Vercel** to start OAuth. **Sign out of office** clears the office session and returns to the demo; returning to `/office` shows the sign-in page even if the viewer is still signed in to Vercel. An uninvited account receives an access-denied response.
 
@@ -20,12 +20,10 @@ Set these **server-only** environment variables in the existing project for Prod
 
 Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register a preview callback and deliberately adapt the server configuration before testing a preview sign-in.
 
-## Release sequence
+## Production access checks
 
-1. Keep Vercel Authentication set to **All Deployments** while deploying the new code and secrets to `agent-village`.
-2. In the protected production deployment, check that the demo loads at `/`, that `/demo-data.json` is synthetic, and that a signed-in invited account reaches `/office` and loads `/api/office`.
-3. Confirm that anonymous GET `/office` shows only the sign-in page and anonymous HEAD `/office` has no body. Confirm that `/api/office` denies anonymous requests and both routes deny uninvited sessions. Check GET and HEAD before turning off project-wide Vercel Authentication.
-4. After switching protection off, repeat the anonymous and invited checks from a clean browser session. Confirm the GitHub token and OAuth secrets are absent from public assets and API responses.
-5. Remove the old `agent-village-demo` project only after the single project's public and private paths pass production checks. Old demo-domain links will then stop working.
+After the cutover on 2026-09-18, anonymous GET and HEAD requests to `/` returned the public demo. Anonymous GET `/office` returned only the sign-in page, while HEAD `/office` returned no body. Anonymous GET and HEAD `/api/office` returned 401 without private issue data. The former demo URL returned 404 after its Vercel project was deleted.
+
+When changing OAuth settings, invite emails, or access code, repeat those checks from a clean browser session. Sign in with an invited account and confirm `/office` and `/api/office` load the workboard; an uninvited account must be denied. Check that public assets and responses contain no GitHub token or OAuth secrets.
 
 The hosted desks still say that live check-ins are not connected. Local check-in files do not persist to Vercel.
