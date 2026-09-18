@@ -44,6 +44,9 @@ h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 24px; font-size: clamp(48px, 6.7vw, 102px); line-height: .99; letter-spacing: -.075em; font-weight: 800; }
 h1 em { color: var(--teal); font-style: normal; }
 .intro-text { max-width: 610px; margin-bottom: 0; color: #4e6872; font-size: clamp(16px, 1.5vw, 20px); line-height: 1.6; }
+.intro-action { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 28px; color: var(--muted); font-size: 13px; font-weight: 700; }
+.office-link { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 48px; padding: 11px 18px; border-radius: 999px; background: var(--ink); color: white; font-size: 14px; font-weight: 800; text-decoration: none; }
+.office-link:hover { background: var(--teal); }
 .intro-note { width: 255px; min-width: 255px; min-height: 180px; position: relative; padding: 33px 25px 22px; background: var(--gold); color: #263744; transform: rotate(3deg); box-shadow: 5px 7px 0 #e7e7d8; }
 .intro-note::before { content: ""; position: absolute; width: 32px; height: 12px; top: -6px; left: calc(50% - 16px); background: #bdcfc8a8; transform: rotate(-4deg); }
 .note-sun { display: block; font-size: 36px; line-height: 1; margin-bottom: 16px; }
