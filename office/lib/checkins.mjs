@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 const EXPIRY_MS = 90 * 60 * 1000;
 export const ROSTER = Object.freeze([
-  { name: 'Emma', role: 'Engineering lead' },
+  { name: 'Maya', role: 'Engineering lead' },
   { name: 'Sam', role: 'Implementation' },
   { name: 'Quinn', role: 'Independent review' },
   { name: 'Theo', role: 'Architecture' },
@@ -13,7 +13,7 @@ export const ROSTER = Object.freeze([
 
 function agentName(value) {
   const agent = ROSTER.find(item => item.name.toLowerCase() === String(value).toLowerCase());
-  if (!agent) throw new Error('Agent must be Emma, Sam, Quinn, Theo, or Susie.');
+  if (!agent) throw new Error('Agent must be Maya, Sam, Quinn, Theo, or Susie.');
   return agent.name;
 }
 

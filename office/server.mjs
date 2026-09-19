@@ -47,7 +47,7 @@ export function createOfficeServer({
     try { pathname = new URL(request.url, 'http://localhost').pathname; } catch { return respond(response, 400, 'Bad path', undefined, head); }
     if (pathname === '/api/office') {
       let reports;
-      try { reports = await loadCheckins(checkinDir); } catch { reports = Object.fromEntries(['Emma', 'Sam', 'Quinn', 'Theo', 'Susie'].map(name => [name, { error: true }])); }
+      try { reports = await loadCheckins(checkinDir); } catch { reports = Object.fromEntries(['Maya', 'Sam', 'Quinn', 'Theo', 'Susie'].map(name => [name, { error: true }])); }
       let tasks;
       try { tasks = await getTasks(); } catch { tasks = { status: 'error', updatedAt: null, items: [] }; }
       const body = JSON.stringify({ generatedAt: new Date(now()).toISOString(), agents: readAgents(reports, now()), tasks });

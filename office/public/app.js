@@ -1,5 +1,5 @@
 const roster = [
-  { name: 'Emma', role: 'Engineering lead', object: 'lamp', tone: 'coral' },
+  { name: 'Maya', role: 'Engineering lead', object: 'lamp', tone: 'coral' },
   { name: 'Sam', role: 'Implementation', object: 'code', tone: 'teal' },
   { name: 'Quinn', role: 'Independent review', object: 'paper', tone: 'gold' },
   { name: 'Theo', role: 'Architecture', object: 'plan', tone: 'blue' },
@@ -93,7 +93,7 @@ function renderTasks(tasks) {
   sync.textContent = `Sample data · ${timeLabel(tasks.updatedAt)}`;
   if (items.length === 0) {
     const empty = node('div', 'board-empty');
-    empty.append(node('strong', '', 'The board is clear.'), node('p', '', 'There are no open issues. The next request can start with Emma.'));
+    empty.append(node('strong', '', 'The board is clear.'), node('p', '', 'There are no open issues. The next request can start with Maya.'));
     taskList.replaceChildren(empty);
     return;
   }

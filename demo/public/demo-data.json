@@ -1,7 +1,7 @@
 {
   "generatedAt": "2026-09-18T13:00:00.000Z",
   "agents": [
-    { "name": "Emma", "role": "Engineering lead", "status": "working", "summary": "Planning a fictional customer dashboard", "issueNumber": 14, "updatedAt": "2026-09-18T13:00:00.000Z", "expiresAt": "2026-09-18T14:30:00.000Z" },
+    { "name": "Maya", "role": "Engineering lead", "status": "working", "summary": "Planning a fictional customer dashboard", "issueNumber": 14, "updatedAt": "2026-09-18T13:00:00.000Z", "expiresAt": "2026-09-18T14:30:00.000Z" },
     { "name": "Sam", "role": "Implementation", "status": "working", "summary": "Building the sample reporting view", "issueNumber": 15, "updatedAt": "2026-09-18T12:58:00.000Z", "expiresAt": "2026-09-18T14:28:00.000Z" },
     { "name": "Quinn", "role": "Independent review", "status": "stale", "summary": "Reviewed sample API behavior", "issueNumber": 12, "updatedAt": "2026-09-18T09:30:00.000Z", "expiresAt": "2026-09-18T11:00:00.000Z" },
     { "name": "Theo", "role": "Architecture", "status": "unknown", "summary": null, "issueNumber": null, "updatedAt": null, "expiresAt": null },
