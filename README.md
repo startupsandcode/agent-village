@@ -53,6 +53,14 @@ Use the agent's own name and a short task summary; the issue number is optional.
 
 ## Reuse for a client
 
+## Emma handoff from Astra Lab
+
+After John selects an Astra project, Emma records a dispatch on its parent issue and invokes `node village/cli.mjs run --repo startupsandcode/astra-lab --issue <parent-issue> --request-id <request-id>` on the active computer. The caller sets `ASTRA_LAB_ROOT` to the local Astra checkout; the worker creates a separate worktree for the first actionable issue. Maya, Sam, and Quinn run as bounded stages. Sam opens a draft PR linked with `Closes #<issue>`; Quinn reviews it in read-only mode. Stage starts, results, questions, and answers live on the Astra parent issue. A dirty or interrupted worktree stops for recovery. The worker never merges or releases.
+
+Both checkouts and authenticated `gh` and `codex` CLIs are required on the active Mac or Windows machine. Only one machine should run Emma's schedule. For an offline rehearsal, use the Astra command `python3 -m tests.emma_rehearsal --village-root /path/to/agent-village`; the Village half uses only in-memory fake clients and cannot change production.
+
+## Reuse for a client
+
 Fork or copy the repo, adapt `AGENTS.md` and the agent definitions to the client's delivery process, and use that repo's GitHub Issues for its queue. Keep client credentials and project data in the client's own environment. Add automation only after the manual issue-to-PR loop works reliably for that team.
 
 The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired proof of concept is available in Git history.
