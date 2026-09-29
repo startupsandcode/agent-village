@@ -2,8 +2,10 @@
 import { pathToFileURL } from 'node:url';
 import { parseDispatch } from './contract.mjs';
 import { VillageGh } from './github.mjs';
+import { CodexRunner } from './codex-runner.mjs';
+import { GitWorkspaces, Worker } from './worker.mjs';
 
-export async function main(argv = process.argv.slice(2), gh = new VillageGh()) {
+export async function main(argv = process.argv.slice(2), gh = new VillageGh(), worker = null) {
   const [command, ...rest] = argv;
   if (command !== 'run' && command !== 'resume') throw new Error('run or resume required');
   const options = new Map();
@@ -17,7 +19,9 @@ export async function main(argv = process.argv.slice(2), gh = new VillageGh()) {
   const issue = await gh.getIssue(number);
   const dispatch = parseDispatch(issue);
   if (dispatch.request_id !== options.get('--request-id')) throw new Error('request ID mismatch');
-  return { status: 'accepted', request_id: dispatch.request_id, issue: number };
+  const activeWorker = worker ?? new Worker({ gh, codex: new CodexRunner(),
+    workspaces: new GitWorkspaces({ root: process.env.ASTRA_LAB_ROOT }) });
+  return await activeWorker.advance(dispatch);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

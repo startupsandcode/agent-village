@@ -20,3 +20,20 @@ test('malformed or mismatched GitHub issue data stops', async () => {
   const mismatch = new VillageGh({ run: async () => ({ status: 0, stdout: '{"number":22,"body":"x","comments":[]}' }) });
   await assert.rejects(() => mismatch.getIssue(21), /number/);
 });
+
+test('reviewed work reads a real PR and posts scoped evidence', async () => {
+  const calls = [];
+  const run = async args => {
+    calls.push(args);
+    if (args.includes('comment')) return { status: 0, stdout: 'https://github.com/startupsandcode/astra-lab/issues/21#issuecomment-123' };
+    if (args.includes('pr')) return { status: 0, stdout: JSON.stringify({ number: 44,
+      isDraft: true, headRefOid: 'abc', body: 'Closes #22' }) };
+    return { status: 0, stdout: JSON.stringify({ number: 21, body: 'Selected',
+      comments: [{ body: 'stage event' }] }) };
+  };
+  const gh = new VillageGh({ run });
+  assert.equal((await gh.getPr(44)).number, 44);
+  assert.equal((await gh.listComments(21))[0].body, 'stage event');
+  await gh.comment(21, 'stage event');
+  assert.ok(calls.every(args => args.includes('startupsandcode/astra-lab')));
+});

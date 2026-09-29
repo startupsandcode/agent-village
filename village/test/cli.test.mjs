@@ -12,11 +12,12 @@ const issue = { number: 21, body: 'Selected', comments: [{ body:
 
 test('run accepts only a matching approved dispatch', async () => {
   const gh = { getIssue: async () => issue };
+  const worker = { advance: async dispatch => ({ status: 'progress', request_id: dispatch.request_id }) };
   const result = await main(['run', '--repo', 'startupsandcode/astra-lab', '--issue', '21',
-    '--request-id', request], gh);
-  assert.equal(result.status, 'accepted');
+    '--request-id', request], gh, worker);
+  assert.equal(result.status, 'progress');
   await assert.rejects(() => main(['run', '--repo', 'startupsandcode/astra-lab', '--issue', '21',
-    '--request-id', 'emma:12:bbbbbbbbbbbb'], gh), /request ID/);
+    '--request-id', 'emma:12:bbbbbbbbbbbb'], gh, worker), /request ID/);
 });
 
 test('run rejects a wrong repository before reading GitHub', async () => {
