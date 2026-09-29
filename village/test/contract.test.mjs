@@ -65,3 +65,9 @@ test('rejects invalid status and malformed PR reference', () => {
 test('accepts a bounded progress result', () => {
   assert.equal(validateResult(validResult()).status, 'progress');
 });
+
+test('Quinn done must attest the exact reviewed SHA', () => {
+  assert.throws(() => validateResult({ ...validResult(), stage: 'quinn', status: 'done', pr: 44 }), /reviewed_sha/);
+  assert.equal(validateResult({ ...validResult(), stage: 'quinn', status: 'done',
+    pr: 44, reviewed_sha: 'abcdef123456' }).reviewed_sha, 'abcdef123456');
+});

@@ -24,14 +24,15 @@ function fixture() {
     codex.calls.push(options);
     return codex.replies.shift();
   } };
-  const workspaces = { ensure: async () => '/tmp/astra-worktree', dirty: async () => false };
+  const workspaces = { ensure: async () => '/tmp/astra-worktree', dirty: async () => false,
+    head: async () => 'abc' };
   return { gh, codex, workspaces, worker: new Worker({ gh, codex, workspaces }), comments };
 }
 
 test('Maya intake then Sam draft PR then Quinn independent review', async () => {
   const f = fixture();
   f.codex.replies.push(result('maya', 'done'), result('sam', 'ready_for_review', { pr: 44 }),
-    result('quinn', 'done', { pr: 44, evidence: ['Reviewed SHA abc'] }));
+    result('quinn', 'done', { pr: 44, reviewed_sha: 'abc', evidence: ['Reviewed SHA abc'] }));
   f.gh.prs.set(44, { number: 44, isDraft: true, headRefOid: 'abc', issue: 22 });
   assert.equal((await f.worker.advance(dispatch)).status, 'progress');
   assert.equal((await f.worker.advance(dispatch)).status, 'ready_for_review');
@@ -103,4 +104,52 @@ test('Quinn routine rejection routes back to Sam', async () => {
   assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
   assert.equal((await f.worker.advance(dispatch)).status, 'ready_for_review');
   assert.deepEqual(f.codex.calls.map(call => call.role), ['maya', 'sam', 'quinn', 'sam']);
+});
+
+test('Quinn cannot approve a different current PR head than the one she reviewed', async () => {
+  const f = fixture();
+  f.gh.prs.set(44, { number: 44, isDraft: true, headRefOid: 'abc', issue: 22 });
+  f.codex.replies.push(result('maya', 'done'), result('sam', 'ready_for_review', { pr: 44 }),
+    result('quinn', 'done', { pr: 44, reviewed_sha: 'def' }));
+  await f.worker.advance(dispatch);
+  await f.worker.advance(dispatch);
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  assert.equal(f.comments.filter(item => item.body.includes('"reviewed_sha":"def"')).length, 0);
+});
+
+test('lost question comment is reconstructed from durable stage result', async () => {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_emma', { question_id: 'q-7',
+    question: 'Which approved copy?', category: 'routine' }));
+  const original = f.gh.comment;
+  f.gh.comment = async (number, body) => {
+    if (body.includes('village-question:')) throw new Error('lost question write');
+    await original(number, body);
+  };
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  f.gh.comment = original;
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
+  assert.equal(f.comments.filter(item => item.body.includes('village-question:')).length, 1);
+  assert.equal(f.codex.calls.length, 1);
+});
+
+test('explicit John decision resumes a material question, while rejection blocks', async () => {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_john', { question_id: 'q-7',
+    question: 'Change scope?', category: 'scope' }), result('maya', 'done'));
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_john');
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_john');
+  f.comments.push({ body: '<!-- emma-john-decision:q-7 -->\n' + JSON.stringify({
+    question_id: 'q-7', status: 'approved', answer: 'Approve smaller scope', category: 'scope' }) });
+  assert.equal((await f.worker.advance(dispatch)).status, 'progress');
+  assert.deepEqual(f.codex.calls.map(call => call.role), ['maya', 'maya']);
+});
+
+test('host switch during Codex stage stops before result write', async () => {
+  const f = fixture();
+  let checks = 0;
+  f.worker.authorize = async () => { if (++checks === 2) throw new Error('active host changed'); };
+  f.codex.replies.push(result('maya', 'done'));
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  assert.equal(f.comments.filter(item => item.body.includes('village-stage-result:')).length, 0);
 });

@@ -17,7 +17,8 @@ export async function rehearse(dispatch) {
     reply('sam', 'ready_for_review', { pr: 44 }),
     reply('quinn', 'blocked', { pr: 44, evidence: ['Synthetic edge case failed'] }),
     reply('sam', 'ready_for_review', { pr: 44 }),
-    reply('quinn', 'done', { pr: 44, evidence: ['Synthetic review passed'] }),
+    reply('quinn', 'done', { pr: 44, reviewed_sha: 'abcdef123456',
+      evidence: ['Synthetic review passed'] }),
   ];
   const gh = {
     getIssue: async number => ({ number, body: 'Synthetic approved implementation issue' }),
@@ -27,7 +28,8 @@ export async function rehearse(dispatch) {
       { number, isDraft: true, headRefOid: 'abcdef123456', issue } : null,
   };
   const codex = { runRole: async () => replies.shift() };
-  const workspaces = { ensure: async () => '/synthetic/astra', dirty: async () => false };
+  const workspaces = { ensure: async () => '/synthetic/astra', dirty: async () => false,
+    head: async () => 'abcdef123456' };
   const worker = new Worker({ gh, codex, workspaces });
   const statuses = [];
   statuses.push((await worker.advance(dispatch)).status);

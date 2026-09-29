@@ -12,6 +12,7 @@
     "question_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     "question": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     "category": {"enum": ["routine", "scope", "spend", "outreach", "data", "access", "release_blocker"]},
-    "evidence": {"type": "array", "items": {"type": "string"}}
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "reviewed_sha": {"anyOf": [{"type": "string"}, {"type": "null"}]}
   }
 }

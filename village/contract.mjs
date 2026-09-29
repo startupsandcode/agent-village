@@ -59,5 +59,12 @@ export function validateResult(data) {
   if (data.category !== 'routine' && !['needs_john', 'blocked'].includes(data.status)) {
     throw new Error('non-routine category requires needs_john or blocked');
   }
+  if (data.stage === 'quinn' && data.status === 'done') {
+    if (typeof data.reviewed_sha !== 'string' || !/^[0-9a-f]{3,40}$/.test(data.reviewed_sha)) {
+      throw new Error('reviewed_sha required for Quinn approval');
+    }
+  } else if (data.reviewed_sha != null) {
+    throw new Error('reviewed_sha only allowed for Quinn approval');
+  }
   return { ...data, evidence: [...data.evidence] };
 }
