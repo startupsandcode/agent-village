@@ -38,6 +38,8 @@ test('Maya intake then Sam draft PR then Quinn independent review', async () => 
   assert.equal((await f.worker.advance(dispatch)).status, 'ready_for_review');
   assert.deepEqual(f.codex.calls.map(call => call.role), ['maya', 'sam', 'quinn']);
   assert.equal(f.codex.calls[2].readOnly, true);
+  const review = f.comments.find(c => c.body.includes('village-stage-result:') && c.body.includes('"stage":"quinn"'));
+  assert.equal(JSON.parse(review.body.split('\n', 2)[1]).reviewed_sha, 'abc');
 });
 
 test('claimed PR must exist', async () => {

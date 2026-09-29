@@ -101,7 +101,8 @@ export class Worker {
       }
       const last = results.at(-1)?.value ?? null;
       if (last?.stage === 'quinn' && last.status === 'done') {
-        return { status: 'ready_for_review', request_id: dispatch.request_id, pr: last.pr };
+        return { status: 'ready_for_review', request_id: dispatch.request_id,
+          issue: dispatch.parent_issue, pr: last.pr };
       }
       let answeredRole = null;
       if (last && ['needs_emma', 'needs_john'].includes(last.status)) {
@@ -153,6 +154,7 @@ export class Worker {
         if (!pr || !pr.isDraft || pr.issue !== dispatch.first_actionable_issue) {
           throw new Error('claimed draft PR does not exist for issue');
         }
+        if (role === 'quinn' && value.status === 'done') value.reviewed_sha = pr.headRefOid;
       }
       const resultBody = stageRecord('result', dispatch.request_id, index, value);
       await this.gh.comment(dispatch.parent_issue, resultBody);
