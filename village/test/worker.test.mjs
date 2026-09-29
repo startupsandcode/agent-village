@@ -78,6 +78,18 @@ test('material spending or outreach question goes to John', async () => {
   assert.equal(f.comments.filter(c => c.body.includes('village-question:')).length, 1);
 });
 
+test('Emma answer resumes Maya from the durable question trail', async () => {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_emma', { question_id: 'q-7',
+    question: 'Which copy?', category: 'routine' }), result('maya', 'done'));
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
+  f.comments.push({ body: '<!-- emma-answer:q-7 -->\n' + JSON.stringify({
+    status: 'answered', answer: 'Use the approved buyer copy', question_id: 'q-7' }) });
+  assert.equal((await f.worker.advance(dispatch)).status, 'progress');
+  assert.deepEqual(f.codex.calls.map(call => call.role), ['maya', 'maya']);
+});
+
 test('Quinn routine rejection routes back to Sam', async () => {
   const f = fixture();
   f.gh.prs.set(44, { number: 44, isDraft: true, headRefOid: 'abc', issue: 22 });

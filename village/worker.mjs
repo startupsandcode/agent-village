@@ -103,10 +103,26 @@ export class Worker {
       if (last?.stage === 'quinn' && last.status === 'done') {
         return { status: 'ready_for_review', request_id: dispatch.request_id, pr: last.pr };
       }
+      let answeredRole = null;
       if (last && ['needs_emma', 'needs_john'].includes(last.status)) {
-        return { status: last.status, request_id: dispatch.request_id, question_id: last.question_id };
+        const answerMarker = `<!-- emma-answer:${last.question_id} -->\n`;
+        const answers = comments.filter(item => item.body?.startsWith(answerMarker));
+        if (answers.length > 1) throw new Error('conflicting Emma answers');
+        if (!answers.length) {
+          return { status: last.status, request_id: dispatch.request_id,
+            issue: dispatch.parent_issue, question_id: last.question_id };
+        }
+        let answer;
+        try { answer = JSON.parse(answers[0].body.slice(answerMarker.length)); }
+        catch { throw new Error('malformed Emma answer'); }
+        if (answer.question_id !== last.question_id || answer.status !== 'answered' ||
+            last.category !== 'routine') {
+          return { status: 'needs_john', request_id: dispatch.request_id,
+            issue: dispatch.parent_issue, question_id: last.question_id };
+        }
+        answeredRole = last.stage;
       }
-      const role = nextRole(last);
+      const role = answeredRole ?? nextRole(last);
       if (!role) return { status: 'blocked', request_id: dispatch.request_id, reason: 'stage needs resolution' };
       const path = await this.workspaces.ensure(dispatch.first_actionable_issue);
       if (await this.workspaces.dirty(path)) {
@@ -152,7 +168,8 @@ export class Worker {
       }
       const status = role === 'maya' && value.status === 'done' ? 'progress' :
         role === 'quinn' && value.status === 'done' ? 'ready_for_review' : value.status;
-      return { status, request_id: dispatch.request_id, stage: role, pr: value.pr,
+      return { status, request_id: dispatch.request_id, issue: dispatch.parent_issue,
+        stage: role, pr: value.pr,
         question_id: value.question_id };
     } catch (error) {
       return { status: 'blocked', request_id: dispatch?.request_id ?? null, reason: error.message };
