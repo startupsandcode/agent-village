@@ -11,7 +11,9 @@ function validIssue() {
     first_actionable_issue: 22,
   };
   return { number: 21, body: 'Selected project',
-    comments: [{ author: { login: 'startupsandcode' }, body: `<!-- dispatch-ready:${dispatch.request_id} -->\n\`\`\`json\n${JSON.stringify(dispatch)}\n\`\`\`` }] };
+    comments: [{ author: { login: 'startupsandcode' },
+      url: 'https://github.com/startupsandcode/astra-lab/issues/21#issuecomment-1',
+      body: `<!-- dispatch-ready:${dispatch.request_id} -->\n\`\`\`json\n${JSON.stringify(dispatch)}\n\`\`\`` }] };
 }
 
 function validResult() {
@@ -41,6 +43,7 @@ test('rejects wrong repository and duplicate dispatch comments', () => {
 test('rejects issue number mismatch and malformed request ID', () => {
   const issue = validIssue();
   issue.number = 99;
+  issue.comments[0].url = 'https://github.com/startupsandcode/astra-lab/issues/99#issuecomment-1';
   assert.throws(() => parseDispatch(issue), /parent_issue/);
   const malformed = validIssue();
   malformed.comments[0].body = malformed.comments[0].body.replace('aaaaaaaaaaaa', 'invalid');
@@ -81,6 +84,14 @@ test('dispatch refuses untrusted authors, foreign provenance and unknown fields'
     const issue = validIssue();
     mutate(issue);
     assert.throws(() => parseDispatch(issue), /author|provenance|schema/);
+  }
+});
+
+test('durable dispatch records require canonical comment URLs', () => {
+  for (const url of [undefined, null, '', 'https://github.com/startupsandcode/astra-lab/issues/99#issuecomment-1']) {
+    const issue = validIssue();
+    issue.comments[0].url = url;
+    assert.throws(() => parseDispatch(issue), /provenance/);
   }
 });
 

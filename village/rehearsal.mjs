@@ -4,7 +4,20 @@ import { pathToFileURL } from 'node:url';
 import { Worker } from './worker.mjs';
 
 export async function rehearse(dispatch) {
-  const comment = body => ({ body, author: { login: 'startupsandcode' } });
+  const priorHost = process.env.EMMA_HOST_ID;
+  try {
+    process.env.EMMA_HOST_ID = 'synthetic-host';
+    return await runRehearsal(dispatch);
+  } finally {
+    if (priorHost === undefined) delete process.env.EMMA_HOST_ID;
+    else process.env.EMMA_HOST_ID = priorHost;
+  }
+}
+
+async function runRehearsal(dispatch) {
+  let nextComment = 1;
+  const comment = body => ({ body, author: { login: 'startupsandcode' },
+    url: `https://github.com/startupsandcode/astra-lab/issues/${dispatch.parent_issue}#issuecomment-${nextComment++}` });
   const dispatchBody = `<!-- dispatch-ready:${dispatch.request_id} -->\n\`\`\`json\n${JSON.stringify(dispatch)}\n\`\`\``;
   const comments = [comment(dispatchBody)];
   const issue = dispatch.first_actionable_issue;
@@ -42,7 +55,7 @@ export async function rehearse(dispatch) {
   statuses.push((await worker.advance(dispatch)).status);
   statuses.push((await worker.advance(dispatch)).status); // no duplicate while awaiting Emma
   comments.push(comment(`<!-- emma-answer:${answerId} -->\n${JSON.stringify({
-    request_id: dispatch.request_id, issue, category: 'routine', brief_basis: 'Approved brief buyer',
+    request_id: dispatch.request_id, issue, category: 'routine', brief_basis: 'Small team',
     question_id: answerId, status: 'answered', answer: 'Approved buyer copy' })}`));
   for (let i = 0; i < 5; i += 1) statuses.push((await worker.advance(dispatch)).status);
   const review = comments.find(item => item.body.includes('village-stage-result:') &&
@@ -56,7 +69,8 @@ export async function rehearse(dispatch) {
   const interruption = await interrupted.advance(dispatch);
   return { statuses, reviewed_sha: reviewed?.reviewed_sha ?? null,
     duplicate_question_count: comments.filter(item => item.body.startsWith('<!-- village-question:')).length,
-    interrupted_state: interruption.status };
+    interrupted_state: interruption.status,
+    comments: comments.map(item => ({ body: item.body, author: { ...item.author }, url: item.url })) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

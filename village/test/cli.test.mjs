@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { authorizeDispatch, main } from '../cli.mjs';
 
 const request = 'emma:12:aaaaaaaaaaaa';
-const issue = { number: 21, body: 'Selected', comments: [{ author: { login: 'startupsandcode' }, body:
+const issue = { number: 21, body: 'Selected', comments: [{ author: { login: 'startupsandcode' },
+  url: 'https://github.com/startupsandcode/astra-lab/issues/21#issuecomment-1', body:
   `<!-- dispatch-ready:${request} -->\n\`\`\`json\n${JSON.stringify({
     request_id: request, repo: 'startupsandcode/astra-lab', parent_issue: 21,
     brief_id: 'emma-2026-09', brief_digest: 'a'.repeat(64), candidate_id: 'b',
@@ -18,8 +19,10 @@ async function fixture(host = 'mac') {
   await mkdir(join(root, 'ops'));
   await writeFile(join(root, 'ops', 'runner-config.json'), JSON.stringify({ enabled: true }));
   const control = { number: 5, body: 'Emma control', comments: [
-    { author: { login: 'startupsandcode' }, body: `<!-- emma-active-host:${host} -->\nActive Emma host: ${host}` },
-    { author: { login: 'startupsandcode' }, body: '<!-- emma-attempt:2026-09-29:run-1 -->\n' + JSON.stringify({
+    { author: { login: 'startupsandcode' }, url: 'https://github.com/startupsandcode/astra-lab/issues/5#issuecomment-2',
+      body: `<!-- emma-active-host:${host} -->\nActive Emma host: ${host}` },
+    { author: { login: 'startupsandcode' }, url: 'https://github.com/startupsandcode/astra-lab/issues/5#issuecomment-3',
+      body: '<!-- emma-attempt:2026-09-29:run-1 -->\n' + JSON.stringify({
       request_id: request, host_id: host, day: '2026-09-29', attempt_id: 'run-1' }) },
   ] };
   const gh = { getIssue: async number => number === 5 ? control : issue };
@@ -68,7 +71,8 @@ test('control records require trusted authors, matching provenance and exact sch
     f => { f.control.comments[1].author.login = 'someone-else'; },
     f => { f.control.comments[0].body += '\nExtra instruction'; },
     f => { f.control.comments[1].body = f.control.comments[1].body.replace('"request_id":', '"extra":true,"request_id":'); },
-    f => { f.control.comments[1].url = 'https://github.com/other/repo/issues/5#issuecomment-1'; }]) {
+    f => { f.control.comments[1].url = 'https://github.com/other/repo/issues/5#issuecomment-1'; },
+    f => { delete f.control.comments[0].url; }, f => { f.control.comments[1].url = ''; }]) {
     const f = await fixture();
     try {
       mutate(f);

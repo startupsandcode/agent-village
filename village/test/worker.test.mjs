@@ -7,7 +7,9 @@ const dispatch = { request_id: 'emma:12:aaaaaaaaaaaa', repo: 'startupsandcode/as
   brief_digest: 'a'.repeat(64), candidate_id: 'b', approved_at: '2026-09-29T13:00:00Z' };
 const sha = 'abc'.padEnd(40, '0');
 const otherSha = 'def'.padEnd(40, '0');
-const comment = body => ({ body, author: { login: 'startupsandcode' } });
+let nextComment = 1;
+const comment = body => ({ body, author: { login: 'startupsandcode' },
+  url: `https://github.com/startupsandcode/astra-lab/issues/21#issuecomment-${nextComment++}` });
 const dispatchBody = `<!-- dispatch-ready:${dispatch.request_id} -->\n\`\`\`json\n${JSON.stringify(dispatch)}\n\`\`\``;
 
 function result(stage, status, extra = {}) {
@@ -297,4 +299,97 @@ test('forged or mismatched answer, decision and stage records fail closed', asyn
     author: { login: 'someone-else' } }, comment(stageBody('result', 0, result('maya', 'done'))));
   assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
   assert.equal(f.codex.calls.length, 0);
+});
+
+test('stored Quinn results cannot switch the PR that Sam handed off', async () => {
+  for (const status of ['done', 'progress', 'needs_emma', 'needs_john', 'blocked']) {
+    const f = fixture();
+    f.gh.prs.set(45, { number: 45, isDraft: true, headRefOid: sha, issue: 22 });
+    const quinn = result('quinn', status, { pr: 45,
+      ...(status === 'done' ? { reviewed_sha: sha } : {}),
+      ...(['needs_emma', 'needs_john'].includes(status) ?
+        { question_id: 'q-7', question: 'Choose copy' } : {}) });
+    f.comments.push(
+      comment(stageBody('start', 0, { stage: 'maya', issue: 22, host: null })),
+      comment(stageBody('result', 0, result('maya', 'done'))),
+      comment(stageBody('start', 1, { stage: 'sam', issue: 22, host: null })),
+      comment(stageBody('result', 1, result('sam', 'ready_for_review', { pr: 44 }))),
+      comment(stageBody('start', 2, { stage: 'quinn', issue: 22, host: null })),
+      comment(stageBody('result', 2, quinn)));
+    assert.match((await f.worker.advance(dispatch)).reason, /stored Quinn.*target PR/);
+    assert.equal(f.codex.calls.length, 0);
+  }
+});
+
+test('fresh Quinn progress and questions keep the handed-off PR identity', async () => {
+  for (const status of ['progress', 'needs_emma', 'needs_john']) {
+    const f = fixture();
+    for (const number of [44, 45]) f.gh.prs.set(number, { number, isDraft: true, headRefOid: sha, issue: 22 });
+    f.codex.replies.push(result('maya', 'done'), result('sam', 'ready_for_review', { pr: 44 }),
+      result('quinn', status, { pr: 45,
+        ...(['needs_emma', 'needs_john'].includes(status) ? { question_id: 'q-7', question: 'Choose copy' } : {}) }));
+    await f.worker.advance(dispatch);
+    await f.worker.advance(dispatch);
+    assert.match((await f.worker.advance(dispatch)).reason, /Quinn changed review target PR/);
+    assert.equal(f.comments.filter(item => item.body.includes('village-stage-result:') &&
+      item.body.includes('"stage":"quinn"')).length, 0);
+  }
+});
+
+test('resumed stage rechecks John approval after authorization before it starts', async () => {
+  for (const mutate of [
+    f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' }); },
+    f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- emma-john-decision:'));
+      f.comments.splice(index, 1); },
+    f => { f.comments.push(comment(johnBody({ status: 'rejected', answer: 'Conflicting decision' }))); },
+    f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      item.body = johnBody({ answer: 'Changed approved conditions' }); },
+  ]) {
+    const f = fixture();
+    f.codex.replies.push(result('maya', 'needs_john', { question_id: 'q-7', question: 'Choose copy' }),
+      result('maya', 'done'));
+    await f.worker.advance(dispatch);
+    f.comments.push(comment(johnBody()));
+    f.worker.authorize = async () => { mutate(f); };
+    assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+    assert.equal(f.codex.calls.length, 1);
+    assert.equal(f.comments.filter(item => item.body.startsWith('<!-- village-stage-start:')).length, 1);
+  }
+});
+
+test('approval revoked after role execution prevents the result from advancing', async () => {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_john', { question_id: 'q-7', question: 'Choose copy' }),
+    result('maya', 'done'));
+  await f.worker.advance(dispatch);
+  f.comments.push(comment(johnBody()));
+  let authorizations = 0;
+  f.worker.authorize = async () => {
+    if (++authorizations === 2) {
+      const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' });
+    }
+  };
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  assert.equal(f.codex.calls.length, 2);
+  assert.equal(f.comments.filter(item => item.body.startsWith('<!-- village-stage-result:')).length, 1);
+});
+
+test('last confirmed comments are checked again before launching a resumed role', async () => {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_john', { question_id: 'q-7', question: 'Choose copy' }),
+    result('maya', 'done'));
+  await f.worker.advance(dispatch);
+  f.comments.push(comment(johnBody()));
+  const write = f.gh.comment;
+  f.gh.comment = async (number, body) => {
+    await write(number, body);
+    if (body.startsWith(`<!-- village-stage-start:${dispatch.request_id}:1`)) {
+      const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' });
+    }
+  };
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  assert.equal(f.codex.calls.length, 1);
 });

@@ -147,10 +147,23 @@ function resolution(last, comments, parentIssue) {
     { status: 'needs_emma', role: null };
 }
 
+function revalidateResolution(last, prior, comments, parentIssue) {
+  if (!prior) return;
+  const current = resolution(last, comments, parentIssue);
+  const sameRecord = (left, right) => left === right || left && right &&
+    Object.keys(left).length === Object.keys(right).length &&
+    Object.keys(left).every(key => left[key] === right[key]);
+  if (!current.role || current.role !== prior.role || !sameRecord(current.answer, prior.answer) ||
+      !sameRecord(current.decision, prior.decision)) {
+    throw new Error('question authorization changed; recover before resuming');
+  }
+}
+
 function history(comments, dispatch) {
   const prefix = `<!-- village-stage-`;
   const values = [];
   let pending = null;
+  let reviewPr = null;
   for (let position = 0; position < comments.length; position++) {
     const item = comments[position];
     if (!item.body?.startsWith(prefix) || !item.body.includes(`:${dispatch.request_id}:`)) continue;
@@ -178,6 +191,10 @@ function history(comments, dispatch) {
       value = validateResult(value);
       if (value.request_id !== dispatch.request_id || value.issue !== dispatch.first_actionable_issue ||
           value.stage !== pending.stage) throw new Error('stored result does not match dispatch');
+      if (value.stage === 'quinn' && value.pr !== reviewPr) {
+        throw new Error('stored Quinn result changed review target PR');
+      }
+      if (value.stage === 'sam' && value.status === 'ready_for_review') reviewPr = value.pr;
       values.push(value);
       pending = null;
     }
@@ -275,7 +292,8 @@ export class Worker {
       const start = stageRecord('start', dispatch.request_id, index,
         { stage: role, issue: dispatch.first_actionable_issue, host: process.env.EMMA_HOST_ID ?? null });
       await this.authorize(dispatch);
-      await freshDispatch(this.gh, dispatch);
+      const beforeStart = await freshDispatch(this.gh, dispatch);
+      revalidateResolution(last, answerContext, beforeStart.comments, dispatch.parent_issue);
       await this.gh.comment(dispatch.parent_issue, start);
       const confirmed = await this.gh.listComments(dispatch.parent_issue);
       const startComments = confirmed.filter(item => item.body === start);
@@ -300,13 +318,13 @@ export class Worker {
           pr: prIdentity ? { number: prIdentity.number, headRefOid: prIdentity.headRefOid,
             issue: prIdentity.issue, url: prIdentity.url ?? `https://github.com/${REPO}/pull/${prIdentity.number}` } : null })}\n</stage-data>\n` +
         'Return only the required structured role result.';
+      revalidateResolution(last, answerContext, confirmed, dispatch.parent_issue);
       const output = await this.codex.runRole({ role, cwd: path, prompt, timeoutSeconds: 900,
         readOnly: role === 'quinn' });
       const value = validateResult(output);
       if (value.request_id !== dispatch.request_id || value.stage !== role ||
           value.issue !== dispatch.first_actionable_issue) throw new Error('role result does not match dispatch');
-      if (role === 'sam' && value.status === 'ready_for_review' ||
-          role === 'quinn' && ['done', 'blocked'].includes(value.status)) {
+      if (role === 'sam' && value.status === 'ready_for_review' || role === 'quinn') {
         const pr = await reviewTarget(this.gh, value.pr, dispatch);
         if (role === 'quinn' && value.pr !== prIdentity.number) throw new Error('Quinn changed review target PR');
         if (role === 'quinn' && value.status === 'done' &&
@@ -316,7 +334,8 @@ export class Worker {
       }
       const resultBody = stageRecord('result', dispatch.request_id, index, value);
       await this.authorize(dispatch);
-      await freshDispatch(this.gh, dispatch);
+      const beforeResult = await freshDispatch(this.gh, dispatch);
+      revalidateResolution(last, answerContext, beforeResult.comments, dispatch.parent_issue);
       await this.gh.comment(dispatch.parent_issue, resultBody);
       const resultComments = (await this.gh.listComments(dispatch.parent_issue)).filter(item => item.body === resultBody);
       if (resultComments.length !== 1) {

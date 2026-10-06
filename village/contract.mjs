@@ -15,7 +15,8 @@ export function exactKeys(data, keys, label) {
 
 export function trustedComment(comment, issue) {
   if (comment?.author?.login !== 'startupsandcode') throw new Error('untrusted record author');
-  if (comment.url && !new RegExp(`^https://github\\.com/${REPO}/issues/${issue}#issuecomment-[1-9]\\d*$`).test(comment.url)) {
+  if (typeof comment.url !== 'string' ||
+      !new RegExp(`^https://github\\.com/${REPO}/issues/${issue}#issuecomment-[1-9]\\d*$`).test(comment.url)) {
     throw new Error('record provenance mismatch');
   }
 }
