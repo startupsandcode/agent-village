@@ -22,7 +22,7 @@ test('model API keys are absent from child environment', async () => {
   const runner = new CodexRunner({ launch: async (_args, options) => {
     seen = options.env;
     return JSON.stringify({ request_id: 'emma:12:aaaaaaaaaaaa', stage: 'maya', status: 'done',
-      issue: 22, pr: null, question_id: null, question: null, category: 'routine', evidence: [] });
+      issue: 22, pr: null, question_id: null, question: null, category: 'routine', evidence: [], reviewed_sha: null });
   }, login: async () => true });
   await runner.runRole({ role: 'maya', cwd: '/tmp/astra', prompt: 'Inspect issue', timeoutSeconds: 300,
     env: { OPENAI_API_KEY: 'secret', CODEX_API_KEY: 'secret', PATH: '/bin' } });

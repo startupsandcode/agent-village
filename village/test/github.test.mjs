@@ -27,7 +27,7 @@ test('reviewed work reads a real PR and posts scoped evidence', async () => {
     calls.push(args);
     if (args.includes('comment')) return { status: 0, stdout: 'https://github.com/startupsandcode/astra-lab/issues/21#issuecomment-123' };
     if (args.includes('pr')) return { status: 0, stdout: JSON.stringify({ number: 44,
-      isDraft: true, headRefOid: 'abc', body: 'Closes #22' }) };
+      isDraft: true, state: 'OPEN', headRefOid: 'a'.repeat(40), body: 'Closes #22' }) };
     return { status: 0, stdout: JSON.stringify({ number: 21, body: 'Selected',
       comments: [{ body: 'stage event' }] }) };
   };
@@ -36,4 +36,17 @@ test('reviewed work reads a real PR and posts scoped evidence', async () => {
   assert.equal((await gh.listComments(21))[0].body, 'stage event');
   await gh.comment(21, 'stage event');
   assert.ok(calls.every(args => args.includes('startupsandcode/astra-lab')));
+});
+
+test('PR identity rejects closed PRs, abbreviated heads and foreign URLs', async () => {
+  const pr = { number: 44, isDraft: true, state: 'OPEN', headRefOid: 'a'.repeat(40),
+    body: 'Closes #22', url: 'https://github.com/startupsandcode/astra-lab/pull/44' };
+  for (const mutation of [{ state: 'CLOSED' }, { headRefOid: 'abc' },
+    { url: 'https://github.com/other/repo/pull/44' }]) {
+    const gh = new VillageGh({ run: async () => ({ status: 0, stdout: JSON.stringify({ ...pr, ...mutation }) }) });
+    await assert.rejects(() => gh.getPr(44), /malformed/);
+  }
+  const ambiguous = new VillageGh({ run: async () => ({ status: 0,
+    stdout: JSON.stringify({ ...pr, body: 'Closes #22\nCloses #23' }) }) });
+  assert.equal((await ambiguous.getPr(44)).issue, null);
 });

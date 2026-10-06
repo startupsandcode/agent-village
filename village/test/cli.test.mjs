@@ -3,10 +3,10 @@ import test from 'node:test';
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { main } from '../cli.mjs';
+import { authorizeDispatch, main } from '../cli.mjs';
 
 const request = 'emma:12:aaaaaaaaaaaa';
-const issue = { number: 21, body: 'Selected', comments: [{ body:
+const issue = { number: 21, body: 'Selected', comments: [{ author: { login: 'startupsandcode' }, body:
   `<!-- dispatch-ready:${request} -->\n\`\`\`json\n${JSON.stringify({
     request_id: request, repo: 'startupsandcode/astra-lab', parent_issue: 21,
     brief_id: 'emma-2026-09', brief_digest: 'a'.repeat(64), candidate_id: 'b',
@@ -18,8 +18,8 @@ async function fixture(host = 'mac') {
   await mkdir(join(root, 'ops'));
   await writeFile(join(root, 'ops', 'runner-config.json'), JSON.stringify({ enabled: true }));
   const control = { number: 5, body: 'Emma control', comments: [
-    { body: `<!-- emma-active-host:${host} -->\nActive Emma host: ${host}` },
-    { body: '<!-- emma-attempt:2026-09-29:run-1 -->\n' + JSON.stringify({
+    { author: { login: 'startupsandcode' }, body: `<!-- emma-active-host:${host} -->\nActive Emma host: ${host}` },
+    { author: { login: 'startupsandcode' }, body: '<!-- emma-attempt:2026-09-29:run-1 -->\n' + JSON.stringify({
       request_id: request, host_id: host, day: '2026-09-29', attempt_id: 'run-1' }) },
   ] };
   const gh = { getIssue: async number => number === 5 ? control : issue };
@@ -59,5 +59,33 @@ test('run blocks conflicting host, missing claim, and paused Astra before worker
     await writeFile(join(f.root, 'PAUSE'), '');
     await assert.rejects(() => main(args, f.gh, worker, f.options), /PAUSE/);
     assert.equal(writes, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('control records require trusted authors, matching provenance and exact schemas', async () => {
+  const dispatch = { request_id: request };
+  for (const mutate of [f => { f.control.comments[0].author.login = 'someone-else'; },
+    f => { f.control.comments[1].author.login = 'someone-else'; },
+    f => { f.control.comments[0].body += '\nExtra instruction'; },
+    f => { f.control.comments[1].body = f.control.comments[1].body.replace('"request_id":', '"extra":true,"request_id":'); },
+    f => { f.control.comments[1].url = 'https://github.com/other/repo/issues/5#issuecomment-1'; }]) {
+    const f = await fixture();
+    try {
+      mutate(f);
+      await assert.rejects(() => authorizeDispatch(f.gh, dispatch, f.options), /author|provenance|schema|malformed/);
+    } finally { await f.cleanup(); }
+  }
+});
+
+test('shared attempt identifiers and calendar day are strictly validated', async () => {
+  const f = await fixture();
+  try {
+    f.control.comments[1].body = f.control.comments[1].body
+      .replace('"host_id":"mac"', '"host_id":"mac extra"');
+    await assert.rejects(() => authorizeDispatch(f.gh, { request_id: request }, f.options), /invalid shared/);
+    f.control.comments[1].body = '<!-- emma-attempt:2026-02-30:run-1 -->\n' + JSON.stringify({
+      request_id: request, host_id: 'mac', day: '2026-02-30', attempt_id: 'run-1' });
+    await assert.rejects(() => authorizeDispatch(f.gh, { request_id: request },
+      { ...f.options, day: '2026-02-30' }), /invalid shared/);
   } finally { await f.cleanup(); }
 });

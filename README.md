@@ -51,8 +51,6 @@ node office/checkin.mjs finish Maya
 
 Use the agent's own name and a short task summary; the issue number is optional. Each start report lasts 90 minutes. Repeat `start` if work continues, and use `finish` when it ends. The office labels every report with its update time and marks expired reports as last reported. An open issue does not mean anyone is active. Reports live only in ignored local files under `office/.local/`; opening the site from another computer is not supported. See [the office design](docs/office-design.md) for the data and privacy boundaries.
 
-## Reuse for a client
-
 ## Emma handoff from Astra Lab
 
 After John selects an Astra project, Emma records a dispatch on its parent issue and invokes `node village/cli.mjs run --repo startupsandcode/astra-lab --issue <parent-issue> --request-id <request-id>` on the active computer. The caller sets `ASTRA_LAB_ROOT`, `EMMA_HOST_ID`, and the claimed `EMMA_ATTEMPT_ID`. The entrypoint checks the shared host and attempt record in Astra issue #5, Astra's PAUSE/config controls, and the approved dispatch before a stage can write. The worker creates or resumes a separate worktree for the first actionable issue, fetching an existing remote implementation branch after a host switch. Maya, Sam, and Quinn run as bounded stages. Sam opens a draft PR linked with `Closes #<issue>`; Quinn reviews the exact checked-out PR commit in read-only mode. Stage starts, results, questions, and answers live on the Astra parent issue. A dirty or interrupted worktree stops for recovery. The worker never merges or releases.

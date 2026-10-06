@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseDispatch } from './contract.mjs';
+import { exactKeys, parseDispatch, trustedComment } from './contract.mjs';
 import { VillageGh } from './github.mjs';
 import { CodexRunner } from './codex-runner.mjs';
 import { GitWorkspaces, Worker } from './worker.mjs';
@@ -14,7 +14,7 @@ export async function authorizeDispatch(gh, dispatch, { env = process.env,
     throw new Error('active host and attempt identity required');
   }
   try { await access(join(astraRoot, 'PAUSE')); throw new Error('Astra PAUSE is active'); }
-  catch (error) { if (error.message === 'Astra PAUSE is active') throw error; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   let config;
   try { config = JSON.parse(await readFile(join(astraRoot, 'ops', 'runner-config.json'), 'utf8')); }
   catch { throw new Error('Astra run controls unavailable'); }
@@ -22,6 +22,11 @@ export async function authorizeDispatch(gh, dispatch, { env = process.env,
   const control = await gh.getIssue(5);
   const comments = control.comments;
   const hosts = comments.filter(item => item.body?.startsWith('<!-- emma-active-host:'));
+  for (const item of hosts) {
+    trustedComment(item, 5);
+    const match = item.body.match(/^<!-- emma-active-host:([A-Za-z0-9_-]{1,80}) -->\nActive Emma host: ([A-Za-z0-9_-]{1,80})$/);
+    if (!match || match[1] !== match[2]) throw new Error('malformed active host record');
+  }
   const host = hosts.at(-1)?.body.match(/^<!-- emma-active-host:([A-Za-z0-9_-]+) -->/);
   if (!host || host[1] !== env.EMMA_HOST_ID) throw new Error('active host mismatch');
   const marker = `<!-- emma-attempt:${day}:${env.EMMA_ATTEMPT_ID} -->\n`;
@@ -30,6 +35,14 @@ export async function authorizeDispatch(gh, dispatch, { env = process.env,
   let claim;
   try { claim = JSON.parse(attempts[0].body.slice(marker.length)); }
   catch { throw new Error('malformed shared attempt'); }
+  trustedComment(attempts[0], 5);
+  exactKeys(claim, ['request_id', 'host_id', 'day', 'attempt_id'], 'shared attempt');
+  if (typeof claim.host_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(claim.host_id) ||
+      typeof claim.attempt_id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(claim.attempt_id) ||
+      typeof claim.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(claim.day) ||
+      !Number.isFinite(Date.parse(`${claim.day}T00:00:00Z`)) ||
+      new Date(`${claim.day}T00:00:00Z`).toISOString().slice(0, 10) !== claim.day ||
+      !/^emma:[1-9]\d*:[0-9a-f]{12}$/.test(claim.request_id)) throw new Error('invalid shared attempt');
   if (claim.request_id !== dispatch.request_id || claim.host_id !== env.EMMA_HOST_ID ||
       claim.day !== day || claim.attempt_id !== env.EMMA_ATTEMPT_ID) {
     throw new Error('matching shared attempt required');

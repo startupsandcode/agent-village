@@ -28,7 +28,7 @@ export class VillageGh {
   async getIssue(number) {
     if (!Number.isSafeInteger(number) || number <= 0) throw new Error('invalid issue number');
     const issue = await this._json(['issue', 'view', String(number), '--repo', REPO,
-      '--json', 'number,body,comments,url']);
+      '--json', 'number,title,body,comments,url']);
     if (issue?.number !== number) throw new Error('GitHub issue number mismatch');
     if (typeof issue.body !== 'string' || !Array.isArray(issue.comments) ||
         issue.comments.some(comment => typeof comment?.body !== 'string')) {
@@ -49,17 +49,18 @@ export class VillageGh {
     let pr;
     try {
       pr = await this._json(['pr', 'view', String(number), '--repo', REPO,
-        '--json', 'number,isDraft,headRefOid,body,url']);
+        '--json', 'number,isDraft,headRefOid,body,url,state']);
     } catch (error) {
       if (error.message === 'GitHub operation failed') return null;
       throw error;
     }
     if (pr?.number !== number || typeof pr.isDraft !== 'boolean' ||
-        typeof pr.headRefOid !== 'string' || !/^[0-9a-f]{3,40}$/.test(pr.headRefOid)) {
+        pr.state !== 'OPEN' || typeof pr.headRefOid !== 'string' || !/^[0-9a-f]{40}$/.test(pr.headRefOid) ||
+        pr.url && pr.url !== `https://github.com/${REPO}/pull/${number}`) {
       throw new Error('GitHub PR data malformed');
     }
-    const linked = typeof pr.body === 'string' ? pr.body.match(/(?:Closes|Fixes)\s+#([1-9]\d*)/i) : null;
-    return { ...pr, issue: linked ? Number(linked[1]) : null };
+    const linked = typeof pr.body === 'string' ? [...pr.body.matchAll(/(?:Closes|Fixes)\s+#([1-9]\d*)\b/gi)] : [];
+    return { ...pr, issue: linked.length === 1 ? Number(linked[0][1]) : null };
   }
 
   async comment(number, body) {
