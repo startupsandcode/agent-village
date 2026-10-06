@@ -393,3 +393,85 @@ test('last confirmed comments are checked again before launching a resumed role'
   assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
   assert.equal(f.codex.calls.length, 1);
 });
+
+async function resolvedEarlierEscalation() {
+  const f = fixture();
+  f.codex.replies.push(result('maya', 'needs_john', { question_id: 'q-7', question: 'Choose copy' }),
+    result('maya', 'done'), result('sam', 'progress'));
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_john');
+  f.comments.push(comment(johnBody()));
+  assert.equal((await f.worker.advance(dispatch)).status, 'progress');
+  assert.deepEqual(f.codex.calls.map(call => call.role), ['maya', 'maya']);
+  return f;
+}
+
+const earlierDecisionChanges = [
+  f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+    item.body = johnBody({ status: 'rejected', answer: 'John withdrew earlier approval' }); },
+  f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- emma-john-decision:'));
+    f.comments.splice(index, 1); },
+  f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+    item.body = johnBody({ answer: 'Changed earlier approved conditions' }); },
+];
+
+test('older resolved escalation is revalidated before a later role starts', async () => {
+  for (const mutate of earlierDecisionChanges) {
+    const f = await resolvedEarlierEscalation();
+    f.worker.authorize = async () => { mutate(f); };
+    assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+    assert.equal(f.codex.calls.length, 2);
+    assert.equal(f.comments.filter(item => item.body.startsWith('<!-- village-stage-start:')).length, 2);
+  }
+});
+
+test('older resolved escalation is revalidated from confirmed comments before launching', async () => {
+  for (const mutate of earlierDecisionChanges) {
+    const f = await resolvedEarlierEscalation();
+    const write = f.gh.comment;
+    f.gh.comment = async (number, body) => {
+      await write(number, body);
+      if (body.startsWith(`<!-- village-stage-start:${dispatch.request_id}:2`)) mutate(f);
+    };
+    assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+    assert.equal(f.codex.calls.length, 2);
+    assert.equal(f.comments.filter(item => item.body.startsWith('<!-- village-stage-result:')).length, 2);
+  }
+});
+
+test('older resolved escalation is revalidated before a later role result advances', async () => {
+  for (const mutate of earlierDecisionChanges) {
+    const f = await resolvedEarlierEscalation();
+    let authorizations = 0;
+    f.worker.authorize = async () => { if (++authorizations === 2) mutate(f); };
+    assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+    assert.equal(f.codex.calls.length, 3);
+    assert.equal(f.comments.filter(item => item.body.startsWith('<!-- village-stage-result:')).length, 2);
+  }
+});
+
+test('a completed stage edited during authorization blocks the next role', async () => {
+  const f = await resolvedEarlierEscalation();
+  f.worker.authorize = async () => {
+    const item = f.comments.find(item => item.body.startsWith(`<!-- village-stage-result:${dispatch.request_id}:1`));
+    item.body = stageBody('result', 1, result('maya', 'done', { evidence: ['Edited completed stage'] }));
+  };
+  assert.match((await f.worker.advance(dispatch)).reason, /prior stage history changed/);
+  assert.equal(f.codex.calls.length, 2);
+});
+
+test('cached Quinn readiness rechecks all earlier approved question conditions', async () => {
+  const f = await resolvedEarlierEscalation();
+  f.codex.replies.length = 0;
+  f.gh.prs.set(44, { number: 44, isDraft: true, headRefOid: sha, issue: 22 });
+  f.codex.replies.push(result('sam', 'ready_for_review', { pr: 44 }),
+    result('quinn', 'done', { pr: 44, reviewed_sha: sha }));
+  assert.equal((await f.worker.advance(dispatch)).status, 'ready_for_review');
+  assert.equal((await f.worker.advance(dispatch)).status, 'ready_for_review');
+  const getPr = f.gh.getPr;
+  f.gh.getPr = async number => {
+    earlierDecisionChanges[2](f);
+    return await getPr(number);
+  };
+  assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
+  assert.equal(f.codex.calls.length, 4);
+});

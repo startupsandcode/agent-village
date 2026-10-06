@@ -147,8 +147,7 @@ function resolution(last, comments, parentIssue) {
     { status: 'needs_emma', role: null };
 }
 
-function revalidateResolution(last, prior, comments, parentIssue) {
-  if (!prior) return;
+function unchangedResolution(last, prior, comments, parentIssue) {
   const current = resolution(last, comments, parentIssue);
   const sameRecord = (left, right) => left === right || left && right &&
     Object.keys(left).length === Object.keys(right).length &&
@@ -156,6 +155,37 @@ function revalidateResolution(last, prior, comments, parentIssue) {
   if (!current.role || current.role !== prior.role || !sameRecord(current.answer, prior.answer) ||
       !sameRecord(current.decision, prior.decision)) {
     throw new Error('question authorization changed; recover before resuming');
+  }
+}
+
+function stageTrace(comments, dispatch) {
+  return comments.filter(item => item.body?.startsWith('<!-- village-stage-') &&
+    item.body.includes(`:${dispatch.request_id}:`))
+    .map(item => ({ body: item.body, author: item.author?.login, url: item.url }));
+}
+
+function authorizationSnapshot(results, comments, dispatch, stages) {
+  const questions = results.filter(value => ['needs_emma', 'needs_john'].includes(value.status))
+    .map(value => ({ value, resolved: resolution(value, comments, dispatch.parent_issue) }));
+  if (questions.some(item => !item.resolved.role)) throw new Error('prior question authorization unresolved');
+  return { stages, questions };
+}
+
+function revalidateTrail(snapshot, comments, dispatch, pending = null) {
+  let completed = comments;
+  if (pending) {
+    const matches = comments.filter(item => item.body === pending.body && item.url === pending.url);
+    if (matches.length !== 1) throw new Error('stage start changed; recover before resuming');
+    trustedComment(matches[0], dispatch.parent_issue);
+    const position = comments.indexOf(matches[0]);
+    completed = comments.filter((_item, index) => index !== position);
+  }
+  history(completed, dispatch);
+  if (JSON.stringify(stageTrace(completed, dispatch)) !== JSON.stringify(snapshot.stages)) {
+    throw new Error('prior stage history changed; recover before resuming');
+  }
+  for (const item of snapshot.questions) {
+    unchangedResolution(item.value, item.resolved, completed, dispatch.parent_issue);
   }
 }
 
@@ -254,18 +284,24 @@ export class Worker {
     try {
       const { issue, comments } = await freshDispatch(this.gh, dispatch);
       const results = history(comments, dispatch);
+      const initialStages = stageTrace(comments, dispatch);
       const last = results.at(-1) ?? null;
       if (last?.stage === 'quinn' && last.status === 'done') {
+        const snapshot = authorizationSnapshot(results, comments, dispatch, initialStages);
         const pr = await reviewTarget(this.gh, last.pr, dispatch);
         if (pr.headRefOid !== last.reviewed_sha) throw new Error('cached Quinn review no longer matches PR head');
+        const current = await freshDispatch(this.gh, dispatch);
+        revalidateTrail(snapshot, current.comments, dispatch);
         return { status: 'ready_for_review', request_id: dispatch.request_id,
           issue: dispatch.parent_issue, pr: last.pr };
       }
       let answeredRole = null;
       let answerContext = null;
+      let authorizationComments = comments;
       if (last && ['needs_emma', 'needs_john'].includes(last.status)) {
         await ensureQuestion(this.gh, dispatch.parent_issue, last, comments);
         const currentComments = await this.gh.listComments(dispatch.parent_issue);
+        authorizationComments = currentComments;
         answerContext = resolution(last, currentComments, dispatch.parent_issue);
         if (!answerContext.role) return { status: answerContext.status, request_id: dispatch.request_id,
           issue: dispatch.parent_issue, question_id: last.question_id,
@@ -274,6 +310,8 @@ export class Worker {
       }
       const role = answeredRole ?? nextRole(last);
       if (!role) return { status: 'blocked', request_id: dispatch.request_id, reason: 'stage needs resolution' };
+      const snapshot = authorizationSnapshot(results, authorizationComments, dispatch, initialStages);
+      revalidateTrail(snapshot, authorizationComments, dispatch);
       const path = await this.workspaces.ensure(dispatch.first_actionable_issue);
       if (await this.workspaces.dirty(path)) {
         throw new Error('issue worktree has uncommitted changes; recover before next stage');
@@ -293,12 +331,13 @@ export class Worker {
         { stage: role, issue: dispatch.first_actionable_issue, host: process.env.EMMA_HOST_ID ?? null });
       await this.authorize(dispatch);
       const beforeStart = await freshDispatch(this.gh, dispatch);
-      revalidateResolution(last, answerContext, beforeStart.comments, dispatch.parent_issue);
+      revalidateTrail(snapshot, beforeStart.comments, dispatch);
       await this.gh.comment(dispatch.parent_issue, start);
       const confirmed = await this.gh.listComments(dispatch.parent_issue);
       const startComments = confirmed.filter(item => item.body === start);
       if (startComments.length !== 1) throw new Error('stage start not confirmed');
       trustedComment(startComments[0], dispatch.parent_issue);
+      const pending = { body: start, url: startComments[0].url };
       const roleText = role === 'maya'
         ? await readFile(new URL('./roles/maya.md', import.meta.url), 'utf8')
         : role === 'sam'
@@ -318,7 +357,7 @@ export class Worker {
           pr: prIdentity ? { number: prIdentity.number, headRefOid: prIdentity.headRefOid,
             issue: prIdentity.issue, url: prIdentity.url ?? `https://github.com/${REPO}/pull/${prIdentity.number}` } : null })}\n</stage-data>\n` +
         'Return only the required structured role result.';
-      revalidateResolution(last, answerContext, confirmed, dispatch.parent_issue);
+      revalidateTrail(snapshot, confirmed, dispatch, pending);
       const output = await this.codex.runRole({ role, cwd: path, prompt, timeoutSeconds: 900,
         readOnly: role === 'quinn' });
       const value = validateResult(output);
@@ -335,7 +374,7 @@ export class Worker {
       const resultBody = stageRecord('result', dispatch.request_id, index, value);
       await this.authorize(dispatch);
       const beforeResult = await freshDispatch(this.gh, dispatch);
-      revalidateResolution(last, answerContext, beforeResult.comments, dispatch.parent_issue);
+      revalidateTrail(snapshot, beforeResult.comments, dispatch, pending);
       await this.gh.comment(dispatch.parent_issue, resultBody);
       const resultComments = (await this.gh.listComments(dispatch.parent_issue)).filter(item => item.body === resultBody);
       if (resultComments.length !== 1) {
