@@ -1,8 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
+
+test('hosted function imports stay inside the Vercel root directory', async () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const pending = [join(root, 'api')];
+  const visited = new Set();
+  while (pending.length) {
+    const path = pending.pop();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const details = await stat(path);
+    if (details.isDirectory()) {
+      for (const entry of await readdir(path)) pending.push(join(path, entry));
+      continue;
+    }
+    if (!path.endsWith('.mjs')) continue;
+    const source = await readFile(path, 'utf8');
+    for (const [, specifier] of source.matchAll(/\b(?:from\s*|import\s*\()\s*['"](\.[^'"]+)['"]/g)) {
+      const dependency = resolve(dirname(path), specifier);
+      assert.ok(!relative(root, dependency).startsWith('..'), `${path} imports outside the Vercel root: ${specifier}`);
+      await stat(dependency);
+      pending.push(dependency);
+    }
+  }
+});
 
 test('one deployment serves synthetic home and keeps private HTML outside public', async () => {
   const config = JSON.parse(await read('../vercel.json'));

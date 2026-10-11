@@ -1,7 +1,7 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
 import { createHash } from 'node:crypto';
-import { publishReviewedSite } from '../../local/publish-github.mjs';
-import { deployReviewedPreview, inspectPreviewDeployment } from '../../local/publish-vercel.mjs';
+import { publishReviewedSite } from './publish-github.mjs';
+import { deployReviewedPreview, inspectPreviewDeployment } from './publish-vercel.mjs';
 
 const sha = /^[a-f0-9]{64}$/;
 const name = /^[a-z0-9][a-z0-9-]{1,62}$/;
