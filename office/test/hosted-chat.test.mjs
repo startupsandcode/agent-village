@@ -21,6 +21,8 @@ test('hosted chat exposes Cancel while a clarification request is in flight', as
   const reply = value => ({ ok: true, json: async () => value });
   const fetch = async (_url, options = {}) => {
     if (_url === '/api/maya-status') return reply({ runAvailable: true });
+    if (_url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (_url.startsWith('/api/maya-usage')) return reply({});
     if (options.method === 'POST') {
       const action = JSON.parse(options.body).action;
       if (action === 'start') return reply(initial);
@@ -46,6 +48,55 @@ test('hosted chat exposes Cancel while a clarification request is in flight', as
   assert.equal(get('#hosted-cancel').hidden, true);
 });
 
+test('usage completes in the hosted panel after a cancelled provider call', async () => {
+  const elements = new Map(); const intervals = new Map(); const listeners = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: name === '#hosted-chat', disabled: false, value: '', textContent: '', children: [],
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren(...items) { this.children = items; }, append(...items) { this.children.push(...items); } });
+    return elements.get(name);
+  };
+  const id = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+  const active = { id, version: 1, goal: 'Garden website', status: 'clarifying', events: [], artifact: null };
+  const cancelled = { ...active, version: 2, status: 'cancelled' };
+  let measured = false;
+  let usageReads = 0;
+  const total = (pending) => ({ calls: 1, inputTokens: pending ? 0 : 15, outputTokens: pending ? 0 : 3,
+    estimatedCostNanoUsd: pending ? 0 : 60000, pendingCalls: pending ? 1 : 0, unreportedCalls: 0, unpricedCalls: 0 });
+  const usage = () => ({ month: '2026-10', pricingDate: '2026-10-11', pricingSources: {},
+    project: { total: total(!measured), agents: {}, truncated: false },
+    monthly: { total: total(!measured), agents: {}, truncated: false },
+    calls: [{ agent: 'Maya', provider: 'anthropic', model: 'claude-sonnet-5-5', state: measured ? 'measured' : 'pending',
+      inputTokens: measured ? 10 : null, cachedInputTokens: measured ? 4 : null,
+      cacheCreationInputTokens: measured ? 1 : null, outputTokens: measured ? 3 : null,
+      estimatedCostNanoUsd: measured ? 60000 : null }] });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) { usageReads++; return reply(usage()); }
+    if (options.method === 'POST') return reply(cancelled);
+    return reply(active);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }), createTextNode: text => ({ textContent: text }) },
+    fetch, sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    crypto: { randomUUID: () => 'request-12345' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-usage-status').textContent, /pending/);
+  await listeners.get('#hosted-cancel:click')();
+  const before = usageReads;
+  measured = true;
+  await intervals.get(5000)();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(usageReads > before);
+  assert.match(get('#hosted-usage-status').textContent, /15 input/);
+  assert.match(get('#hosted-usage-calls').children[0].textContent, /15 total input/);
+  assert.doesNotMatch(get('#hosted-usage-status').textContent, /pending/);
+});
+
 test('a reloaded hosted chat observes an existing clarification result', async () => {
   const elements = new Map();
   const intervals = new Map();
@@ -60,6 +111,8 @@ test('a reloaded hosted chat observes an existing clarification result', async (
   const reply = value => ({ ok: true, json: async () => value });
   const fetch = async (url, options = {}) => {
     if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
     if (options.method === 'POST') { clarifyPosts++; return reply(clarifying); }
     return reply(current);
   };
@@ -94,6 +147,8 @@ test('an older status read cannot replace a newer cancellation result', async ()
   const reply = value => ({ ok: true, json: async () => value });
   const fetch = async (url, options = {}) => {
     if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
     if (options.method === 'POST') return reply({ ...active, version: 3, status: 'cancelled' });
     return ++reads === 1 ? reply(active) : staleRead;
   };
@@ -127,6 +182,8 @@ test('an in-flight stage poll cannot restore a stage after Cancel', async () => 
   const reply = value => ({ ok: true, json: async () => value });
   const fetch = async (url, options = {}) => {
     if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
     if (options.method === 'POST') return JSON.parse(options.body).action === 'cancel' ? reply(cancelled) : heldAction;
     return ++reads === 1 ? reply(active) : staleRead;
   };
@@ -157,7 +214,7 @@ test('hosted preview links to sibling reviewed artifact files', async () => {
   const reply = value => ({ ok: true, json: async () => value });
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) },
-    fetch: async url => reply(url === '/api/maya-status' ? { runAvailable: true } : reviewed),
+    fetch: async url => reply(url === '/api/maya-status' ? { runAvailable: true } : url === '/api/maya-domain' ? { audience: '', expertise: '', rules: '' } : url.startsWith('/api/maya-usage') ? {} : reviewed),
     sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
     setInterval: () => 1, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
@@ -187,6 +244,8 @@ test('older hosted publish status cannot replace a newer receipt', async () => {
   const reply = value => ({ ok: true, json: async () => value });
   const fetch = async (url, options = {}) => {
     if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
     if (options.method === 'POST' && JSON.parse(options.body).action === 'publishStatus') {
       return ++statusCalls === 1 ? old : reply({ ...base, receipts: { github: { status: 'submitted', receipt: { commitSha: 'b'.repeat(40) } }, vercel: null } });
     }

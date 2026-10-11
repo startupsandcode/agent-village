@@ -7,6 +7,21 @@ function pickText(value) {
   try { return JSON.parse(match[0]); } catch { throw new Error('Provider returned invalid JSON'); }
 }
 
+function reportedUsage(provider, value) {
+  const usage = value?.usage;
+  if (!usage || !Number.isSafeInteger(usage.input_tokens) || usage.input_tokens < 0 ||
+      !Number.isSafeInteger(usage.output_tokens) || usage.output_tokens < 0) return null;
+  return provider === 'openai'
+    ? { input: usage.input_tokens, output: usage.output_tokens, cachedInput: usage.input_tokens_details?.cached_tokens ?? 0 }
+    : { input: usage.input_tokens, output: usage.output_tokens,
+      cachedInput: usage.cache_read_input_tokens ?? 0, cacheCreationInput: usage.cache_creation_input_tokens ?? 0 };
+}
+function resultWithUsage(provider, data, makeResult) {
+  const usage = reportedUsage(provider, data);
+  try { return { result: makeResult(), usage }; }
+  catch (error) { error.usage = usage; throw error; }
+}
+
 async function post(url, headers, body, { fetchImpl, signal, timeoutMs }) {
   const controller = new AbortController();
   let timedOut = false;
@@ -58,18 +73,22 @@ export function createProvider({ name = process.env.VILLAGE_PROVIDER ?? 'openai'
         const data = await post('https://api.openai.com/v1/responses', {
           authorization: `Bearer ${key}`, 'content-type': 'application/json',
         }, { model, instructions: system, input, max_output_tokens: 1800 }, { fetchImpl, signal, timeoutMs });
-        if (data.status !== 'completed') throw new Error(data.status === 'incomplete' ? 'Provider output truncated at token limit' : 'Provider did not complete');
-        const text = data.output_text ?? data.output?.flatMap(item => item.content ?? []).filter(item => item.type === 'output_text').map(item => item.text).join('') ?? '';
-        return { result: pickText(text), usage: { input: data.usage?.input_tokens ?? 0, output: data.usage?.output_tokens ?? 0 } };
+        return resultWithUsage(name, data, () => {
+          if (data.status !== 'completed') throw new Error(data.status === 'incomplete' ? 'Provider output truncated at token limit' : 'Provider did not complete');
+          const text = data.output_text ?? data.output?.flatMap(item => item.content ?? []).filter(item => item.type === 'output_text').map(item => item.text).join('') ?? '';
+          return pickText(text);
+        });
       }
       const data = await post('https://api.anthropic.com/v1/messages', {
         'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json',
       }, { model, max_tokens: 1800, system, messages: [{ role: 'user', content: input }],
         ...(model.startsWith('claude-sonnet-5-5') ? { thinking: { type: 'between_tools' }, output_config: { effort: 'low' } } : {}),
       }, { fetchImpl, signal, timeoutMs });
-      if (data.stop_reason !== 'end_turn') throw new Error(data.stop_reason === 'max_tokens' ? 'Provider output truncated at token limit' : 'Provider did not complete');
-      const text = data.content?.filter(item => item.type === 'text').map(item => item.text).join('') ?? '';
-      return { result: pickText(text), usage: { input: data.usage?.input_tokens ?? 0, output: data.usage?.output_tokens ?? 0 } };
+      return resultWithUsage(name, data, () => {
+        if (data.stop_reason !== 'end_turn') throw new Error(data.stop_reason === 'max_tokens' ? 'Provider output truncated at token limit' : 'Provider did not complete');
+        const text = data.content?.filter(item => item.type === 'text').map(item => item.text).join('') ?? '';
+        return pickText(text);
+      });
     },
   };
 }

@@ -19,7 +19,7 @@ function visible(record) {
 function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
 function requireProject(record) { if (!record) throw new Error('Project not found'); return record; }
 
-export function createHostedCoordinator({ access, budget, provider, now = Date.now }) {
+export function createHostedCoordinator({ access, budget, provider, usage = null, domain = null, now = Date.now }) {
   if (!access || !budget || !provider) throw new Error('Hosted coordinator dependencies required');
   async function read(cookie, id) {
     const record = requireProject(await access.read(cookie, id));
@@ -50,7 +50,7 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
     const saved = await access.update(cookie, { id, expectedVersion, snapshot: next });
     return visible(saved || requireProject(await access.read(cookie, id)));
   }
-  async function generate(cookie, id, expectedVersion, system, input, done, errorAgent) {
+  async function generate(cookie, id, expectedVersion, system, input, done, agent, callId) {
     const controller = new AbortController();
     // Cancellation is durable across function instances. Polling aborts an in-flight call best-effort.
     let polling = false;
@@ -62,14 +62,26 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
       }).catch(() => controller.abort()).finally(() => { polling = false; });
     }, 2000);
     timer.unref?.();
+    let reply, failure, began = false;
     try {
-      const reply = await provider.generate({ system, input: JSON.stringify(input), signal: controller.signal });
-      return await finish(cookie, id, expectedVersion, project => done(project, reply));
-    } catch (error) {
-      return await finish(cookie, id, expectedVersion, project => {
-        project.status = 'blocked';
-        event(project, errorAgent, 'error', provider.redact?.(error.message) ?? 'Provider request failed');
-      });
+      if (usage) {
+        await usage.begin(cookie, { callId, projectId: id, agent, provider: provider.name, model: provider.model,
+          month: new Date(now()).toISOString().slice(0, 7) });
+        began = true;
+      }
+      reply = await provider.generate({ system, input: JSON.stringify(input), signal: controller.signal });
+    } catch (error) { failure = error; }
+    try {
+      if (began) await usage.complete(cookie, callId, provider.name, provider.model, reply?.usage ?? failure?.usage);
+      try {
+        if (failure) throw failure;
+        return await finish(cookie, id, expectedVersion, project => done(project, reply));
+      } catch (error) {
+        return await finish(cookie, id, expectedVersion, project => {
+          project.status = 'blocked';
+          event(project, agent, 'error', provider.redact?.(error.message) ?? 'Provider request failed');
+        });
+      }
     } finally { clearInterval(timer); }
   }
   async function advance(cookie, id, requestId, from, to, agent, message, kind, prepare = () => {}) {
@@ -94,7 +106,9 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
       if (!validText(goal) || provider.containsSecret?.(goal)) throw new Error('Goal invalid or contains a provider key');
       const id = randomUUID();
       await reserve(cookie, requestId, 'project');
-      const project = { id, goal: goal.trim(), answer: null, plan: null, artifact: null, files: null, status: 'clarifying', events: [], createdAt: new Date(now()).toISOString(), stageStartedAt: new Date(now()).toISOString(), createRequestId: requestId };
+      const domainProfile = domain ? await domain.read(cookie) : { audience: '', expertise: '', rules: '' };
+      const project = { id, goal: goal.trim(), domainProfile, answer: null, plan: null, artifact: null, files: null, status: 'clarifying', events: [], createdAt: new Date(now()).toISOString(), stageStartedAt: new Date(now()).toISOString(), createRequestId: requestId };
+      if (Object.values(domainProfile).some(Boolean)) event(project, 'System', 'context', 'Saved domain answers attached to Maya, Sam, and Quinn for this project');
       event(project, 'Maya', 'start', 'Reading the project goal');
       const stored = await access.create(cookie, { id, requestId, snapshot: project });
       return visible(stored);
@@ -111,10 +125,10 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
       next.clarifyRunId = randomUUID(); next.stageStartedAt = new Date(now()).toISOString();
       const claimed = await access.update(cookie, { id, expectedVersion: record.version, snapshot: next });
       if (!claimed) return visible(requireProject(await access.read(cookie, id)));
-      return generate(cookie, id, claimed.version, MAYA, { goal: next.goal }, (updated, reply) => {
+      return generate(cookie, id, claimed.version, MAYA, { goal: next.goal, domainProfile: next.domainProfile }, (updated, reply) => {
         if (!validText(reply.result?.question, 300)) throw new Error('Maya returned an invalid question');
         updated.status = 'needs_answer'; event(updated, 'Maya', 'question', reply.result.question, reply.usage);
-      }, 'Maya');
+      }, 'Maya', `${id}:clarify:${next.clarifyRunId}`);
     },
     async create(cookie, goal, requestId) {
       const started = await this.start(cookie, goal, requestId);
@@ -127,37 +141,37 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
       });
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
-      return generate(cookie, id, step.record.version, PLAN, { goal: current.goal, answer }, (next, reply) => {
+      return generate(cookie, id, step.record.version, PLAN, { goal: current.goal, answer, domainProfile: current.domainProfile }, (next, reply) => {
         if (!validPlan(reply.result)) throw new Error('Maya returned an invalid plan');
         next.plan = reply.result; next.status = 'ready';
         event(next, 'Maya', 'decision', next.plan.decision, reply.usage); event(next, 'Maya', 'plan', next.plan.summary);
-      }, 'Maya');
+      }, 'Maya', `${id}:answer:${requestId}`);
     },
     async build(cookie, id, requestId) {
       const step = await advance(cookie, id, requestId, 'ready', 'building', 'Sam', 'Creating a bounded static website', 'build');
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
-      return generate(cookie, id, step.record.version, SAM, { goal: current.goal, answer: current.answer, plan: current.plan }, (next, reply) => {
+      return generate(cookie, id, step.record.version, SAM, { goal: current.goal, answer: current.answer, plan: current.plan, domainProfile: current.domainProfile }, (next, reply) => {
         const artifact = renderArtifact(reply.result);
         next.files = { html: artifact.html, css: artifact.css };
         next.artifact = { sha256: artifact.sha256, checks: artifact.checks };
         next.status = 'awaiting_review';
         event(next, 'Sam', 'result', `Created index.html and styles.css; SHA-256 ${artifact.sha256}`, reply.usage);
-      }, 'Sam');
+      }, 'Sam', `${id}:build:${requestId}`);
     },
     async review(cookie, id, requestId) {
       const step = await advance(cookie, id, requestId, 'awaiting_review', 'reviewing', 'Quinn', 'Reviewing the exact generated files', 'review');
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
       if (!current.files || artifactDigest(current.files.html, current.files.css) !== current.artifact?.sha256) throw new Error('Artifact receipt invalid');
-      return generate(cookie, id, step.record.version, QUINN, { goal: current.goal, plan: current.plan, ...current.files, sha256: current.artifact.sha256 }, (next, reply) => {
+      return generate(cookie, id, step.record.version, QUINN, { goal: current.goal, plan: current.plan, domainProfile: current.domainProfile, ...current.files, sha256: current.artifact.sha256 }, (next, reply) => {
         if (!validReview(reply.result)) throw new Error('Quinn returned an invalid review');
         if (artifactDigest(next.files.html, next.files.css) !== next.artifact.sha256) throw new Error('Artifact receipt invalid');
         next.status = reply.result.approved ? 'reviewed' : 'changes_requested';
         event(next, 'Quinn', reply.result.approved ? 'review' : 'blocked', reply.result.summary, reply.usage);
         next.events.at(-1).reviewedSha256 = next.artifact.sha256;
         next.events.at(-1).findings = reply.result.findings;
-      }, 'Quinn');
+      }, 'Quinn', `${id}:review:${requestId}`);
     },
     async cancel(cookie, id) {
       for (let attempt = 0; attempt < 3; attempt++) {

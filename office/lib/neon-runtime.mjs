@@ -4,6 +4,8 @@ import { createHostedBudget } from './hosted-budget.mjs';
 import { createHostedCoordinator } from './hosted-coordinator.mjs';
 import { createProvider } from './provider.mjs';
 import { createHostedPublisher } from './hosted-publish.mjs';
+import { createHostedUsage } from './hosted-usage.mjs';
+import { createHostedDomain } from './hosted-domain.mjs';
 
 // Open only inside an authorized request. Pool uses a WebSocket connection for
 // interactive transactions and must be closed before the Function completes.
@@ -16,6 +18,10 @@ export async function createNeonHostedRuntime({ env, auth, PoolClass } = {}) {
   const provider = createProvider({ name: providerName, env });
   const Pool = PoolClass ?? (await import('@neondatabase/serverless')).Pool;
   const pool = new Pool({ connectionString: env.VILLAGE_DATABASE_URL, max: 2 });
+  try { await pool.query('SELECT 1 FROM village_provider_usage LIMIT 0'); }
+  catch { await pool.end(); throw new Error('Hosted usage migration is not ready'); }
+  try { await pool.query('SELECT 1 FROM village_domain_profiles LIMIT 0'); }
+  catch { await pool.end(); throw new Error('Hosted domain migration is not ready'); }
   const query = (sql, values) => pool.query(sql, values);
   const transaction = async callback => {
     const client = await pool.connect();
@@ -32,5 +38,8 @@ export async function createNeonHostedRuntime({ env, auth, PoolClass } = {}) {
   const store = createHostedProjectStore({ query });
   const access = createHostedProjectAccess({ store, auth });
   const budget = createHostedBudget({ transaction, auth });
-  return { coordinator: createHostedCoordinator({ access, budget, provider }), publisher: createHostedPublisher({ access, env }), close: () => pool.end() };
+  const usage = createHostedUsage({ query, auth });
+  const domain = createHostedDomain({ query, auth, containsSecret: provider.containsSecret });
+  return { coordinator: createHostedCoordinator({ access, budget, provider, usage, domain }), usage, domain,
+    publisher: createHostedPublisher({ access, env }), close: () => pool.end() };
 }

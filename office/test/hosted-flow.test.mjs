@@ -7,6 +7,7 @@ import { createHostedCoordinator } from '../lib/hosted-coordinator.mjs';
 import { createHostedMayaHandler } from '../api/maya-projects.mjs';
 import { createNeonHostedRuntime } from '../lib/neon-runtime.mjs';
 import { artifactDigest } from '../lib/static-site.mjs';
+import { usageReceipt } from '../lib/usage.mjs';
 
 const env = { OFFICE_ALLOWED_ORIGINS: 'https://office.example', OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com' };
 const auth = { authorize: cookie => cookie === 'owner' ? { status: 200, sub: 'owner-sub', email: 'owner@example.com' }
@@ -52,6 +53,57 @@ const site = { title: 'Garden Club', theme: 'forest', sections: [
   { type: 'hero', heading: 'Grow together', body: 'A garden club for neighbors.', actionText: 'Explore' },
   { type: 'text', heading: 'Join us', body: 'Meet your neighbors and learn to grow vegetables.' },
 ] };
+
+test('hosted usage records one call per stage even when cancellation wins after provider response', async () => {
+  const { store, budget } = memory();
+  const calls = new Map();
+  const usage = {
+    async begin(_cookie, claim) { if (!calls.has(claim.callId)) calls.set(claim.callId, { ...claim, state: 'pending' }); },
+    async complete(_cookie, callId, provider, model, tokens) { const row = calls.get(callId); if (row?.state === 'pending') Object.assign(row, usageReceipt(provider, model, tokens)); },
+  };
+  let releaseBuild; let buildStarted;
+  const gate = new Promise(resolve => { releaseBuild = resolve; });
+  const started = new Promise(resolve => { buildStarted = resolve; });
+  let count = 0;
+  const provider = { name: 'openai', model: 'gpt-4.1-mini', async generate() {
+    count++;
+    if (count === 1) return { result: { question: 'Who?' }, usage: { input: 10, output: 20 } };
+    if (count === 2) return { result: { summary: 'Site', audience: 'Neighbors', acceptance: ['Inform', 'Invite'], decision: 'Build site' }, usage: null };
+    buildStarted(); await gate;
+    return { result: site, usage: { input: 40, output: 50 } };
+  } };
+  const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider, usage });
+  const created = await coordinator.create('owner', 'Garden website', 'create-usage-1');
+  const planned = await coordinator.answer('owner', created.id, 'Neighbors', 'answer-usage-1');
+  assert.equal(planned.status, 'ready');
+  const building = coordinator.build('owner', created.id, 'build-usage-1');
+  await started;
+  assert.equal((await coordinator.cancel('owner', created.id)).status, 'cancelled');
+  releaseBuild();
+  assert.equal((await building).status, 'cancelled');
+  assert.equal((await coordinator.build('owner', created.id, 'build-usage-1')).status, 'cancelled');
+  assert.equal(count, 3);
+  assert.equal(calls.size, 3);
+  assert.equal(calls.get(`${created.id}:build:build-usage-1`).state, 'measured');
+  assert.equal(calls.get(`${created.id}:build:build-usage-1`).inputTokens, 40);
+  assert.equal(calls.get(`${created.id}:answer:answer-usage-1`).state, 'unreported');
+});
+
+test('hosted provider error preserves reported tokens without claiming a successful stage', async () => {
+  const { store, budget } = memory();
+  const receipts = [];
+  const usage = { async begin() {}, async complete(_cookie, _id, provider, model, tokens) { receipts.push(usageReceipt(provider, model, tokens)); } };
+  const provider = { name: 'openai', model: 'gpt-4.1-mini', async generate() {
+    const error = new Error('Provider output truncated at token limit'); error.usage = { input: 12, output: 1800 }; throw error;
+  } };
+  const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider, usage });
+  const result = await coordinator.create('owner', 'Garden website', 'create-error-1');
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.events.at(-1).type, 'error');
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].state, 'measured');
+  assert.equal(receipts[0].outputTokens, 1800);
+});
 
 test('hosted route completes a scoped mock goal, plan, build, review and artifact flow', async () => {
   const { store, budget } = memory();
@@ -160,6 +212,16 @@ test('hosted runtime opens only after operator and origin checks, then closes it
   assert.equal(opened, 1); assert.equal(closed, 1);
   await assert.rejects(createNeonHostedRuntime({ env: { ...settings, VILLAGE_OPENAI_MODEL: 'expensive-custom-model' }, auth, PoolClass: Pool }), /outside the pilot budget/);
   assert.equal(opened, 1);
+});
+
+test('hosted runtime stops before any provider call when additive usage migration is missing', async () => {
+  let closed = 0;
+  class Pool {
+    async query() { throw new Error('missing relation'); }
+    async end() { closed++; }
+  }
+  await assert.rejects(createNeonHostedRuntime({ env: { ...env, VILLAGE_DATABASE_URL: 'postgres://placeholder', OPENAI_API_KEY: 'fake' }, auth, PoolClass: Pool }), /usage migration/);
+  assert.equal(closed, 1);
 });
 
 test('hosted cancellation wins over an in-flight mock build', async () => {

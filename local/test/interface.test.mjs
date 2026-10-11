@@ -329,6 +329,7 @@ test('cancelled build stays cancelled and does not write artifact', async () => 
   assert.equal((await engine.get(first.id)).status, 'cancelled');
   assert.equal((await engine.get(first.id)).artifact, null);
   assert.equal(provider.calls.length, 3);
+  assert.equal((await engine.get(first.id)).events.find(event => event.callId === 'build:build-12345')?.state, 'unreported');
 }));
 test('cancellation during Quinn review never records approval', async () => fixture(async root => {
   let release;
@@ -348,6 +349,7 @@ test('cancellation during Quinn review never records approval', async () => fixt
   const result = await engine.get(first.id);
   assert.equal(result.status, 'cancelled');
   assert.ok(!result.events.some(event => event.type === 'review'));
+  assert.equal(result.events.find(event => event.callId === 'review:build-12345')?.state, 'unreported');
 }));
 test('cancellation during the initial build save never starts Sam or restores building status', async () => fixture(async root => {
   const provider = mockProvider();

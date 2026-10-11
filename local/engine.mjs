@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './artifact.mjs';
 import { MAYA, PLAN, SAM, QUINN, validText, validPlan, validReview } from '../office/lib/project-roles.mjs';
 import { readDomainProfile } from './domain.mjs';
+import { usageReceipt } from '../office/lib/usage.mjs';
 
 function publicProject(project) { const { goal, answer, plan, status, events, id, createdAt, artifact, domainProfile } = project; return { id, goal, answer, plan, status, events, createdAt, artifact, domainProfile }; }
 
@@ -41,6 +42,22 @@ export class VillageEngine {
   event(project, agent, type, message, extra = {}) {
     const safe = this.provider.redact?.(message) ?? String(message);
     project.events.push({ at: this.now(), agent, type, message: safe.slice(0, 1200), ...extra });
+  }
+  async runProvider(project, agent, callId, args) {
+    const providerName = this.provider.redact?.(this.provider.name ?? 'mock') ?? (this.provider.name ?? 'mock');
+    const modelName = this.provider.redact?.(this.provider.model ?? 'unknown') ?? (this.provider.model ?? 'unknown');
+    const record = { at: this.now(), agent, type: 'usage', message: 'Provider call started; usage pending', callId,
+      ...usageReceipt(providerName, modelName, null), state: 'pending' };
+    project.events.push(record);
+    await this.save(project);
+    let reply, failure;
+    try { reply = await this.provider.generate(args); }
+    catch (error) { failure = error; }
+    Object.assign(record, usageReceipt(providerName, modelName, reply?.usage ?? failure?.usage));
+    record.message = record.state === 'measured' ? 'Provider reported token usage; API cost is an estimate' : 'Provider did not report tokens; charges may still apply';
+    await this.save(project);
+    if (failure) throw failure;
+    return reply;
   }
   async recordPublish(id, service, receipt) {
     const project = await this.getInternal(id);
@@ -83,7 +100,7 @@ export class VillageEngine {
     this.event(project, 'Maya', 'start', 'Reading the project goal');
     await this.save(project);
     try {
-      const { result, usage } = await this.provider.generate({ system: MAYA, input: JSON.stringify({ goal, domainProfile }), signal: undefined });
+      const { result, usage } = await this.runProvider(project, 'Maya', `clarify:${requestId}`, { system: MAYA, input: JSON.stringify({ goal, domainProfile }), signal: undefined });
       if (!validText(result.question, 300)) throw new Error('Maya returned an invalid question');
       project.status = 'needs_answer';
       this.event(project, 'Maya', 'question', result.question, { usage });
@@ -103,7 +120,7 @@ export class VillageEngine {
     this.event(project, 'User', 'answer', project.answer);
     await this.save(project);
     try {
-      const { result, usage } = await this.provider.generate({ system: PLAN, input: JSON.stringify({ goal: project.goal, answer: project.answer, domainProfile: project.domainProfile }) });
+      const { result, usage } = await this.runProvider(project, 'Maya', `answer:${requestId}`, { system: PLAN, input: JSON.stringify({ goal: project.goal, answer: project.answer, domainProfile: project.domainProfile }) });
       if (!validPlan(result)) throw new Error('Maya returned an invalid plan');
       project.plan = { summary: result.summary, audience: result.audience,
         acceptance: [...result.acceptance], decision: result.decision };
@@ -140,7 +157,7 @@ export class VillageEngine {
   }
   async runBuild(project, controller) {
     try {
-      const { result, usage } = await this.provider.generate({ system: SAM, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan, domainProfile: project.domainProfile }), signal: controller.signal });
+      const { result, usage } = await this.runProvider(project, 'Sam', `build:${project.buildRequestId}`, { system: SAM, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan, domainProfile: project.domainProfile }), signal: controller.signal });
       if (controller.signal.aborted) return;
       const artifact = renderArtifact(result);
       const dir = join(this.root, project.id);
@@ -160,7 +177,7 @@ export class VillageEngine {
       this.event(project, 'Quinn', 'start', `Reviewing the generated files at SHA-256 ${artifact.sha256}`);
       await this.save(project);
       if (controller.signal.aborted) return;
-      const review = await this.provider.generate({ system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, domainProfile: project.domainProfile, html, css, sha256: actualSha }), signal: controller.signal });
+      const review = await this.runProvider(project, 'Quinn', `review:${project.buildRequestId}`, { system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, domainProfile: project.domainProfile, html, css, sha256: actualSha }), signal: controller.signal });
       if (controller.signal.aborted) return;
       const currentHtml = await readFile(join(dir, 'index.html'), 'utf8');
       const currentCss = await readFile(join(dir, 'styles.css'), 'utf8');

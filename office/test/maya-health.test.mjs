@@ -31,10 +31,35 @@ test('read-only database health checks all three tables after operator auth, eve
   assert.equal(result.status, 200);
   assert.deepEqual(result.value.tables, ['village_projects', 'village_monthly_budget', 'village_budget_claims']);
   assert.equal(result.value.ready, true);
-  assert.equal(queries.length, 3);
+  assert.equal(result.value.usageReady, true);
+  assert.equal(result.value.domainReady, true);
+  assert.equal(queries.length, 5);
   assert.ok(queries.every(sql => /^SELECT 1 FROM village_[a-z_]+ LIMIT 0$/.test(sql)));
   assert.equal(opened, 1); assert.equal(closed, 1);
   assert.ok(!JSON.stringify(result).includes(env.VILLAGE_DATABASE_URL));
+});
+
+test('001 database remains readable while additive usage migration is pending', async () => {
+  class Pool {
+    async query(sql) { if (sql.includes('village_provider_usage')) throw new Error('missing 002'); return { rows: [] }; }
+    async end() {}
+  }
+  const result = await call(createMayaHealthHandler({ env, auth, PoolClass: Pool }), 'owner');
+  assert.equal(result.status, 200);
+  assert.equal(result.value.ready, true);
+  assert.equal(result.value.usageReady, false);
+});
+
+test('003 database readiness is reported separately from the running 001 schema', async () => {
+  class Pool {
+    async query(sql) { if (sql.includes('village_domain_profiles')) throw new Error('missing 003'); return { rows: [] }; }
+    async end() {}
+  }
+  const result = await call(createMayaHealthHandler({ env, auth, PoolClass: Pool }), 'owner');
+  assert.equal(result.status, 200);
+  assert.equal(result.value.ready, true);
+  assert.equal(result.value.usageReady, true);
+  assert.equal(result.value.domainReady, false);
 });
 
 test('database health does not leak connection errors and always closes the pool', async () => {

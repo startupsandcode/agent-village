@@ -12,6 +12,10 @@ const exportPath = document.querySelector('#export-path');
 const publishStatus = document.querySelector('#publish-status');
 const connectionButton = document.querySelector('#connections');
 const connectionStatus = document.querySelector('#connection-status');
+const usageStatus = document.querySelector('#usage-status');
+const usageAgents = document.querySelector('#usage-agents');
+const usageCalls = document.querySelector('#usage-calls');
+const usagePricing = document.querySelector('#usage-pricing');
 const publishActions = document.querySelector('#publish-actions');
 const githubPublishForm = document.querySelector('#github-publish-form');
 const vercelPublishForm = document.querySelector('#vercel-publish-form');
@@ -26,6 +30,53 @@ let pendingMessage = null;
 let pendingBuildId = null;
 let simulated = false;
 let conversationEpoch = 0;
+let usageSignature = '';
+let usageSequence = 0;
+let usageRetryTimer = null;
+let usagePendingSince = 0;
+let usagePendingProject = null;
+const cost = value => Number(value) > 0 && Number(value) < 1000 ? '<$0.000001' : `$${(Number(value) / 1_000_000_000).toFixed(6)}`;
+function usageText(label, value) {
+  return `${label}: ${value.calls} calls; ${value.inputTokens} input and ${value.outputTokens} output tokens; ${cost(value.estimatedCostNanoUsd)} estimated API cost` +
+    (value.unpricedCalls ? `; ${value.unpricedCalls} unpriced` : '') +
+    (value.pendingCalls || value.unreportedCalls ? `; ${value.pendingCalls} pending, ${value.unreportedCalls} unreported` : '');
+}
+async function loadUsage(id = null) {
+  if (!usageStatus) return;
+  if (usageRetryTimer) { clearTimeout(usageRetryTimer); usageRetryTimer = null; }
+  if (usagePendingProject !== id) { usagePendingProject = id; usagePendingSince = 0; }
+  const sequence = ++usageSequence;
+  const epoch = conversationEpoch;
+  try {
+    const value = await api(`/api/usage${id ? `?projectId=${encodeURIComponent(id)}` : ''}`);
+    if (sequence !== usageSequence || epoch !== conversationEpoch || (id && project?.id !== id)) return;
+    usageStatus.textContent = `${usageText('This project', value.project.total)}. ${usageText(`${value.month} across local projects`, value.monthly.total)}.`;
+    usageAgents.replaceChildren(...Object.entries(value.project.agents).map(([agent, totals]) => {
+      const item = document.createElement('li'); item.textContent = usageText(agent, totals); return item;
+    }));
+    usageCalls.replaceChildren(...value.calls.map(call => {
+      const item = document.createElement('li');
+      item.textContent = `${call.agent} · ${call.model} · ${call.state === 'measured' ? `${call.inputTokens} input, ${call.outputTokens} output tokens; ${call.estimatedCostNanoUsd == null ? 'cost unavailable' : `${cost(call.estimatedCostNanoUsd)} estimated`}` : call.state === 'pending' ? 'usage pending or interrupted' : 'tokens unreported; charges may still apply'}`;
+      return item;
+    }));
+    usagePricing.textContent = `Prices checked ${value.pricingDate}. Check provider billing for actual charges. OpenAI: ${value.pricingSources.openai} · Anthropic: ${value.pricingSources.anthropic}`;
+    if (id && value.project.total.pendingCalls > 0) {
+      usagePendingSince ||= Date.now();
+      if (Date.now() - usagePendingSince < 60_000) {
+        usageRetryTimer = setTimeout(() => {
+          if (epoch === conversationEpoch && project?.id === id) loadUsage(id);
+        }, 1500);
+      }
+    } else usagePendingSince = 0;
+  } catch {
+    if (sequence === usageSequence && epoch === conversationEpoch) {
+      usageStatus.textContent = 'Usage records unavailable; no cost total can be verified.';
+      usageAgents.replaceChildren();
+      usageCalls.replaceChildren();
+      usagePricing.textContent = '';
+    }
+  }
+}
 function setupState(name, value) { const target = document.querySelector(`#setup-${name}-state`); if (target) target.textContent = value; }
 function pendingRequest(message) {
   if (requestState) { requestState.hidden = !message; requestState.textContent = message ?? ''; }
@@ -76,6 +127,8 @@ async function api(path, method = 'GET', data) {
 }
 function display(value) {
   project = value;
+  const nextUsage = `${value.id}:${value.status}:${value.events.length}`;
+  if (nextUsage !== usageSignature) { usageSignature = nextUsage; loadUsage(value.id); }
   setupState('project', `${value.status.replaceAll('_', ' ')} · ${value.goal}`);
   window.villageProject = value;
   window.dispatchEvent(new CustomEvent('village-project', { detail: value }));
@@ -199,7 +252,7 @@ connectionButton?.addEventListener('click', async () => {
   } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
   finally { connectionButton.disabled = false; }
 });
-newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishActions) publishActions.hidden = true; if (previewStatusButton) previewStatusButton.hidden = true; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before publishing. No publish action has been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your publishing targets.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
+newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; usageSignature = ''; if (usageStatus) { usageStatus.textContent = 'Loading local usage…'; usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.textContent = ''; } conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishActions) publishActions.hidden = true; if (previewStatusButton) previewStatusButton.hidden = true; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before publishing. No publish action has been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your publishing targets.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); loadUsage(); });
 setInterval(async () => { if (project && (['clarifying', 'planning', 'building', 'reviewing'].includes(project.status) || project.artifact)) { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}`); if (epoch === conversationEpoch && project?.id === projectId) display(result); } catch {} } }, 1000);
 const initialEpoch = conversationEpoch;
 api('/api/status').then(async value => {
@@ -211,6 +264,7 @@ api('/api/status').then(async value => {
   simulated = value.provider === 'mock';
   provider.textContent = simulated ? 'SIMULATED PROVIDER FOR QA · Responses are deterministic fixtures; no live model calls.' : value.ready ? `Server ready · ${value.provider} · ${value.model}. API use may incur provider charges.` : `Setup needed: ${value.error}. Set the key in your shell, then restart this server.`;
   if (!value.ready) form.querySelector('button').disabled = true;
+  loadUsage();
   const saved = sessionStorage.getItem('villageProjectId');
   if (saved && value.ready) { try { const result = await api(`/api/projects/${saved}`); if (initialEpoch === conversationEpoch && !project) display(result); } catch { if (initialEpoch === conversationEpoch) sessionStorage.removeItem('villageProjectId'); } }
 }).catch(error => { provider.textContent = error.message; });

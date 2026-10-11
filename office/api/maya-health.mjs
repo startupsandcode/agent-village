@@ -26,7 +26,13 @@ export function createMayaHealthHandler({ env = process.env, auth = createAuth({
         connectionTimeoutMillis: 5000, idleTimeoutMillis: 1000, query_timeout: 5000 });
       try {
         for (const table of tables) await pool.query(`SELECT 1 FROM ${table} LIMIT 0`);
-        return send(response, 200, { ready: true, tables });
+        let usageReady = false;
+        try { await pool.query('SELECT 1 FROM village_provider_usage LIMIT 0'); usageReady = true; }
+        catch { /* additive 002 migration is still pending */ }
+        let domainReady = false;
+        try { await pool.query('SELECT 1 FROM village_domain_profiles LIMIT 0'); domainReady = true; }
+        catch { /* additive 003 migration is still pending */ }
+        return send(response, 200, { ready: true, tables, usageReady, domainReady });
       } finally { await pool.end(); }
     } catch { return send(response, 503, { ready: false, error: 'Database schema or access is not ready' }); }
   };

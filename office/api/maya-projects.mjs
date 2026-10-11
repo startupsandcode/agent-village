@@ -80,6 +80,8 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       return send(response, 200, result);
     } catch (error) {
       if (['Project not found', 'Artifact not found'].includes(error.message)) return send(response, 404, { error: error.message });
+      if (error.message === 'Hosted usage migration is not ready') return send(response, 503, { error: 'Hosted usage migration is not ready' });
+      if (error.message === 'Hosted domain migration is not ready') return send(response, 503, { error: 'Hosted domain migration is not ready' });
       if (error.message === 'Publish target changed; refresh status') return send(response, 409, { error: error.message });
       const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
       return send(response, safe ? 400 : 500, { error: safe ? error.message : 'Project request failed' });
