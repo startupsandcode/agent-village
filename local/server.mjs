@@ -53,7 +53,7 @@ export function createLocalServer({ provider, providerError, engine = provider &
       const name = path === '/' ? 'index.html' : path.slice(1);
       if (!Object.hasOwn(types, name)) return send(response, 404, { error: 'Not found' });
       const value = await readFile(join(publicDir, name));
-      return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
+      return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
       const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat)$/.test(error.message) ? error.message : 'Request failed';
       return send(response, safe === 'Request failed' ? 500 : 400, { error: safe });

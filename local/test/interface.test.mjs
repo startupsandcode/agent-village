@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProvider } from '../providers.mjs';
@@ -35,8 +35,8 @@ test('OpenAI and Anthropic adapters use server headers and parse results', async
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
     return { ok: true, json: async () => url.includes('openai')
-      ? { output_text: '{"question":"OpenAI question"}', usage: { input_tokens: 1, output_tokens: 2 } }
-      : { content: [{ type: 'text', text: '{"question":"Anthropic question"}' }], usage: { input_tokens: 3, output_tokens: 4 } } };
+      ? { status: 'completed', output_text: '{"question":"OpenAI question"}', usage: { input_tokens: 1, output_tokens: 2 } }
+      : { stop_reason: 'end_turn', content: [{ type: 'text', text: '{"question":"Anthropic question"}' }], usage: { input_tokens: 3, output_tokens: 4 } } };
   };
   const openai = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'test-openai' }, fetchImpl });
   const anthropic = createProvider({ name: 'anthropic', env: { ANTHROPIC_API_KEY: 'test-anthropic' }, fetchImpl });
@@ -46,12 +46,33 @@ test('OpenAI and Anthropic adapters use server headers and parse results', async
   assert.equal(calls[1].options.headers['x-api-key'], 'test-anthropic');
   assert.ok(!calls[0].options.body.includes('test-openai'));
   assert.ok(!calls[1].options.body.includes('test-anthropic'));
+  assert.deepEqual(JSON.parse(calls[1].options.body).thinking, { type: 'between_tools' });
+  assert.deepEqual(JSON.parse(calls[1].options.body).output_config, { effort: 'low' });
+});
+test('OpenAI parses the raw Responses HTTP output shape', async () => {
+  const provider = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, fetchImpl: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"question":"Raw HTTP output"}' }] }] }) }) });
+  assert.equal((await provider.generate({ system: 'x', input: 'y' })).result.question, 'Raw HTTP output');
 });
 test('provider missing-key and HTTP errors are explicit without body leakage', async () => {
   assert.throws(() => createProvider({ name: 'openai', env: {} }), /Missing OPENAI_API_KEY/);
   assert.throws(() => createProvider({ name: 'anthropic', env: {} }), /Missing ANTHROPIC_API_KEY/);
   const provider = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'private-key' }, fetchImpl: async () => ({ ok: false, status: 401 }) });
   await assert.rejects(provider.generate({ system: 'x', input: 'y' }), /Provider request failed \(401\)/);
+});
+test('provider truncation and cancellation fail without treating partial JSON as success', async () => {
+  const openai = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, fetchImpl: async () => ({ ok: true, json: async () => ({ status: 'incomplete', output_text: '{"question":"partial"}' }) }) });
+  await assert.rejects(openai.generate({ system: 'x', input: 'y' }), /truncated/);
+  const anthropic = createProvider({ name: 'anthropic', env: { ANTHROPIC_API_KEY: 'fake' }, fetchImpl: async () => ({ ok: true, json: async () => ({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"question":"partial"}' }] }) }) });
+  await assert.rejects(anthropic.generate({ system: 'x', input: 'y' }), /truncated/);
+  const controller = new AbortController();
+  const pending = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, fetchImpl: async (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')))) });
+  const call = pending.generate({ system: 'x', input: 'y', signal: controller.signal });
+  controller.abort();
+  await assert.rejects(call, /Request cancelled/);
+  const timeout = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, timeoutMs: 5, fetchImpl: async (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')))) });
+  await assert.rejects(timeout.generate({ system: 'x', input: 'y' }), /Provider timed out/);
+  const ignoringAbort = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, timeoutMs: 5, fetchImpl: async () => new Promise(() => {}) });
+  await assert.rejects(ignoringAbort.generate({ system: 'x', input: 'y' }), /Provider timed out/);
 });
 test('configured API key is rejected from chat before any provider call', async () => fixture(async root => {
   const provider = mockProvider();
@@ -74,6 +95,37 @@ test('full mock flow creates an inspectable artifact and exact review receipt', 
   assert.equal((await engine.build(result.id, 'build-12345')).events.length, result.events.length);
   assert.equal(provider.calls.length, 4);
   await assert.rejects(engine.artifact(result.id, '../state.json'), /Artifact not found/);
+}));
+test('request ID remains deduplicated after server restart', async () => fixture(async root => {
+  const firstProvider = mockProvider();
+  const first = await new VillageEngine({ root, provider: firstProvider }).create('Garden club website', 'request-12345');
+  const secondProvider = mockProvider();
+  const replay = await new VillageEngine({ root, provider: secondProvider }).create('Garden club website', 'request-12345');
+  assert.equal(replay.id, first.id);
+  assert.equal(secondProvider.calls.length, 0);
+}));
+test('post-review file changes invalidate the visible receipt and served artifact', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const result = await completed(engine);
+  await writeFile(join(root, result.id, 'index.html'), '<h1>Changed after review</h1>');
+  const refreshed = await engine.get(result.id);
+  assert.equal(refreshed.status, 'blocked');
+  assert.equal(refreshed.artifact, null);
+  assert.match(refreshed.events.at(-1).message, /changed after review/);
+  await assert.rejects(engine.artifact(result.id, 'index.html'), /Artifact not found/);
+}));
+test('restored project ID and workspace directory must match', async () => fixture(async root => {
+  const first = await new VillageEngine({ root, provider: mockProvider() }).create('Garden club website', 'request-12345');
+  const file = join(root, first.id, 'state.json');
+  const state = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify({ ...state, id: '00000000-0000-0000-0000-000000000000' }));
+  await assert.rejects(new VillageEngine({ root, provider: mockProvider() }).get(first.id), /Project state mismatch/);
+  await rm(join(root, first.id), { recursive: true });
+  const outside = await mkdtemp(join(tmpdir(), 'village-outside-'));
+  try {
+    await symlink(outside, join(root, first.id));
+    await assert.rejects(new VillageEngine({ root, provider: mockProvider() }).get(first.id), /Project not found/);
+  } finally { await rm(outside, { recursive: true, force: true }); }
 }));
 test('Maya plan exposes only validated fields and answer retries do not call provider again', async () => fixture(async root => {
   const values = [...sequence];
@@ -134,6 +186,28 @@ test('cancellation during Quinn review never records approval', async () => fixt
   const result = await engine.get(first.id);
   assert.equal(result.status, 'cancelled');
   assert.ok(!result.events.some(event => event.type === 'review'));
+}));
+test('cancellation during the initial build save never starts Sam or restores building status', async () => fixture(async root => {
+  const provider = mockProvider();
+  const engine = new VillageEngine({ root, provider });
+  const first = await engine.create('Garden website', 'request-12345');
+  await engine.answer(first.id, 'Neighbors', 'answer-12345');
+  let releaseSave, saveStarted;
+  const gate = new Promise(resolve => { releaseSave = resolve; });
+  const entered = new Promise(resolve => { saveStarted = resolve; });
+  const originalSave = engine.save.bind(engine);
+  engine.save = async project => {
+    if (project.status === 'building') { saveStarted(); await gate; }
+    return originalSave(project);
+  };
+  const building = engine.build(first.id, 'build-12345');
+  await entered;
+  await engine.cancel(first.id);
+  releaseSave();
+  assert.equal((await building).status, 'cancelled');
+  assert.equal((await engine.get(first.id)).status, 'cancelled');
+  assert.equal(JSON.parse(await readFile(join(root, first.id, 'state.json'), 'utf8')).status, 'cancelled');
+  assert.equal(provider.calls.length, 2);
 }));
 test('local HTTP reports missing configuration and enforces host and origin', async () => {
   const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server' });
