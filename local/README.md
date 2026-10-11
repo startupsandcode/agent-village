@@ -7,9 +7,11 @@ This is the first portable Agent Village slice. A visitor gives Maya a plain-lan
 You need Node.js 20 or newer and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. Four calls is the maximum in one completed project (clarification, plan, build, review). Each call has a 45-second timeout and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal.
 
 ```sh
-git clone https://github.com/startupsandcode/agent-village.git
+git clone --branch village-interface-20261011-01 --single-branch https://github.com/startupsandcode/agent-village.git
 cd agent-village
 ```
+
+While [draft PR #30](https://github.com/startupsandcode/agent-village/pull/30) is unmerged, the branch option above is required. After merge, a normal clone of `main` will contain the interface.
 
 In a local `zsh` terminal, choose **one** provider and enter the key at a silent prompt. Do not paste it into the browser, chat, a command line, a file, or a Git commit:
 

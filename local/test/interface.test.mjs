@@ -217,6 +217,8 @@ test('local HTTP reports missing configuration and enforces host and origin', as
     const status = await (await fetch(`${base}/api/status`)).json();
     assert.equal(status.ready, false);
     assert.match(status.error, /OPENAI_API_KEY/);
+    const home = await fetch(base);
+    assert.match(home.headers.get('content-security-policy'), /frame-ancestors 'none'/);
     const denied = await fetch(`${base}/api/projects`, { method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{}' });
     assert.equal(denied.status, 403);
     const config = await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
