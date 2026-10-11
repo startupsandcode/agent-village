@@ -25,7 +25,7 @@ async function fixture(fn) {
   finally { await rm(root, { recursive: true, force: true }); }
 }
 
-function githubMock({ privateRepo = true, defaultBranch = 'main', protectedBranch = false, entries = [{ path: 'notes.txt', mode: '100644', type: 'blob', sha: sha('a') }], pause, failPatch = false, wrongRef = false } = {}) {
+function githubMock({ privateRepo = true, defaultBranch = 'main', protectedBranch = false, hasPages = false, entries = [{ path: 'notes.txt', mode: '100644', type: 'blob', sha: sha('a') }], pause, failPatch = false, wrongRef = false } = {}) {
   const calls = [];
   let tree = entries;
   let head = sha('1');
@@ -36,7 +36,7 @@ function githubMock({ privateRepo = true, defaultBranch = 'main', protectedBranc
     const path = new URL(url).pathname;
     let status = 200;
     let data;
-    if (path === '/repos/alice/site') data = { full_name: 'alice/site', owner: { login: 'alice' }, private: privateRepo, default_branch: defaultBranch, permissions: { push: true } };
+    if (path === '/repos/alice/site') data = { full_name: 'alice/site', owner: { login: 'alice' }, private: privateRepo, has_pages: hasPages, default_branch: defaultBranch, permissions: { push: true } };
     else if (path.endsWith('/branches/village-publish')) data = { name: 'village-publish', protected: protectedBranch, commit: { sha: head } };
     else if (path.includes('/git/commits/') && options.method === 'GET') data = { tree: { sha: sha('2') } };
     else if (path.endsWith('/git/trees/' + sha('2'))) data = { tree, truncated: false };
@@ -56,6 +56,7 @@ function githubMock({ privateRepo = true, defaultBranch = 'main', protectedBranc
 }
 
 const args = (engine, fetchImpl, overrides = {}) => ({ engine, id, owner: 'alice', repo: 'site', branch: 'village-publish', token: 'test-only-token', fetchImpl, ...overrides });
+const hostedArgs = (fetchImpl, snapshot, overrides = {}) => ({ snapshot, owner: 'alice', repo: 'site', branch: 'village-publish', token: 'test-only-token', fetchImpl, ...overrides });
 
 test('publishes only reviewed delivery files to existing private non-default branch, preserving unrelated files', async () => fixture(async ({ engine, artifactSha }) => {
   const mock = githubMock();
@@ -87,7 +88,9 @@ test('rejects public, default, protected, and colliding targets before writing',
     [{ privateRepo: false }, /private repository/],
     [{ defaultBranch: 'village-publish' }, /non-default branch/],
     [{ protectedBranch: true }, /unprotected/],
+    [{ hasPages: true }, /private repository/],
     [{ entries: [{ path: 'index.html', type: 'blob', mode: '100644', sha: sha('a') }] }, /already contains delivery files/],
+    [{ entries: [{ path: '.github', type: 'tree', mode: '040000', sha: sha('a') }] }, /automation configuration/],
   ]) {
     const mock = githubMock(options);
     await assert.rejects(publishReviewedSite(args(engine, mock.fetchImpl)), pattern);
@@ -169,3 +172,27 @@ test('a later workspace edit cannot change the captured bytes sent to GitHub', a
   assert.ok(indexBlob, 'reviewed HTML snapshot was uploaded');
   assert.ok(mock.calls.filter(call => call.url.endsWith('/git/blobs')).every(call => !Buffer.from(call.body.content, 'base64').toString().includes('changed after snapshot')));
 }));
+
+test('hosted reviewed snapshot publishes the exact canonical six files without filesystem access', async () => {
+  const mock = githubMock();
+  const reviewed = artifactDigest(html, css);
+  const result = await publishReviewedSite(hostedArgs(mock.fetchImpl, { html, css, sha256: reviewed }));
+  assert.equal(result.artifactSha256, reviewed);
+  const blobBodies = mock.calls.filter(call => call.url.endsWith('/git/blobs')).map(call => Buffer.from(call.body.content, 'base64').toString());
+  assert.equal(blobBodies.length, 6);
+  assert.ok(blobBodies.includes(html));
+  assert.ok(blobBodies.includes(css));
+  assert.ok(blobBodies.some(body => body.includes(`Receipt: SHA-256 ${reviewed}`)));
+  assert.ok(blobBodies.some(body => body.includes("'index.html', 'package.json', 'styles.css'")));
+  assert.ok(blobBodies.includes('.git\n.vercel\n'));
+  assert.ok(blobBodies.some(body => body.startsWith('{') && JSON.parse(body).scripts?.test === 'node --test verify.test.mjs'));
+  assert.deepEqual(mock.getTree().slice(1).map(item => item.path).sort(), ['.vercelignore', 'README.md', 'index.html', 'package.json', 'styles.css', 'verify.test.mjs']);
+});
+
+test('hosted digest mismatch and ambiguous source make no GitHub calls', async () => {
+  const mock = githubMock();
+  const reviewed = artifactDigest(html, css);
+  await assert.rejects(publishReviewedSite(hostedArgs(mock.fetchImpl, { html: `${html}changed`, css, sha256: reviewed })), /Reviewed files changed/);
+  await assert.rejects(publishReviewedSite(hostedArgs(mock.fetchImpl, { html, css, sha256: reviewed }, { id })), /Choose one reviewed project source/);
+  assert.equal(mock.calls.length, 0);
+});

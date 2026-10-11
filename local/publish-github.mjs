@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { capturePreparedProject } from './export.mjs';
+import { capturePreparedProject, createDeliverySnapshot } from './export.mjs';
 
 const inflight = new Set();
 const shaPattern = /^[0-9a-f]{40}$/i;
@@ -48,9 +48,13 @@ async function github(fetchImpl, token, signal, path, method = 'GET', body) {
  * action. The caller must keep token server-side and never put it in a response.
  * A fine-grained token needs Contents: write on this one repository.
  */
-export async function publishReviewedSite({ engine, id, owner, repo, branch, token, fetchImpl = fetch, signal }) {
-  if (!engine || typeof engine.checkedWorkspace !== 'function' || typeof engine.get !== 'function') throw new Error('Invalid project engine');
-  requiredName(id, /^[0-9a-f-]{36}$/i, 'project ID');
+export async function publishReviewedSite({ engine, id, snapshot, owner, repo, branch, token, fetchImpl = fetch, signal }) {
+  if (snapshot === undefined) {
+    if (!engine || typeof engine.checkedWorkspace !== 'function' || typeof engine.get !== 'function') throw new Error('Invalid project engine');
+    requiredName(id, /^[0-9a-f-]{36}$/i, 'project ID');
+  } else if (engine !== undefined || id !== undefined) {
+    throw new Error('Choose one reviewed project source');
+  }
   requiredName(owner, /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, 'GitHub owner');
   requiredName(repo, /^[A-Za-z0-9._-]{1,100}$/, 'GitHub repository');
   requiredName(branch, /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/, 'GitHub branch');
@@ -66,7 +70,7 @@ export async function publishReviewedSite({ engine, id, owner, repo, branch, tok
   inflight.add(target);
   try {
     if (requestSignal.aborted) throw new Error('Publishing cancelled or timed out');
-    const prepared = await capturePreparedProject(engine, id);
+    const prepared = snapshot === undefined ? await capturePreparedProject(engine, id) : createDeliverySnapshot(snapshot);
     if (requestSignal.aborted) throw new Error('Publishing cancelled or timed out');
     const files = new Map([...prepared.files].map(([name, content]) => {
       if (content.length > 512_000) throw new Error('Prepared file is too large to publish');
@@ -76,7 +80,7 @@ export async function publishReviewedSite({ engine, id, owner, repo, branch, tok
     const repository = await github(fetchImpl, token, requestSignal, base);
     if (repository.full_name?.toLowerCase() !== `${owner}/${repo}`.toLowerCase() ||
         repository.owner?.login?.toLowerCase() !== owner.toLowerCase() ||
-        repository.private !== true || repository.archived || repository.disabled ||
+        repository.private !== true || repository.archived || repository.disabled || repository.has_pages !== false ||
         repository.permissions?.push !== true) {
       throw new Error('GitHub target must be the requested writable private repository');
     }
@@ -89,6 +93,7 @@ export async function publishReviewedSite({ engine, id, owner, repo, branch, tok
     const baseTree = checkedSha(parentCommit.tree?.sha, 'tree');
     const treeInfo = await github(fetchImpl, token, requestSignal, `${base}/git/trees/${baseTree}`);
     if (treeInfo.truncated || !Array.isArray(treeInfo.tree)) throw new Error('Could not inspect complete GitHub tree');
+    if (treeInfo.tree.some(item => item.path === '.github')) throw new Error('GitHub target contains automation configuration; use a dedicated inert repository');
     const existing = treeInfo.tree.filter(item => files.has(item.path));
     if (existing.length) {
       if (existing.length === files.size && existing.every(item => item.type === 'blob' && item.mode === '100644' && item.sha === files.get(item.path).sha)) {

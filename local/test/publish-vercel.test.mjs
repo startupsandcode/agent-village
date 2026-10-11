@@ -26,6 +26,7 @@ test('Preview upload is explicit, scoped to an existing static project, and cont
   const sent = JSON.parse(calls[1].options.body);
   assert.equal(sent.project, 'prj_abcdef1234');
   assert.equal(sent.target, undefined);
+  assert.deepEqual(sent.projectSettings, { framework: null, buildCommand: '' });
   assert.deepEqual(sent.files.map(file => file.file), ['index.html', 'styles.css']);
   assert.equal(Buffer.from(sent.files[0].data, 'base64').toString(), '<h1>Reviewed</h1>');
   assert.ok(!JSON.stringify(sent).includes(inputs.token));
@@ -49,6 +50,18 @@ test('changed captured files cannot be uploaded with a reviewed receipt', async 
   const changed = { ...engine, async artifact(_id, file) { return file === 'index.html' ? '<h1>Changed</h1>' : 'h1{color:teal}'; } };
   await assert.rejects(deployReviewedPreview({ ...inputs, engine: changed, fetchImpl: fakeFetch(calls) }), /Reviewed files changed/);
   assert.equal(calls.length, 0);
+});
+
+test('a project with inherited custom commands or output paths is rejected before upload', async () => {
+  for (const setting of ['rootDirectory', 'buildCommand', 'installCommand', 'outputDirectory', 'devCommand', 'commandForIgnoringBuildStep', 'ignoreCommand', 'link']) {
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null, [setting]: 'echo unsafe' }) };
+    };
+    await assert.rejects(deployReviewedPreview({ ...inputs, fetchImpl }), /no Git link or custom build settings/);
+    assert.equal(calls.length, 1);
+  }
 });
 
 test('Vercel errors and credential absence do not expose response or token', async () => {

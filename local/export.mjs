@@ -13,6 +13,24 @@ function supportFiles(sha256) {
   };
 }
 
+/** Build the canonical six-file delivery from an approved HTML/CSS receipt. */
+export function createDeliverySnapshot({ html, css, sha256 }) {
+  if (!/^[0-9a-f]{64}$/.test(sha256) ||
+      !(typeof html === 'string' || Buffer.isBuffer(html)) ||
+      !(typeof css === 'string' || Buffer.isBuffer(css))) {
+    throw new Error('Invalid reviewed site snapshot');
+  }
+  const htmlBytes = Buffer.from(html);
+  const cssBytes = Buffer.from(css);
+  if (digest(htmlBytes, cssBytes) !== sha256) throw new Error('Reviewed files changed');
+  const files = new Map(Object.entries({
+    'index.html': htmlBytes,
+    'styles.css': cssBytes,
+    ...supportFiles(sha256),
+  }).map(([name, value]) => [name, Buffer.from(value)]));
+  return { sha256, files };
+}
+
 export async function exportProject(engine, id) {
   const project = await engine.get(id);
   if (project.status !== 'reviewed' || !project.artifact) throw new Error('Only a reviewed project can be prepared');
@@ -58,16 +76,16 @@ export async function capturePreparedProject(engine, id) {
   if (project.status !== 'reviewed' || project.artifact?.sha256 !== prepared.sha256) throw new Error('Reviewed project changed');
   const [html, css] = await Promise.all(['index.html', 'styles.css'].map(name => engine.artifact(id, name)));
   if (digest(html, css) !== prepared.sha256) throw new Error('Reviewed files changed');
-  const expected = { 'index.html': html, 'styles.css': css, ...supportFiles(prepared.sha256) };
+  const expected = createDeliverySnapshot({ html, css, sha256: prepared.sha256 }).files;
   const entries = await readdir(prepared.path, { withFileTypes: true });
   const delivery = entries.filter(item => !['.git', '.vercel'].includes(item.name));
-  if (delivery.map(item => item.name).sort().join('\0') !== Object.keys(expected).sort().join('\0') ||
+  if (delivery.map(item => item.name).sort().join('\0') !== [...expected.keys()].sort().join('\0') ||
       delivery.some(item => !item.isFile() || item.isSymbolicLink()) ||
       entries.some(item => ['.git', '.vercel'].includes(item.name) && (!item.isDirectory() || item.isSymbolicLink()))) {
     throw new Error('Prepared project changed; inspect it before publishing');
   }
   const files = new Map();
-  for (const [name, value] of Object.entries(expected)) {
+  for (const [name, value] of expected) {
     const path = join(prepared.path, name);
     let details, content;
     try { details = await lstat(path); content = await readFile(path); }

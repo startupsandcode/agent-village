@@ -166,3 +166,44 @@ test('hosted preview links to sibling reviewed artifact files', async () => {
   assert.equal(frame.src, link.href);
   assert.equal(new URL('styles.css', `https://office.example${frame.src}`).pathname, `/api/maya-artifacts/${id}/styles.css`);
 });
+
+test('older hosted publish status cannot replace a newer receipt', async () => {
+  const elements = new Map(); const listeners = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '', children: [],
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren(...items) { this.children = items; }, append(...items) { this.children.push(...items); } });
+    return elements.get(name);
+  };
+  const id = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+  const reviewed = { id, version: 4, status: 'reviewed', events: [], artifact: { sha256: 'a'.repeat(64) } };
+  let resolveOld;
+  const old = new Promise(resolve => { resolveOld = resolve; });
+  let statusCalls = 0;
+  const base = { projectId: id, artifactSha256: reviewed.artifact.sha256, reviewed: true,
+    targets: { github: { owner: 'alice', repo: 'site', branch: 'village-publish', available: true },
+      vercel: { team: 'team', project: 'site', available: false } }, receipts: { github: null, vercel: null } };
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (options.method === 'POST' && JSON.parse(options.body).action === 'publishStatus') {
+      return ++statusCalls === 1 ? old : reply({ ...base, receipts: { github: { status: 'submitted', receipt: { commitSha: 'b'.repeat(40) } }, vercel: null } });
+    }
+    return reply(reviewed);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    setInterval: () => 1, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(statusCalls, 1);
+  await listeners.get('#hosted-publish-refresh:click')();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-publish-result').textContent, /bbbb/);
+  assert.equal(get('#hosted-publish-github').hidden, true);
+  resolveOld(reply(base));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-publish-result').textContent, /bbbb/);
+  assert.equal(get('#hosted-publish-github').hidden, true);
+});

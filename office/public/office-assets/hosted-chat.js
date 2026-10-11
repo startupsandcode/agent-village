@@ -8,11 +8,19 @@ const build = document.querySelector('#hosted-build');
 const review = document.querySelector('#hosted-review');
 const cancel = document.querySelector('#hosted-cancel');
 const another = document.querySelector('#hosted-new');
+const publishPanel = document.querySelector('#hosted-publish');
+const publishTargets = document.querySelector('#hosted-publish-targets');
+const publishResult = document.querySelector('#hosted-publish-result');
+const publishGithub = document.querySelector('#hosted-publish-github');
+const publishVercel = document.querySelector('#hosted-publish-vercel');
+const publishRefresh = document.querySelector('#hosted-publish-refresh');
 let project = null;
 let pending = null;
 let busy = false;
 let epoch = 0;
 let restoringPoll = false;
+let publishVersion = -1;
+let publishStatusSequence = 0;
 
 async function request(body) {
   const response = await fetch('/api/maya-projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -39,6 +47,11 @@ function render(value, expectedEpoch = epoch) {
     return row;
   }));
   artifact.replaceChildren();
+  publishPanel.hidden = value.status !== 'reviewed';
+  if (value.status === 'reviewed' && publishVersion !== value.version) {
+    publishVersion = value.version;
+    loadPublishStatus(value.id, expectedEpoch);
+  }
   if (value.artifact) {
     const label = document.createElement('p');
     label.textContent = `${value.status === 'reviewed' ? 'Reviewed' : 'Awaiting or requiring review'} website · SHA-256 ${value.artifact.sha256}`;
@@ -51,6 +64,52 @@ function render(value, expectedEpoch = epoch) {
   }
   return true;
 }
+async function loadPublishStatus(id, expectedEpoch = epoch) {
+  const sequence = ++publishStatusSequence;
+  try {
+    const result = await request({ action: 'publishStatus', id });
+    if (expectedEpoch !== epoch || project?.id !== id || sequence !== publishStatusSequence) return;
+    const { github, vercel } = result.targets;
+    publishTargets.textContent = `GitHub: ${github.owner && github.repo && github.branch ? `${github.owner}/${github.repo} · ${github.branch}` : 'not configured'}; Vercel Preview: ${vercel.team && vercel.project ? `${vercel.team}/${vercel.project}` : 'not configured'}. Reviewed SHA-256 ${result.artifactSha256}.`;
+    publishGithub.hidden = !github.available || result.receipts.github != null;
+    publishVercel.hidden = !vercel.available || result.receipts.vercel != null;
+    const lines = [];
+    for (const service of ['github', 'vercel']) {
+      const receipt = result.receipts[service];
+      if (receipt) lines.push(receipt.status === 'submitting'
+        ? `${service}: submission is uncertain. Inspect the configured target; automatic retry is blocked.`
+        : `${service}: ${receipt.receipt?.commitSha ?? receipt.receipt?.deploymentId} · ${receipt.receipt?.state ?? 'commit recorded'}${receipt.receipt?.url ? ` · ${receipt.receipt.url}` : ''}`);
+    }
+    publishResult.textContent = lines.length ? lines.join('\n') : 'No publication has been requested.';
+  } catch (error) { if (expectedEpoch === epoch && project?.id === id && sequence === publishStatusSequence) publishResult.textContent = error.message; }
+}
+async function publish(service) {
+  if (!project || project.status !== 'reviewed') return;
+  const expectedEpoch = epoch;
+  const id = project.id;
+  const reviewedSha = project.artifact.sha256;
+  const button = service === 'github' ? publishGithub : publishVercel;
+  publishStatusSequence++;
+  button.disabled = true;
+  publishResult.textContent = `Submitting reviewed ${service === 'github' ? 'files to GitHub' : 'site to Vercel Preview'}…`;
+  try {
+    const result = await request({ action: service === 'github' ? 'publishGithub' : 'publishVercel', id, artifactSha256: reviewedSha });
+    if (expectedEpoch !== epoch || project?.id !== id) return;
+    publishResult.textContent = result.status === 'submitting' ? 'Submission status is uncertain. Inspect the configured target; automatic retry is blocked.' :
+      `${service} accepted ${result.receipt?.commitSha ?? result.receipt?.deploymentId}; check the recorded status below.`;
+    await loadPublishStatus(id, expectedEpoch);
+    const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (response.ok) render(await response.json(), expectedEpoch);
+  } catch (error) {
+    if (expectedEpoch === epoch && project?.id === id) {
+      publishResult.textContent = `${error.message} Check publish status before trying again.`;
+      await loadPublishStatus(id, expectedEpoch);
+    }
+  } finally { button.disabled = false; }
+}
+publishGithub?.addEventListener('click', () => publish('github'));
+publishVercel?.addEventListener('click', () => publish('vercel'));
+publishRefresh?.addEventListener('click', () => { if (project?.id) loadPublishStatus(project.id); });
 async function act(action, values = {}) {
   if (busy) return;
   busy = true;
@@ -103,9 +162,10 @@ cancel?.addEventListener('click', async () => {
   catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
 });
 another?.addEventListener('click', () => {
-  epoch++; project = null; pending = null; busy = false;
+  epoch++; project = null; pending = null; busy = false; publishVersion = -1; publishStatusSequence++;
   sessionStorage.removeItem('hostedVillageProjectId');
   events.replaceChildren(); artifact.replaceChildren(); message.value = ''; message.disabled = false;
+  publishPanel.hidden = true; publishTargets.textContent = ''; publishResult.textContent = '';
   form.querySelector('label').textContent = 'Project goal'; form.querySelector('button').disabled = false;
   build.hidden = true; review.hidden = true; cancel.hidden = true; another.hidden = true;
   state.textContent = 'Describe a new small website.'; message.focus();

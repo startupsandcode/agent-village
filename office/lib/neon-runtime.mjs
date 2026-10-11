@@ -3,6 +3,7 @@ import { createHostedProjectAccess } from './hosted-project-access.mjs';
 import { createHostedBudget } from './hosted-budget.mjs';
 import { createHostedCoordinator } from './hosted-coordinator.mjs';
 import { createProvider } from './provider.mjs';
+import { createHostedPublisher } from './hosted-publish.mjs';
 
 // Open only inside an authorized request. Pool uses a WebSocket connection for
 // interactive transactions and must be closed before the Function completes.
@@ -31,5 +32,5 @@ export async function createNeonHostedRuntime({ env, auth, PoolClass } = {}) {
   const store = createHostedProjectStore({ query });
   const access = createHostedProjectAccess({ store, auth });
   const budget = createHostedBudget({ transaction, auth });
-  return { coordinator: createHostedCoordinator({ access, budget, provider }), close: () => pool.end() };
+  return { coordinator: createHostedCoordinator({ access, budget, provider }), publisher: createHostedPublisher({ access, env }), close: () => pool.end() };
 }

@@ -26,8 +26,10 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
   if (Buffer.byteLength(html) > 32_768 || Buffer.byteLength(css) > 32_768) throw new Error('Reviewed files exceed preview upload limit');
   const query = `?slug=${encodeURIComponent(team)}`;
   const selected = await request(fetchImpl, `/v9/projects/${encodeURIComponent(project)}${query}`, token);
-  if (!selected || selected.name !== project || !/^prj_[A-Za-z0-9_-]{4,80}$/.test(selected.id ?? '') ||
-      (selected.framework !== null && selected.framework !== undefined) || selected.rootDirectory) throw new Error('Vercel target must be an existing static project at its root');
+  if (!selected || selected.name !== project || !/^prj_[A-Za-z0-9_-]{4,80}$/.test(selected.id ?? '') || selected.link != null ||
+      (selected.framework !== null && selected.framework !== undefined) ||
+      ['rootDirectory', 'buildCommand', 'installCommand', 'outputDirectory', 'devCommand', 'commandForIgnoringBuildStep', 'ignoreCommand']
+        .some(key => selected[key] != null && selected[key] !== '')) throw new Error('Vercel target must be an existing static project at its root with no Git link or custom build settings');
   await onBeforeSubmit({ team, project, projectId: selected.id, artifactSha256: record.artifact.sha256 });
   const deployment = await request(fetchImpl, `/v13/deployments${query}`, token, { method: 'POST', body: JSON.stringify({
     name: project,
@@ -36,7 +38,7 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
       { file: 'index.html', data: Buffer.from(html).toString('base64'), encoding: 'base64' },
       { file: 'styles.css', data: Buffer.from(css).toString('base64'), encoding: 'base64' },
     ],
-    projectSettings: { framework: null },
+    projectSettings: { framework: null, buildCommand: '' },
     meta: { villageProjectId: id, villageArtifactSha256: record.artifact.sha256 },
   }) });
   if (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(deployment?.id ?? '') ||
