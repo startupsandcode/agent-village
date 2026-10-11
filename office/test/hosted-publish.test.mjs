@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderArtifact } from '../lib/static-site.mjs';
 import { createHostedPublisher } from '../lib/hosted-publish.mjs';
+import { UnsafeVercelDeploymentError } from '../lib/publish-vercel.mjs';
 import { createHostedMayaHandler } from '../api/maya-projects.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
@@ -154,4 +155,27 @@ test('proven preflight failures release the durable claim; uncertain external re
     assert.equal((await publisher.publish('owner', id, service, site.sha256, fingerprint)).status, 'submitting');
     assert.equal(calls, 1);
   }
+});
+
+test('known unsafe Vercel target is recorded for inspection and never marked published or retried', async () => {
+  const { access, read } = fixture();
+  let calls = 0;
+  const unsafe = { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef1234',
+    deploymentId: 'dpl_production123', url: 'https://smoke-site-prod.vercel.app', target: 'production',
+    state: 'READY', artifactSha256: site.sha256 };
+  const publisher = createHostedPublisher({ access, env, vercelPublisher: async args => {
+    calls++;
+    await args.onBeforeSubmit();
+    throw new UnsafeVercelDeploymentError(unsafe);
+  } });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /non-Preview deployment/);
+  assert.equal(read().publishing.vercel.status, 'needs_inspection');
+  assert.deepEqual(read().publishing.vercel.receipt, unsafe);
+  assert.equal(read().events.at(-1).type, 'publish_unsafe');
+  assert.equal(read().events.some(event => event.type === 'publish'), false);
+  assert.deepEqual((await publisher.status('owner', id)).receipts.vercel.receipt, unsafe);
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'needs_inspection');
+  assert.equal(calls, 1);
+  assert.ok(!JSON.stringify(read()).includes('mock-vercel-token'));
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deployReviewedPreview } from '../publish-vercel.mjs';
+import { deployReviewedPreview, UnsafeVercelDeploymentError } from '../publish-vercel.mjs';
 import { artifactDigest } from '../artifact.mjs';
 
 const engine = { async get() { return { status: 'reviewed', artifact: { sha256: artifactDigest('<h1>Reviewed</h1>', 'h1{color:teal}') } }; },
@@ -10,7 +10,8 @@ function fakeFetch(calls) { return async (url, options) => {
   calls.push({ url, options });
   if (options.method === 'POST') return { ok: true, json: async () => ({ id: 'dpl_abcdef1234', url: 'small-site-abc.vercel.app', target: null, readyState: 'QUEUED' }) };
   if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: [{ id: 'dpl_existing123', projectId: 'prj_abcdef1234', target: 'production', state: 'READY' }] }) };
-  return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null, rootDirectory: null }) };
+  return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null, rootDirectory: null,
+    ssoProtection: { deploymentType: 'all' }, protectionBypass: null }) };
 }; }
 
 test('Preview upload is explicit, scoped to an existing static project, and contains reviewed files only', async () => {
@@ -40,10 +41,48 @@ test('an empty Vercel project cannot receive a first deployment through the Prev
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
     if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: [] }) };
-    return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null }) };
+    return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null,
+      ssoProtection: { deploymentType: 'all' } }) };
   };
   await assert.rejects(deployReviewedPreview({ ...inputs, fetchImpl }), /existing production deployment/);
   assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET']);
+});
+
+test('Preview upload requires All Deployments protection without configured bypasses', async () => {
+  for (const project of [
+    { ssoProtection: { deploymentType: 'all_except_custom_domains' } },
+    { ssoProtection: { deploymentType: 'preview' } },
+    { ssoProtection: null },
+    { ssoProtection: { deploymentType: 'all' }, protectionBypass: { secret: { scope: 'automation-bypass' } } },
+  ]) {
+    const calls = [];
+    const fetchImpl = async (url, options) => { calls.push({ url, options }); return { ok: true, json: async () => ({
+      id: 'prj_abcdef1234', name: 'small-site', framework: null, ...project,
+    }) }; };
+    await assert.rejects(deployReviewedPreview({ ...inputs, fetchImpl }), /All Deployments protection/);
+    assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET']);
+  }
+});
+
+test('unexpected Production target preserves a bounded deployment identity for inspection', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (options.method === 'POST') return { ok: true, json: async () => ({ id: 'dpl_production123',
+      url: 'small-site-prod.vercel.app', target: 'production', readyState: 'READY', secret: 'must-not-leak' }) };
+    if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: [
+      { id: 'dpl_existing123', projectId: 'prj_abcdef1234', target: 'production', state: 'READY' },
+    ] }) };
+    return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null,
+      ssoProtection: { deploymentType: 'all' } }) };
+  };
+  const error = await deployReviewedPreview({ ...inputs, fetchImpl }).then(() => null, value => value);
+  assert.ok(error instanceof UnsafeVercelDeploymentError);
+  assert.deepEqual(error.receipt, { team: 'small-team', project: 'small-site', projectId: 'prj_abcdef1234',
+    deploymentId: 'dpl_production123', url: 'https://small-site-prod.vercel.app', target: 'production',
+    state: 'READY', artifactSha256: artifactDigest('<h1>Reviewed</h1>', 'h1{color:teal}') });
+  assert.ok(!JSON.stringify(error.receipt).includes('must-not-leak'));
+  assert.equal(calls.filter(call => call.options.method === 'POST').length, 1);
 });
 
 test('wrong target and unreviewed site cause no deployment write', async () => {

@@ -1,7 +1,7 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
 import { createHash } from 'node:crypto';
 import { publishReviewedSite } from './publish-github.mjs';
-import { deployReviewedPreview, inspectPreviewDeployment } from './publish-vercel.mjs';
+import { deployReviewedPreview, inspectPreviewDeployment, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
 
 const sha = /^[a-f0-9]{64}$/;
 const name = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -98,6 +98,20 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
             id, team: configured.team, project: configured.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
             onBeforeSubmit: () => { externalUpdateAttempted = true; } });
       } catch (error) {
+        if (service === 'vercel' && externalUpdateAttempted && error instanceof UnsafeVercelDeploymentError) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const current = await read(cookie, id);
+            const previous = current.snapshot.publishing?.vercel;
+            if (previous?.status !== 'submitting' || previous.startedAt !== claim.startedAt) break;
+            const next = structuredClone(current.snapshot);
+            next.publishing.vercel = { ...claim, status: 'needs_inspection', receipt: error.receipt };
+            next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish_unsafe',
+              message: `Vercel returned ${error.receipt.target} deployment ${error.receipt.deploymentId}; inspect target and protection. Automatic retry is blocked.`,
+              receiptId: error.receipt.deploymentId, artifactSha256: expectedSha });
+            if (await access.update(cookie, { id, expectedVersion: current.version, snapshot: next })) throw error;
+          }
+          throw new Error('Unsafe Vercel deployment receipt could not be saved; inspect the configured target');
+        }
         if (externalUpdateAttempted) throw error; // Outcome may be unknown; retain durable claim.
         for (let attempt = 0; attempt < 3; attempt++) {
           const current = await read(cookie, id);

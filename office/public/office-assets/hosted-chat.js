@@ -176,7 +176,9 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
       const receipt = result.receipts[service];
       if (receipt) lines.push(receipt.status === 'submitting'
         ? `${service}: submission is uncertain. Inspect the configured target; automatic retry is blocked.`
-        : `${service}: ${receipt.receipt?.commitSha ?? receipt.receipt?.deploymentId} · ${receipt.receipt?.state ?? 'commit recorded'}${receipt.receipt?.url ? ` · ${receipt.receipt.url}` : ''}`);
+        : receipt.status === 'needs_inspection'
+          ? `${service}: unsafe ${receipt.receipt?.target ?? 'unknown'} deployment ${receipt.receipt?.deploymentId ?? 'unknown ID'}; inspect and remove if needed. Automatic retry is blocked.`
+          : `${service}: ${receipt.receipt?.commitSha ?? receipt.receipt?.deploymentId} · ${receipt.receipt?.state ?? 'commit recorded'}${receipt.receipt?.url ? ` · ${receipt.receipt.url}` : ''}`);
     }
     publishResult.textContent = lines.length ? lines.join('\n') : 'No publication has been requested.';
   } catch (error) { if (expectedEpoch === epoch && project?.id === id && sequence === publishStatusSequence) publishResult.textContent = error.message; }

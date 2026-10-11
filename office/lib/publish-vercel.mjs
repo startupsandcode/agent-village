@@ -3,6 +3,13 @@ import { artifactDigest } from './static-site.mjs';
 const API = 'https://api.vercel.com';
 const namePattern = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
+export class UnsafeVercelDeploymentError extends Error {
+  constructor(receipt) {
+    super('Vercel returned a non-Preview deployment; inspect the recorded deployment before retrying');
+    this.receipt = receipt;
+  }
+}
+
 async function request(fetchImpl, path, token, options = {}) {
   let response;
   try {
@@ -30,6 +37,12 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
       (selected.framework !== null && selected.framework !== undefined) ||
       ['rootDirectory', 'buildCommand', 'installCommand', 'outputDirectory', 'devCommand', 'commandForIgnoringBuildStep', 'ignoreCommand']
         .some(key => selected[key] != null && selected[key] !== '')) throw new Error('Vercel target must be an existing static project at its root with no Git link or custom build settings');
+  if (selected.ssoProtection?.deploymentType !== 'all' ||
+      (selected.protectionBypass != null &&
+        (typeof selected.protectionBypass !== 'object' || Array.isArray(selected.protectionBypass) ||
+          Object.keys(selected.protectionBypass).length > 0))) {
+    throw new Error('Vercel Preview requires All Deployments protection without configured bypasses; no upload was attempted');
+  }
   // Vercel assigns a project's first deployment to production even when target is omitted.
   const history = await request(fetchImpl,
     `/v7/deployments?projectId=${encodeURIComponent(selected.id)}&target=production&limit=1&slug=${encodeURIComponent(team)}`, token);
@@ -50,6 +63,14 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
     projectSettings: { framework: null, buildCommand: '' },
     meta: { villageProjectId: id, villageArtifactSha256: record.artifact.sha256 },
   }) });
+  if (/^dpl_[A-Za-z0-9_-]{4,80}$/.test(deployment?.id ?? '') && deployment.target != null) {
+    const receipt = { team, project, projectId: selected.id, deploymentId: deployment.id,
+      target: typeof deployment.target === 'string' && /^[a-z0-9_-]{1,80}$/.test(deployment.target) ? deployment.target : 'unknown',
+      state: typeof deployment.readyState === 'string' && /^[A-Z_]{1,32}$/.test(deployment.readyState) ? deployment.readyState : 'UNKNOWN',
+      artifactSha256: record.artifact.sha256 };
+    if (/^[a-z0-9.-]+\.vercel\.app$/.test(deployment.url ?? '')) receipt.url = `https://${deployment.url}`;
+    throw new UnsafeVercelDeploymentError(receipt);
+  }
   if (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(deployment?.id ?? '') ||
       !/^[a-z0-9.-]+\.vercel\.app$/.test(deployment?.url ?? '') || deployment.target != null) {
     throw new Error('Vercel returned an unexpected deployment receipt; inspect Vercel before retrying');
