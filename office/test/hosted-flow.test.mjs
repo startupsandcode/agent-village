@@ -145,6 +145,42 @@ test('one failed Quinn response keeps the artifact inspectable and permits one b
   assert.equal(formats.length, 5);
 });
 
+test('a delayed second Quinn retry cannot run after the one allowed retry fails', async () => {
+  const { store, budget } = memory();
+  const baseAccess = createHostedProjectAccess({ auth, store });
+  let hold = false; let reads = 0; let releaseRead; let readReached;
+  const gate = new Promise(resolve => { releaseRead = resolve; });
+  const reached = new Promise(resolve => { readReached = resolve; });
+  const access = { ...baseAccess, async read(cookie, id) {
+    if (hold && ++reads === 2) { readReached(); await gate; }
+    return baseAccess.read(cookie, id);
+  } };
+  const replies = [{ question: 'Which colors?' },
+    { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build site' },
+    site, { approved: true, summary: 'Invalid first review' },
+    { approved: true, summary: 'Invalid retry' },
+    { approved: true, summary: 'Would wrongly approve', findings: [] }];
+  let providerCalls = 0;
+  const provider = { async generate() { providerCalls++; return { result: replies.shift(), usage: { input: 10, output: 20 } }; } };
+  const coordinator = createHostedCoordinator({ access, budget, provider });
+  const created = await coordinator.create('owner', 'Garden website', 'create-review-race');
+  await coordinator.answer('owner', created.id, 'Forest green', 'answer-review-race');
+  await coordinator.build('owner', created.id, 'build-review-race');
+  assert.equal((await coordinator.review('owner', created.id, 'review-race-initial')).status, 'blocked');
+
+  hold = true;
+  const delayed = coordinator.review('owner', created.id, 'review-race-delayed');
+  await reached; // delayed call passed the eligibility read but has not read the CAS snapshot
+  const firstRetry = await coordinator.review('owner', created.id, 'review-race-first');
+  assert.equal(firstRetry.status, 'blocked');
+  assert.equal(firstRetry.retryReviewAvailable, false);
+  releaseRead();
+  await assert.rejects(delayed, /Action not expected/);
+  assert.equal(providerCalls, 5);
+  assert.equal(budget.calls, 6); // project plus five actual provider calls
+  assert.equal((await coordinator.read('owner', created.id)).status, 'blocked');
+});
+
 test('hosted route completes a scoped mock goal, plan, build, review and artifact flow', async () => {
   const { store, budget } = memory();
   const replies = [{ question: 'Who is it for?' }, { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build static site' }, site,

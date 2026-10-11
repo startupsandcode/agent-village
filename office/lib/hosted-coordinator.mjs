@@ -91,12 +91,12 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       }
     } finally { clearInterval(timer); }
   }
-  async function advance(cookie, id, requestId, from, to, agent, message, kind, prepare = () => {}, budgetId = id) {
+  async function advance(cookie, id, requestId, from, to, agent, message, kind, prepare = () => {}, budgetId = id, eligible = () => true) {
     requireRequestId(requestId);
     const record = requireProject(await access.read(cookie, id));
     const project = record.snapshot;
     if (project[`${kind}RequestId`] === requestId) return { duplicate: true, record };
-    if (project.status !== from) throw new Error('Action not expected');
+    if (project.status !== from || !eligible(project)) throw new Error('Action not expected');
     await reserve(cookie, budgetId, kind);
     const next = structuredClone(project);
     next.status = to; next.stageStartedAt = new Date(now()).toISOString(); next[`${kind}RequestId`] = requestId;
@@ -172,7 +172,8 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       if (before.status === 'blocked' && !retry) throw new Error('Action not expected');
       const step = await advance(cookie, id, requestId, retry ? 'blocked' : 'awaiting_review', 'reviewing', 'Quinn',
         retry ? 'Retrying review of the same generated files' : 'Reviewing the exact generated files', 'review',
-        next => { if (retry) next.reviewRetryCount = (next.reviewRetryCount ?? 0) + 1; }, retry ? `${id}-review-retry-1` : id);
+        next => { if (retry) next.reviewRetryCount = (next.reviewRetryCount ?? 0) + 1; },
+        retry ? `${id}-review-retry-1` : id, retry ? canRetryReview : () => true);
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
       if (!current.files || artifactDigest(current.files.html, current.files.css) !== current.artifact?.sha256) throw new Error('Artifact receipt invalid');
