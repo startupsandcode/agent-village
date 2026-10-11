@@ -23,6 +23,24 @@ test('measured tokens and dated model prices stay separate from missing usage an
   assert.equal(totals.total.estimatedCostNanoUsd, 64_500);
 });
 
+test('per-agent usage totals do not inherit earlier agents or inflate across interleaved calls', () => {
+  const records = [
+    { agent: 'Maya', provider: 'openai', state: 'measured', inputTokens: 10, outputTokens: 1, estimatedCostNanoUsd: 100 },
+    { agent: 'Sam', provider: 'openai', state: 'measured', inputTokens: 20, outputTokens: 2, estimatedCostNanoUsd: 200 },
+    { agent: 'Maya', provider: 'openai', state: 'measured', inputTokens: 3, outputTokens: 4, estimatedCostNanoUsd: 300 },
+    { agent: 'Quinn', state: 'unreported' },
+  ];
+  const result = summarizeUsage(records);
+  assert.equal(result.total.calls, 4);
+  assert.equal(result.total.estimatedCostNanoUsd, 600);
+  assert.deepEqual({ calls: result.agents.Maya.calls, input: result.agents.Maya.inputTokens, cost: result.agents.Maya.estimatedCostNanoUsd },
+    { calls: 2, input: 13, cost: 400 });
+  assert.deepEqual({ calls: result.agents.Sam.calls, input: result.agents.Sam.inputTokens, cost: result.agents.Sam.estimatedCostNanoUsd },
+    { calls: 1, input: 20, cost: 200 });
+  assert.deepEqual({ calls: result.agents.Quinn.calls, unreported: result.agents.Quinn.unreportedCalls, cost: result.agents.Quinn.estimatedCostNanoUsd },
+    { calls: 1, unreported: 1, cost: 0 });
+});
+
 test('hosted usage writes are owner scoped, idempotent and expose only that owner’s month and project', async () => {
   const rows = new Map();
   const query = async (sql, values) => {

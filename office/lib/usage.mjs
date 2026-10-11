@@ -37,11 +37,12 @@ export function usageReceipt(provider, model, usage) {
 }
 
 export function summarizeUsage(records) {
-  const total = { calls: 0, measuredCalls: 0, unreportedCalls: 0, pendingCalls: 0,
-    inputTokens: 0, outputTokens: 0, estimatedCostNanoUsd: 0, unpricedCalls: 0 };
+  const zero = () => ({ calls: 0, measuredCalls: 0, unreportedCalls: 0, pendingCalls: 0,
+    inputTokens: 0, outputTokens: 0, estimatedCostNanoUsd: 0, unpricedCalls: 0 });
+  const total = zero();
   const agents = {};
   for (const record of records) {
-    const target = agents[record.agent] ??= { ...total };
+    const target = agents[record.agent] ??= zero();
     for (const value of [total, target]) {
       value.calls++;
       if (record.state === 'pending') { value.pendingCalls++; continue; }
