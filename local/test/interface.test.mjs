@@ -9,6 +9,7 @@ import { createLocalServer } from '../server.mjs';
 import { artifactDigest, renderArtifact, verifyStaticSite } from '../artifact.mjs';
 import { exportProject } from '../export.mjs';
 import { readDomainProfile, saveDomainProfile } from '../domain.mjs';
+import { UnsafeVercelDeploymentError } from '../publish-vercel.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
@@ -176,6 +177,38 @@ test('local publishing routes require reviewed files, same origin and server tok
     const status = await (await fetch(`${base}/api/projects/${completedProject.id}/publish`)).json();
     assert.equal(status.preview.state, 'READY');
     assert.equal((await engine.get(completedProject.id)).events.filter(event => event.type === 'publish').length, 2);
+  } finally { server.close(); }
+}));
+
+test('local unsafe Vercel response retains known ID and target without enabling a retry', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const completedProject = await completed(engine);
+  let calls = 0;
+  const server = createLocalServer({ engine, setupRoot: root, env: { VILLAGE_PUBLISH_VERCEL_TOKEN: 'fake-vercel-token' },
+    vercelPublisher: async args => {
+      calls++;
+      await args.onBeforeSubmit({ team: args.team, project: args.project, projectId: 'prj_test1234', artifactSha256: completedProject.artifact.sha256 });
+      throw new UnsafeVercelDeploymentError({ team: args.team, project: args.project, projectId: 'prj_test1234',
+        deploymentId: 'dpl_unsafe1234', target: 'production', state: 'READY', url: 'https://site-unsafe.vercel.app',
+        artifactSha256: completedProject.artifact.sha256 });
+    } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = () => fetch(`${base}/api/projects/${completedProject.id}/publish/vercel`, { method: 'POST',
+    headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ team: 'team', project: 'site' }) });
+  try {
+    const first = await post();
+    assert.equal(first.status, 409);
+    const firstBody = await first.json();
+    assert.equal(firstBody.preview.deploymentId, 'dpl_unsafe1234');
+    assert.equal(firstBody.preview.target, 'production');
+    assert.equal(firstBody.preview.status, 'needs_inspection');
+    const readBack = await (await fetch(`${base}/api/projects/${completedProject.id}/publish`)).json();
+    assert.deepEqual(readBack.preview, firstBody.preview);
+    assert.equal((await post()).status, 409);
+    assert.equal(calls, 1);
+    assert.equal((await engine.get(completedProject.id)).events.some(event => event.type === 'publish'), false);
+    assert.ok(!JSON.stringify(readBack).includes('fake-vercel-token'));
   } finally { server.close(); }
 }));
 test('reviewed site exports a runnable, receipt-checked project without chat or keys', async () => fixture(async root => {

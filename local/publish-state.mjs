@@ -11,10 +11,13 @@ export async function readPreviewPublish(engine, id) {
     const details = await lstat(path);
     if (!details.isFile() || details.isSymbolicLink() || details.size > 4096) throw new Error('Invalid preview receipt');
     const value = JSON.parse(await readFile(path, 'utf8'));
-    if (!['submitting', 'submitted'].includes(value.status) || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(value.team ?? '') ||
+    if (!['submitting', 'submitted', 'needs_inspection'].includes(value.status) || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(value.team ?? '') ||
         !/^[a-z0-9][a-z0-9-]{1,62}$/.test(value.project ?? '') || !/^[a-f0-9]{64}$/.test(value.artifactSha256 ?? '') ||
         (value.status === 'submitted' && (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(value.deploymentId ?? '') ||
-          !/^https:\/\/[a-z0-9.-]+\.vercel\.app$/.test(value.url ?? '')))) throw new Error('Invalid preview receipt');
+          !/^https:\/\/[a-z0-9.-]+\.vercel\.app$/.test(value.url ?? ''))) ||
+        (value.status === 'needs_inspection' && (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(value.deploymentId ?? '') ||
+          !/^[a-z0-9_-]{1,80}$/.test(value.target ?? '') || !/^[A-Z_]{1,32}$/.test(value.state ?? '') ||
+          (value.url != null && !/^https:\/\/[a-z0-9.-]+\.vercel\.app$/.test(value.url))))) throw new Error('Invalid preview receipt');
     return value;
   } catch (error) {
     if (error.code === 'ENOENT') return null;
@@ -39,4 +42,21 @@ export async function completePreviewPublish(engine, id, receipt) {
   const temp = join(dir, `preview-publish-${randomUUID()}.tmp`);
   await writeFile(temp, JSON.stringify({ status: 'submitted', ...receipt }), { flag: 'wx', mode: 0o600 });
   await rename(temp, join(dir, name));
+}
+
+export async function recordUnsafePreviewPublish(engine, id, receipt) {
+  const dir = await engine.checkedWorkspace(id);
+  const existing = await readPreviewPublish(engine, id);
+  if (existing?.status !== 'submitting' || existing.team !== receipt.team || existing.project !== receipt.project ||
+      existing.projectId !== receipt.projectId || existing.artifactSha256 !== receipt.artifactSha256 ||
+      !/^dpl_[A-Za-z0-9_-]{4,80}$/.test(receipt.deploymentId ?? '') ||
+      !/^[a-z0-9_-]{1,80}$/.test(receipt.target ?? '') || !/^[A-Z_]{1,32}$/.test(receipt.state ?? '') ||
+      (receipt.url != null && !/^https:\/\/[a-z0-9.-]+\.vercel\.app$/.test(receipt.url))) throw new Error('Unsafe preview receipt changed');
+  const value = { status: 'needs_inspection', team: existing.team, project: existing.project, projectId: existing.projectId,
+    artifactSha256: existing.artifactSha256, startedAt: existing.startedAt, deploymentId: receipt.deploymentId,
+    target: receipt.target, state: receipt.state, ...(receipt.url ? { url: receipt.url } : {}) };
+  const temp = join(dir, `preview-publish-${randomUUID()}.tmp`);
+  await writeFile(temp, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
+  await rename(temp, join(dir, name));
+  return value;
 }

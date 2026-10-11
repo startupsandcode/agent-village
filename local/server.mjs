@@ -11,8 +11,8 @@ import { inspectConnections } from './connections.mjs';
 import { loadLocalEnv } from './env.mjs';
 import { readDomainProfile, saveDomainProfile } from './domain.mjs';
 import { publishReviewedSite } from './publish-github.mjs';
-import { deployReviewedPreview, inspectPreviewDeployment } from './publish-vercel.mjs';
-import { beginPreviewPublish, completePreviewPublish, readPreviewPublish } from './publish-state.mjs';
+import { deployReviewedPreview, inspectPreviewDeployment, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
+import { beginPreviewPublish, completePreviewPublish, readPreviewPublish, recordUnsafePreviewPublish } from './publish-state.mjs';
 import { readLocalUsage } from './usage.mjs';
 
 const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -114,8 +114,17 @@ export function createLocalServer({ provider, providerError, engine = provider &
             return send(response, existing.status === 'submitted' ? 200 : 409, existing.status === 'submitted'
               ? { preview: existing } : { error: 'Preview submission uncertain; inspect Vercel before retrying', preview: existing });
           }
-          const result = await vercelPublisher({ engine, id, team: value.team, project: value.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
-            onBeforeSubmit: target => beginPreviewPublish(engine, id, target) });
+          let result;
+          try {
+            result = await vercelPublisher({ engine, id, team: value.team, project: value.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
+              onBeforeSubmit: target => beginPreviewPublish(engine, id, target) });
+          } catch (error) {
+            if (error instanceof UnsafeVercelDeploymentError) {
+              const receipt = await recordUnsafePreviewPublish(engine, id, error.receipt);
+              return send(response, 409, { error: 'Vercel returned a non-Preview deployment; inspect target and protection. Automatic retry is blocked.', preview: receipt });
+            }
+            throw error;
+          }
           await completePreviewPublish(engine, id, result);
           await engine.recordPublish(id, 'vercel', result);
           return send(response, 200, { preview: { status: 'submitted', ...result } });

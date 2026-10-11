@@ -194,6 +194,11 @@ function publishResult(node, message, url) {
   node.textContent = message;
   if (url) { const link = document.createElement('a'); link.href = url; link.textContent = ' Open result ↗'; link.target = '_blank'; link.rel = 'noopener'; node.append(link); }
 }
+function previewMessage(receipt) {
+  if (receipt.status === 'submitting') return 'Preview submission status is uncertain. Inspect Vercel before retrying.';
+  if (receipt.status === 'needs_inspection') return `Vercel returned ${receipt.target} deployment ${receipt.deploymentId}. Inspect its target and protection; automatic retry is blocked.`;
+  return `Preview ${receipt.deploymentId} is ${receipt.state}; inspect its status before sharing.`;
+}
 githubPublishForm?.addEventListener('submit', async event => {
   event.preventDefault();
   const epoch = conversationEpoch;
@@ -224,10 +229,19 @@ vercelPublishForm?.addEventListener('submit', async event => {
     });
     if (epoch !== conversationEpoch) return;
     const receipt = result.preview;
-    publishResult(resultNode, receipt.status === 'submitting' ? 'A prior Preview submission may have occurred. Inspect Vercel before retrying.' : `Preview submission ${receipt.deploymentId} is ${receipt.state}; it is not yet verified ready.`, receipt.url);
-    previewStatusButton.hidden = receipt.status !== 'submitted';
+    publishResult(resultNode, previewMessage(receipt), receipt.url);
+    previewStatusButton.hidden = false;
     try { display(await api(`/api/projects/${project.id}`)); } catch {}
-  } catch (error) { if (epoch === conversationEpoch) resultNode.textContent = error.message; }
+  } catch (error) {
+    if (epoch === conversationEpoch) {
+      try {
+        const { preview } = await api(`/api/projects/${project.id}/publish`);
+        if (epoch !== conversationEpoch) return;
+        if (preview) { publishResult(resultNode, previewMessage(preview), preview.url); previewStatusButton.hidden = false; }
+        else resultNode.textContent = error.message;
+      } catch { resultNode.textContent = error.message; }
+    }
+  }
   finally { button.disabled = false; }
 });
 previewStatusButton?.addEventListener('click', async () => {
@@ -238,7 +252,7 @@ previewStatusButton?.addEventListener('click', async () => {
   try {
     const { preview } = await api(`/api/projects/${projectId}/publish`);
     if (epoch !== conversationEpoch || project?.id !== projectId) return;
-    if (preview) publishResult(resultNode, preview.status === 'submitting' ? 'Submission status is uncertain; inspect Vercel.' : `Preview ${preview.deploymentId} is ${preview.state}.`, preview.url);
+    if (preview) publishResult(resultNode, previewMessage(preview), preview.url);
   } catch (error) { if (epoch === conversationEpoch && project?.id === projectId) resultNode.textContent = error.message; }
   finally { previewStatusButton.disabled = false; }
 });
