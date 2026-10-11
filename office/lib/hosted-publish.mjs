@@ -8,7 +8,7 @@ const name = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const gitOwner = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gitRepo = /^[A-Za-z0-9._-]{1,100}$/;
 const gitBranch = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const RECONCILE_MIN_AGE_MS = 15 * 60_000; // exceeds this pilot's five-minute Vercel Function limit
+export const RECONCILE_MIN_AGE_MS = 15 * 60_000; // exceeds the publisher's pinned five-minute Vercel Function limit
 
 function sameAttempt(previous, claim) {
   return previous?.status === 'submitting' && previous.attemptId === claim.attemptId && previous.startedAt === claim.startedAt;

@@ -8,6 +8,7 @@
     { "source": "/api/maya-artifacts/:id/:file", "destination": "/api/maya-projects?id=:id&file=:file" }
   ],
   "functions": {
-    "api/private-page.mjs": { "includeFiles": "private/index.html" }
+    "api/private-page.mjs": { "includeFiles": "private/index.html" },
+    "api/maya-projects.mjs": { "maxDuration": 300 }
   }
 }

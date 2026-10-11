@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RECONCILE_MIN_AGE_MS } from '../lib/hosted-publish.mjs';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
 
@@ -51,4 +52,11 @@ test('one deployment serves synthetic home and keeps private HTML outside public
   await assert.rejects(stat(new URL('../public/office', import.meta.url)));
   await stat(new URL('../public/office-assets/app.js', import.meta.url));
   await stat(new URL('../public/office-assets/styles.css', import.meta.url));
+});
+
+test('hosted publisher runtime ends before a stale attempt can be reconciled', async () => {
+  const config = JSON.parse(await read('../vercel.json'));
+  const seconds = config.functions?.['api/maya-projects.mjs']?.maxDuration;
+  assert.equal(seconds, 300);
+  assert.ok(RECONCILE_MIN_AGE_MS > seconds * 1000);
 });
