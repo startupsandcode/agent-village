@@ -11,6 +11,7 @@ test('one deployment serves synthetic home and keeps private HTML outside public
   const home = await read('../public/index.html');
   assert.match(home, /Public demo/i);
   assert.match(home, /href="\/office"/);
+  assert.match(home, /href="#office">Demo office/);
   assert.match(home, /\/_vercel\/insights\/script\.js/);
   assert.doesNotMatch(home, /agent-village-demo-jmanns-projects\.vercel\.app/);
   const data = JSON.parse(await read('../public/demo-data.json'));

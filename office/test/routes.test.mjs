@@ -61,6 +61,16 @@ test('private page returns private HTML only after authorization', async () => {
   assert.equal(reads, 1);
 });
 
+test('missing preview sign-in configuration reports a clear 503 without private HTML', async () => {
+  let reads = 0;
+  const handler = createPrivatePageHandler({ auth: { authorize: () => ({ status: 503 }) }, readPage: async () => { reads++; return '<h1>private</h1>'; } });
+  const unavailable = response();
+  await handler({ method: 'GET', headers: {} }, unavailable);
+  assert.equal(unavailable.statusCode, 503);
+  assert.equal(unavailable.body, 'Private office sign-in is not configured for this deployment.');
+  assert.equal(reads, 0);
+});
+
 test('login and callback set secure cookies and use safe redirects', async () => {
   const auth = {
     begin: () => ({ url: 'https://vercel.com/oauth/authorize?state=abc', cookie: '__Host-office_oauth=x; HttpOnly; Secure; SameSite=Lax; Path=/' }),

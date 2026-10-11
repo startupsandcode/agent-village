@@ -44,7 +44,9 @@ export function createPrivatePageHandler({ auth = createAuth(), readPage = () =>
     if (access.status !== 200) {
       response.statusCode = access.status;
       response.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      response.end(request.method === 'HEAD' ? undefined : 'Office access denied');
+      response.end(request.method === 'HEAD' ? undefined : access.status === 503
+        ? 'Private office sign-in is not configured for this deployment.'
+        : 'Office access denied');
       return;
     }
     try {
