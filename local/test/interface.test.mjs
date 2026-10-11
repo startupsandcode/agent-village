@@ -6,13 +6,17 @@ import { join } from 'node:path';
 import { createProvider } from '../providers.mjs';
 import { VillageEngine } from '../engine.mjs';
 import { createLocalServer } from '../server.mjs';
-import { verifyStaticSite } from '../artifact.mjs';
+import { artifactDigest, renderArtifact, verifyStaticSite } from '../artifact.mjs';
 import { exportProject } from '../export.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
-const validSite = { title: 'Garden Club', headline: 'Grow together', summary: 'A welcoming club for neighborhood gardeners.', cta: 'Explore benefits', features: [{ title: 'Meet', description: 'Connect with nearby gardeners.' }, { title: 'Learn', description: 'Share practical growing tips.' }] };
+const validSite = { title: 'Garden Club', theme: 'forest', sections: [
+  { type: 'hero', heading: 'Grow together', body: 'A welcoming club for neighborhood gardeners.', actionText: 'Explore benefits' },
+  { type: 'cards', heading: 'Why join', items: [{ title: 'Meet', body: 'Connect with nearby gardeners.' }, { title: 'Learn', body: 'Share practical growing tips.' }] },
+  { type: 'cta', heading: 'Visit a gathering', body: 'Come meet neighbors at the next garden gathering.' },
+] };
 const sequence = [
   { question: 'Who is the site for?' },
   { summary: 'A garden club landing page', audience: 'Local gardeners', acceptance: ['Explain the club', 'Invite visitors'], decision: 'Build a small site for nearby gardeners.' },
@@ -125,6 +129,23 @@ test('static site verification rejects executable and remote resources', () => {
   assert.throws(() => verifyStaticSite(base.replace('</html>', '<script>alert(1)</script></html>'), css), /No executable markup/);
   assert.throws(() => verifyStaticSite(base, `${css} @import "https://example.com/a.css";`), /No remote resources/);
 });
+test('Sam can choose different safe page structures and themes', () => {
+  const first = renderArtifact(validSite);
+  const second = renderArtifact({ title: 'Garden questions', theme: 'ocean', sections: [
+    { type: 'hero', heading: 'Ask local gardeners', body: 'Friendly answers from nearby growers.', actionText: 'Read answers' },
+    { type: 'faq', heading: 'Common questions', items: [{ question: 'When?', answer: 'Every Saturday.' }, { question: 'Who?', answer: 'Anyone nearby.' }] },
+    { type: 'text', heading: 'Come as you are', body: 'Beginners are welcome.' },
+  ] });
+  assert.notEqual(first.sha256, second.sha256);
+  assert.match(first.html, /section-cards/);
+  assert.match(second.html, /section-faq/);
+  assert.match(second.html, /<details>/);
+  assert.notEqual(first.css, second.css);
+  assert.throws(() => renderArtifact({ ...validSite, theme: 'javascript' }), /Invalid artifact structure/);
+  assert.throws(() => renderArtifact({ ...validSite, theme: '__proto__' }), /Invalid artifact structure/);
+  assert.throws(() => renderArtifact({ ...validSite, theme: 'constructor' }), /Invalid artifact structure/);
+  assert.throws(() => renderArtifact({ ...validSite, sections: [validSite.sections[1], validSite.sections[0]] }), /Invalid artifact structure/);
+});
 test('request ID remains deduplicated after server restart', async () => fixture(async root => {
   const firstProvider = mockProvider();
   const first = await new VillageEngine({ root, provider: firstProvider }).create('Garden club website', 'request-12345');
@@ -142,6 +163,23 @@ test('post-review file changes invalidate the visible receipt and served artifac
   assert.equal(refreshed.artifact, null);
   assert.match(refreshed.events.at(-1).message, /changed after review/);
   await assert.rejects(engine.artifact(result.id, 'index.html'), /Artifact not found/);
+}));
+test('receipt binds HTML and CSS separately, including their file boundary', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const result = await completed(engine);
+  const html = await readFile(join(root, result.id, 'index.html'), 'utf8');
+  const css = await readFile(join(root, result.id, 'styles.css'), 'utf8');
+  const moved = html.slice(-1);
+  const changedHtml = html.slice(0, -1);
+  const changedCss = moved + css;
+  assert.equal(changedHtml + changedCss, html + css);
+  assert.notEqual(artifactDigest(changedHtml, changedCss), result.artifact.sha256);
+  await writeFile(join(root, result.id, 'index.html'), changedHtml);
+  await writeFile(join(root, result.id, 'styles.css'), changedCss);
+  const refreshed = await engine.get(result.id);
+  assert.equal(refreshed.status, 'blocked');
+  assert.equal(refreshed.artifact, null);
+  await assert.rejects(engine.artifact(result.id, 'styles.css'), /Artifact not found/);
 }));
 test('restored project ID and workspace directory must match', async () => fixture(async root => {
   const first = await new VillageEngine({ root, provider: mockProvider() }).create('Garden club website', 'request-12345');
@@ -174,7 +212,7 @@ test('rejected review remains visibly unapproved', async () => fixture(async roo
   assert.deepEqual(result.events.at(-1).findings, ['No signup instructions']);
 }));
 test('generated content is escaped and cannot insert executable markup', async () => fixture(async root => {
-  const provider = mockProvider([...sequence.slice(0, 2), { ...validSite, headline: '<script>alert(1)</script>' }, sequence[3]]);
+  const provider = mockProvider([...sequence.slice(0, 2), { ...validSite, sections: [{ ...validSite.sections[0], heading: '<script>alert(1)</script>' }, ...validSite.sections.slice(1)] }, sequence[3]]);
   const result = await completed(new VillageEngine({ root, provider }));
   const html = await readFile(join(root, result.id, 'index.html'), 'utf8');
   assert.ok(!html.includes('<script>'));

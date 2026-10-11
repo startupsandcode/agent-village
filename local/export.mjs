@@ -1,13 +1,14 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { artifactDigest } from './artifact.mjs';
 
-function digest(html, css) { return createHash('sha256').update(html).update(css).digest('hex'); }
+function digest(html, css) { return artifactDigest(html, css); }
 function supportFiles(sha256) {
   return {
     'package.json': JSON.stringify({ private: true, type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n',
-    'verify.test.mjs': `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport { createHash } from 'node:crypto';\ntest('site files match the reviewed SHA-256 receipt', async () => {\n  const html = await readFile(new URL('./index.html', import.meta.url));\n  const css = await readFile(new URL('./styles.css', import.meta.url));\n  assert.equal(createHash('sha256').update(html).update(css).digest('hex'), '${sha256}');\n  assert.match(html.toString(), /<h1>[^<]+<\\/h1>/);\n});\n`,
-    'README.md': `# Reviewed static website\n\nGenerated from a bounded Agent Village run. Review the files before sharing.\n\nReceipt: SHA-256 ${sha256} over index.html followed by styles.css.\n\nRun \`npm test\` before publishing. This repository contains no API keys or chat history.\n`,
+    'verify.test.mjs': `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { readFile } from 'node:fs/promises';\nimport { createHash } from 'node:crypto';\ntest('site files match the reviewed SHA-256 receipt', async () => {\n  const html = await readFile(new URL('./index.html', import.meta.url));\n  const css = await readFile(new URL('./styles.css', import.meta.url));\n  const part = value => createHash('sha256').update(value).digest();\n  assert.equal(createHash('sha256').update(part(html)).update(part(css)).digest('hex'), '${sha256}');\n  assert.match(html.toString(), /<h1>[^<]+<\\/h1>/);\n});\n`,
+    'README.md': `# Reviewed static website\n\nGenerated from a bounded Agent Village run. Review the files before sharing.\n\nReceipt: SHA-256 ${sha256} over the two SHA-256 file digests, in index.html then styles.css order.\n\nRun \`npm test\` before publishing. This repository contains no API keys or chat history.\n`,
   };
 }
 
