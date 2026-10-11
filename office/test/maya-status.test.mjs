@@ -8,12 +8,12 @@ function response() {
 }
 test('hosted Maya status denies anonymous access and never returns a configured secret', () => {
   const secret = 'secret-never-returned';
-  const handler = createMayaStatusHandler({ env: { VILLAGE_PROVIDER: 'openai', OPENAI_API_KEY: secret }, auth: { authorize: cookie => ({ status: cookie === 'valid' ? 200 : 401 }) } });
+  const handler = createMayaStatusHandler({ env: { VILLAGE_PROVIDER: 'openai', OPENAI_API_KEY: secret }, auth: { authorize: cookie => ({ status: cookie === 'valid' ? 200 : 401, email: 'viewer@example.com' }) } });
   const anonymous = response(); handler({ method: 'GET', headers: {} }, anonymous);
   assert.equal(anonymous.statusCode, 401);
   const invited = response(); handler({ method: 'GET', headers: { cookie: 'valid' } }, invited);
   assert.equal(invited.statusCode, 200);
-  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need private project storage, operator permission, a server-side provider key, and explicit activation. The local office can run now.', setup: {
+  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', viewerEmail: 'viewer@example.com', operatorAllowlistPresent: false, runAvailable: false, reason: 'Hosted runs need private project storage, operator permission, a server-side provider key, and explicit activation. The local office can run now.', setup: {
     viewerSignIn: 'connected', runPermission: 'not_authorized', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_required_for_static_sites', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
   } });
   assert.ok(!invited.body.includes(secret));
@@ -35,7 +35,33 @@ test('spending operator allowlist alone does not activate hosted runs', () => {
   const result = response(); handler({ method: 'GET', headers: {} }, result);
   const status = JSON.parse(result.body);
   assert.equal(status.setup.runPermission, 'configured_unverified');
+  assert.equal(status.viewerEmail, 'owner@example.com');
+  assert.equal(status.operatorAllowlistPresent, true);
   assert.equal(status.runAvailable, false);
+});
+test('an existing session sees operator allowlist changes without a new sign-in', () => {
+  const env = { OFFICE_RUN_ALLOWED_EMAILS: 'other@example.com' };
+  const handler = createMayaStatusHandler({ env, auth: { authorize: () => ({ status: 200, email: 'owner@example.com' }) } });
+  const first = response(); handler({ method: 'GET', headers: {} }, first);
+  assert.equal(JSON.parse(first.body).setup.runPermission, 'not_authorized');
+  env.OFFICE_RUN_ALLOWED_EMAILS = ' other@example.com, OWNER@EXAMPLE.COM ';
+  const second = response(); handler({ method: 'GET', headers: {} }, second);
+  assert.equal(JSON.parse(second.body).setup.runPermission, 'configured_unverified');
+  assert.equal(JSON.parse(second.body).viewerEmail, 'owner@example.com');
+  assert.ok(!second.body.includes('other@example.com'));
+});
+test('status reports only usable operator entries and configured publishing destinations', () => {
+  const env = { OFFICE_RUN_ALLOWED_EMAILS: ', , ',
+    VILLAGE_PUBLISH_GITHUB_TOKEN: 'github-secret', VILLAGE_PUBLISH_GITHUB_OWNER: 'owner', VILLAGE_PUBLISH_GITHUB_REPO: 'repo',
+    VILLAGE_PUBLISH_GITHUB_BRANCH: 'pilot', VILLAGE_PUBLISH_GITHUB_DEDICATED_REPO_CONFIRMED: 'true',
+    VILLAGE_PUBLISH_VERCEL_TOKEN: 'vercel-secret', VILLAGE_PUBLISH_VERCEL_TEAM: 'team', VILLAGE_PUBLISH_VERCEL_PROJECT: 'project' };
+  const handler = createMayaStatusHandler({ env, auth: { authorize: () => ({ status: 200, email: 'viewer@example.com' }) } });
+  const result = response(); handler({ method: 'GET', headers: {} }, result);
+  const status = JSON.parse(result.body);
+  assert.equal(status.operatorAllowlistPresent, false);
+  assert.equal(status.setup.githubPublishing, 'configured_unverified');
+  assert.equal(status.setup.vercelPublishing, 'configured_unverified');
+  assert.ok(!result.body.includes('secret'));
 });
 test('hosted test mode is only shown after explicit activation and required settings', () => {
   const handler = createMayaStatusHandler({ env: { OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com', OPENAI_API_KEY: 'fake', VILLAGE_DATABASE_URL: 'fake', VILLAGE_HOSTED_RUNS_ENABLED: 'true' }, auth: { authorize: () => ({ status: 200, email: 'owner@example.com' }) } });

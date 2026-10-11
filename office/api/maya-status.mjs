@@ -24,6 +24,7 @@ export function createMayaStatusHandler({ env = process.env, auth = createAuth({
     response.statusCode = 200;
     const officeName = typeof env.VILLAGE_OFFICE_NAME === 'string' && env.VILLAGE_OFFICE_NAME.trim().length <= 60 ? env.VILLAGE_OFFICE_NAME.trim() : '';
     response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ provider, providerKeyPresent: keyPresent, officeName,
+      viewerEmail: access.email, operatorAllowlistPresent: runOperators.length > 0,
       runAvailable, reason: runAvailable ? 'Hosted test mode is enabled. Provider and database behavior are unverified until a request succeeds.' : 'Hosted runs need private project storage, operator permission, a server-side provider key, and explicit activation. The local office can run now.',
       setup: {
         viewerSignIn: 'connected',
@@ -31,8 +32,9 @@ export function createMayaStatusHandler({ env = process.env, auth = createAuth({
         provider: keyPresent ? 'key_present_unverified' : 'missing_key',
         durableProjects: databaseConfigured ? 'configured_unverified' : 'not_connected',
         isolatedExecutor: 'not_required_for_static_sites',
-        githubPublishing: 'not_connected',
-        vercelPublishing: 'not_connected',
+        githubPublishing: env.VILLAGE_PUBLISH_GITHUB_TOKEN && env.VILLAGE_PUBLISH_GITHUB_OWNER && env.VILLAGE_PUBLISH_GITHUB_REPO &&
+          env.VILLAGE_PUBLISH_GITHUB_BRANCH && env.VILLAGE_PUBLISH_GITHUB_DEDICATED_REPO_CONFIRMED === 'true' ? 'configured_unverified' : 'not_connected',
+        vercelPublishing: env.VILLAGE_PUBLISH_VERCEL_TOKEN && env.VILLAGE_PUBLISH_VERCEL_TEAM && env.VILLAGE_PUBLISH_VERCEL_PROJECT ? 'configured_unverified' : 'not_connected',
       } }));
   };
 }
