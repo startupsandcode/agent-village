@@ -29,6 +29,7 @@ let epoch = 0;
 let restoringPoll = false;
 let publishVersion = -1;
 let publishStatusSequence = 0;
+let reconcileAttempt = null;
 let targetFingerprints = null;
 let usageSequence = 0;
 let lastUsageSignature = '';
@@ -162,6 +163,7 @@ function render(value, expectedEpoch = epoch) {
 async function loadPublishStatus(id, expectedEpoch = epoch) {
   const sequence = ++publishStatusSequence;
   targetFingerprints = null;
+  reconcileAttempt = null;
   publishGithub.hidden = true;
   publishVercel.hidden = true;
   publishReconcile.hidden = true;
@@ -170,6 +172,9 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
     if (expectedEpoch !== epoch || project?.id !== id || sequence !== publishStatusSequence) return;
     const { github, vercel } = result.targets;
     targetFingerprints = { github: github.fingerprint, vercel: vercel.fingerprint };
+    if (result.receipts.vercel?.status === 'submitting') reconcileAttempt = {
+      attemptStartedAt: result.receipts.vercel.startedAt, attemptId: result.receipts.vercel.attemptId ?? null,
+    };
     publishTargets.textContent = `GitHub: ${github.owner && github.repo && github.branch ? `${github.owner}/${github.repo} · ${github.branch}` : 'not configured'}; Vercel Preview: ${vercel.team && vercel.project ? `${vercel.team}/${vercel.project}` : 'not configured'}. Reviewed SHA-256 ${result.artifactSha256}.`;
     publishGithub.hidden = !github.available || result.receipts.github != null;
     publishVercel.hidden = !vercel.available || (result.receipts.vercel != null && result.receipts.vercel.status !== 'reconciled');
@@ -217,7 +222,7 @@ async function publish(service) {
 publishGithub?.addEventListener('click', () => publish('github'));
 publishVercel?.addEventListener('click', () => publish('vercel'));
 publishReconcile?.addEventListener('click', async () => {
-  if (!project || project.status !== 'reviewed' || publishReconcile.hidden || !targetFingerprints?.vercel) return;
+  if (!project || project.status !== 'reviewed' || publishReconcile.hidden || !targetFingerprints?.vercel || !reconcileAttempt) return;
   const deletedDeploymentId = window.prompt('Enter the exact deleted Vercel deployment ID after verifying it is gone:');
   if (!deletedDeploymentId) return;
   const baselineDeploymentId = window.prompt('Enter the exact protected placeholder Production deployment ID:');
@@ -226,7 +231,7 @@ publishReconcile?.addEventListener('click', async () => {
   publishReconcile.disabled = true;
   try {
     await request({ action: 'reconcileVercel', id, artifactSha256: project.artifact.sha256,
-      targetFingerprint: targetFingerprints.vercel, deletedDeploymentId, baselineDeploymentId });
+      targetFingerprint: targetFingerprints.vercel, deletedDeploymentId, baselineDeploymentId, ...reconcileAttempt });
     if (expectedEpoch !== epoch || project?.id !== id) return;
     await loadPublishStatus(id, expectedEpoch);
     const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });

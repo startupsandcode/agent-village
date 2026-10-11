@@ -1,5 +1,5 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { publishReviewedSite } from './publish-github.mjs';
 import { deployReviewedPreview, inspectPreviewDeployment, verifyDeletedVercelAttempt, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
 
@@ -8,6 +8,11 @@ const name = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const gitOwner = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const gitRepo = /^[A-Za-z0-9._-]{1,100}$/;
 const gitBranch = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const RECONCILE_MIN_AGE_MS = 15 * 60_000; // exceeds this pilot's five-minute Vercel Function limit
+
+function sameAttempt(previous, claim) {
+  return previous?.status === 'submitting' && previous.attemptId === claim.attemptId && previous.startedAt === claim.startedAt;
+}
 
 function target(env, service) {
   if (service === 'github') {
@@ -38,12 +43,13 @@ function reviewed(record, expectedSha) {
 function publicReceipt(value) {
   if (!value) return null;
   return { status: value.status, service: value.service, target: value.target,
-    artifactSha256: value.artifactSha256, ...(value.receipt ? { receipt: value.receipt } : {}) };
+    artifactSha256: value.artifactSha256, startedAt: value.startedAt, attemptId: value.attemptId ?? null,
+    ...(value.receipt ? { receipt: value.receipt } : {}) };
 }
 
 export function createHostedPublisher({ access, env, githubPublisher = publishReviewedSite,
   vercelPublisher = deployReviewedPreview, deploymentInspector = inspectPreviewDeployment,
-  deletionVerifier = verifyDeletedVercelAttempt } = {}) {
+  deletionVerifier = verifyDeletedVercelAttempt, now = Date.now } = {}) {
   if (!access || !env) throw new Error('Hosted publishing dependencies required');
   async function read(cookie, id) {
     const record = await access.read(cookie, id);
@@ -51,7 +57,8 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
     return record;
   }
   return {
-    async reconcileVercel(cookie, id, expectedSha, displayedFingerprint, deletedDeploymentId, baselineDeploymentId) {
+    async reconcileVercel(cookie, id, expectedSha, displayedFingerprint, deletedDeploymentId, baselineDeploymentId,
+      attemptStartedAt, attemptId) {
       const configured = target(env, 'vercel');
       if (!sha.test(displayedFingerprint ?? '') || displayedFingerprint !== configured.fingerprint) throw new Error('Publish target changed; refresh status');
       if (!configured.available) throw new Error('Vercel publishing is not configured');
@@ -61,9 +68,16 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       if (previous?.artifactSha256 !== expectedSha || JSON.stringify(previous?.target) !== JSON.stringify(configured)) {
         throw new Error('Publish target or reviewed receipt changed');
       }
+      if (previous.startedAt !== attemptStartedAt || (previous.attemptId ?? null) !== attemptId) {
+        throw new Error('Vercel publish attempt changed; refresh status');
+      }
       if (previous.status === 'reconciled' && previous.receipt?.deletedDeploymentId === deletedDeploymentId &&
           previous.receipt?.baselineDeploymentId === baselineDeploymentId) return publicReceipt(previous);
       if (previous.status !== 'submitting') throw new Error('Only an uncertain Vercel submission can be reconciled');
+      const lastActivity = Date.parse(previous.submitAuthorizedAt ?? previous.startedAt);
+      if (!Number.isFinite(lastActivity) || now() - lastActivity < RECONCILE_MIN_AGE_MS) {
+        throw new Error('Vercel submission may still be active; wait before reconciling');
+      }
       const receipt = await deletionVerifier({ team: configured.team, project: configured.project,
         token: env.VILLAGE_PUBLISH_VERCEL_TOKEN, deletedDeploymentId, baselineDeploymentId });
       if (receipt.deletedDeploymentId !== deletedDeploymentId || receipt.baselineDeploymentId !== baselineDeploymentId ||
@@ -108,7 +122,8 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
         captured = { html: project.files.html, css: project.files.css, sha256: expectedSha };
         const next = structuredClone(project);
         next.publishing ??= {};
-        claim = { status: 'submitting', service, target: configured, artifactSha256: expectedSha, startedAt: new Date().toISOString() };
+        claim = { status: 'submitting', service, target: configured, artifactSha256: expectedSha,
+          startedAt: new Date(now()).toISOString(), attemptId: randomUUID() };
         next.publishing[service] = claim;
         next.events.push({ at: claim.startedAt, agent: 'User', type: 'publish_start', message: `Requested ${service === 'github' ? 'GitHub branch' : 'Vercel Preview'} publication for reviewed SHA-256 ${expectedSha}` });
         const saved = await access.update(cookie, { id, expectedVersion: current.version, snapshot: next });
@@ -120,20 +135,34 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       // after the external API accepts a request but before a receipt is saved.
       let externalUpdateAttempted = false;
       let receipt;
+      const authorizeExternalAttempt = async () => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await read(cookie, id);
+          const previous = current.snapshot.publishing?.[service];
+          if (!sameAttempt(previous, claim) || previous.submitAuthorizedAt) throw new Error('Publish claim changed; inspect status');
+          const next = structuredClone(current.snapshot);
+          next.publishing[service] = { ...previous, submitAuthorizedAt: new Date(now()).toISOString() };
+          if (await access.update(cookie, { id, expectedVersion: current.version, snapshot: next })) {
+            externalUpdateAttempted = true;
+            return;
+          }
+        }
+        throw new Error('Publish claim changed; inspect status');
+      };
       try {
         receipt = service === 'github'
           ? await githubPublisher({ snapshot: captured, owner: configured.owner, repo: configured.repo, branch: configured.branch, token: env.VILLAGE_PUBLISH_GITHUB_TOKEN,
-            onBeforeRefUpdate: () => { externalUpdateAttempted = true; } })
+            onBeforeRefUpdate: authorizeExternalAttempt })
           : await vercelPublisher({ engine: { get: async () => ({ status: 'reviewed', artifact: { sha256: expectedSha } }), artifact: async (_id, file) => file === 'index.html' ? captured.html : captured.css },
             id, team: configured.team, project: configured.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
             expectedSoleBaselineId,
-            onBeforeSubmit: () => { externalUpdateAttempted = true; } });
+            onBeforeSubmit: authorizeExternalAttempt });
       } catch (error) {
         if (service === 'vercel' && externalUpdateAttempted && error instanceof UnsafeVercelDeploymentError) {
           for (let attempt = 0; attempt < 3; attempt++) {
             const current = await read(cookie, id);
             const previous = current.snapshot.publishing?.vercel;
-            if (previous?.status !== 'submitting' || previous.startedAt !== claim.startedAt) break;
+            if (!sameAttempt(previous, claim)) break;
             const next = structuredClone(current.snapshot);
             next.publishing.vercel = { ...claim, status: 'needs_inspection', receipt: error.receipt };
             next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish_unsafe',
@@ -147,7 +176,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
         for (let attempt = 0; attempt < 3; attempt++) {
           const current = await read(cookie, id);
           const previous = current.snapshot.publishing?.[service];
-          if (previous?.status !== 'submitting' || previous.startedAt !== claim.startedAt) break;
+          if (!sameAttempt(previous, claim)) break;
           const next = structuredClone(current.snapshot);
           if (priorReconciled) next.publishing[service] = priorReconciled;
           else delete next.publishing[service];
@@ -163,7 +192,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       for (let attempt = 0; attempt < 3; attempt++) {
         const current = await read(cookie, id);
         const previous = current.snapshot.publishing?.[service];
-        if (previous?.status !== 'submitting' || previous.artifactSha256 !== expectedSha) throw new Error('Publish receipt changed; inspect target');
+        if (!sameAttempt(previous, claim) || previous.artifactSha256 !== expectedSha) throw new Error('Publish receipt changed; inspect target');
         const next = structuredClone(current.snapshot);
         next.publishing[service] = { ...claim, status: 'submitted', receipt };
         next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish',

@@ -12,7 +12,7 @@ const shapes = {
   publishStatus: ['action', 'id'],
   publishGithub: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
   publishVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
-  reconcileVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint', 'deletedDeploymentId', 'baselineDeploymentId'],
+  reconcileVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint', 'deletedDeploymentId', 'baselineDeploymentId', 'attemptStartedAt', 'attemptId'],
 };
 function send(response, status, value, type = 'application/json; charset=utf-8') {
   response.statusCode = status;
@@ -74,7 +74,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (body.action === 'reconcileVercel') {
         if (!publishing) return send(response, 503, { error: 'Hosted publishing is not connected' });
         return send(response, 200, await publishing.reconcileVercel(cookie, body.id, body.artifactSha256,
-          body.targetFingerprint, body.deletedDeploymentId, body.baselineDeploymentId));
+          body.targetFingerprint, body.deletedDeploymentId, body.baselineDeploymentId, body.attemptStartedAt, body.attemptId));
       }
       const result = body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
         : body.action === 'start' ? await active.start(cookie, body.goal, body.requestId)
@@ -89,6 +89,9 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (error.message === 'Hosted usage migration is not ready') return send(response, 503, { error: 'Hosted usage migration is not ready' });
       if (error.message === 'Hosted domain migration is not ready') return send(response, 503, { error: 'Hosted domain migration is not ready' });
       if (error.message === 'Publish target changed; refresh status') return send(response, 409, { error: error.message });
+      if (/^(Vercel publish attempt changed; refresh status|Vercel submission may still be active; wait before reconciling|Only an uncertain Vercel submission can be reconciled|Vercel deployment inventory changed; manual inspection required|Old Vercel deployment is not verified deleted; claim remains blocked|Protected Vercel reconciliation target changed|Vercel deletion check failed; claim remains blocked|Exact Vercel reconciliation target and deployment IDs required|Vercel deletion evidence changed)$/.test(error.message)) {
+        return send(response, 409, { error: error.message });
+      }
       const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
       return send(response, safe ? 400 : 500, { error: safe ? error.message : 'Project request failed' });
     } finally { try { await runtime?.close(); } catch { /* response contains the operation result */ } }

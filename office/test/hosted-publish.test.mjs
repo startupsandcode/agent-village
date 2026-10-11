@@ -186,7 +186,8 @@ test('deleted uncertain Vercel attempt can be reconciled once against an inert b
   const baselineDeploymentId = 'dpl_baseline123';
   let publishes = 0;
   let verified = 0;
-  const publisher = createHostedPublisher({ access, env,
+  let clock = Date.parse('2026-10-11T22:54:00Z');
+  const publisher = createHostedPublisher({ access, env, now: () => clock,
     vercelPublisher: async args => { publishes++; if (publishes === 1) { await args.onBeforeSubmit(); throw new Error('unknown result'); }
       return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_preview123',
         url: 'https://smoke-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 }; },
@@ -196,14 +197,16 @@ test('deleted uncertain Vercel attempt can be reconciled once against an inert b
   const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
   await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /unknown result/);
   assert.equal(read().publishing.vercel.status, 'submitting');
+  const old = (await publisher.status('owner', id)).receipts.vercel;
+  clock += 16 * 60_000;
   const handler = createHostedMayaHandler({ env, auth, publisher, coordinator: {}, enabled: true });
   const body = { action: 'reconcileVercel', id, artifactSha256: site.sha256, targetFingerprint: fingerprint,
-    deletedDeploymentId, baselineDeploymentId };
+    deletedDeploymentId, baselineDeploymentId, attemptStartedAt: old.startedAt, attemptId: old.attemptId };
   assert.equal((await call(handler, 'viewer', body)).status, 403);
   assert.equal((await call(handler, 'owner', body, 'https://other.example')).status, 403);
   assert.equal((await call(handler, 'owner', { ...body, extra: 'x' })).status, 400);
-  await assert.rejects(publisher.reconcileVercel('other', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId), /Project not found/);
-  await assert.rejects(publisher.reconcileVercel('owner', id, site.sha256, 'f'.repeat(64), deletedDeploymentId, baselineDeploymentId), /target changed/);
+  await assert.rejects(publisher.reconcileVercel('other', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId, old.startedAt, old.attemptId), /Project not found/);
+  await assert.rejects(publisher.reconcileVercel('owner', id, site.sha256, 'f'.repeat(64), deletedDeploymentId, baselineDeploymentId, old.startedAt, old.attemptId), /target changed/);
   assert.equal(publishes, 1);
   const http = await call(handler, 'owner', body);
   assert.equal(http.status, 200);
@@ -211,7 +214,7 @@ test('deleted uncertain Vercel attempt can be reconciled once against an inert b
   assert.equal(result.status, 'reconciled');
   assert.equal(verified, 1);
   assert.equal(read().events.at(-1).type, 'publish_reconciled');
-  assert.equal((await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId)).status, 'reconciled');
+  assert.equal((await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId, old.startedAt, old.attemptId)).status, 'reconciled');
   assert.equal(verified, 1);
   const changed = createHostedPublisher({ access, env: { ...env, VILLAGE_PUBLISH_VERCEL_PROJECT: 'different-site' },
     vercelPublisher: async () => { publishes++; } });
@@ -276,7 +279,8 @@ test('reconciled Preview retry rechecks the sole baseline immediately before POS
 test('failed reconciled preflight retains baseline constraint on every later retry', async () => {
   const { access, read } = fixture();
   let attempts = 0, externalWrites = 0, inventorySafe = false;
-  const publisher = createHostedPublisher({ access, env,
+  let clock = Date.parse('2026-10-11T22:54:00Z');
+  const publisher = createHostedPublisher({ access, env, now: () => clock,
     deletionVerifier: async () => ({ projectId: 'prj_abcdef', deletedDeploymentId: 'dpl_deleted123', baselineDeploymentId: 'dpl_baseline123' }),
     vercelPublisher: async args => {
       attempts++;
@@ -290,7 +294,9 @@ test('failed reconciled preflight retains baseline constraint on every later ret
   });
   const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
   await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /unknown result/);
-  await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, 'dpl_deleted123', 'dpl_baseline123');
+  const old = (await publisher.status('owner', id)).receipts.vercel;
+  clock += 16 * 60_000;
+  await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, 'dpl_deleted123', 'dpl_baseline123', old.startedAt, old.attemptId);
   await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /setup can be corrected and retried/);
   assert.equal(read().publishing.vercel.status, 'reconciled');
   assert.equal(externalWrites, 0);
@@ -300,4 +306,110 @@ test('failed reconciled preflight retains baseline constraint on every later ret
   inventorySafe = true;
   assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
   assert.equal(externalWrites, 1);
+});
+
+test('a fresh in-flight claim cannot be reconciled, and stale recovery cannot reopen the next attempt', async () => {
+  const { access, read } = fixture();
+  let clock = Date.parse('2026-10-11T22:54:00Z');
+  let enterFirst, releaseFirst, enterSecond, releaseSecond, writes = 0, verifies = 0;
+  const firstEntered = new Promise(resolve => { enterFirst = resolve; });
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const secondEntered = new Promise(resolve => { enterSecond = resolve; });
+  const secondGate = new Promise(resolve => { releaseSecond = resolve; });
+  const publisher = createHostedPublisher({ access, env, now: () => clock,
+    deletionVerifier: async () => { verifies++; return { projectId: 'prj_abcdef', deletedDeploymentId: 'dpl_deleted123', baselineDeploymentId: 'dpl_baseline123' }; },
+    vercelPublisher: async args => {
+      if (writes === 0) { enterFirst(); await firstGate; await args.onBeforeSubmit(); writes++; throw new Error('old uncertain result'); }
+      enterSecond(); await secondGate; await args.onBeforeSubmit(); writes++;
+      return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_preview123',
+        url: 'https://smoke-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 };
+    },
+  });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  const first = publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
+  await firstEntered;
+  const old = (await publisher.status('owner', id)).receipts.vercel;
+  assert.equal(old.status, 'submitting');
+  assert.ok(old.startedAt);
+  assert.ok(old.attemptId);
+  const handler = createHostedMayaHandler({ env, auth, publisher, coordinator: {}, enabled: true });
+  const staleBody = { action: 'reconcileVercel', id, artifactSha256: site.sha256, targetFingerprint: fingerprint,
+    deletedDeploymentId: 'dpl_deleted123', baselineDeploymentId: 'dpl_baseline123',
+    attemptStartedAt: old.startedAt, attemptId: old.attemptId };
+  const activeResponse = await call(handler, 'owner', staleBody);
+  assert.equal(activeResponse.status, 409);
+  assert.match(activeResponse.value.error, /may still be active/);
+  await assert.rejects(publisher.reconcileVercel('owner', id, site.sha256, fingerprint,
+    'dpl_deleted123', 'dpl_baseline123', old.startedAt, old.attemptId), /may still be active/);
+  assert.equal(verifies, 0);
+  releaseFirst();
+  await assert.rejects(first, /old uncertain result/);
+  clock += 16 * 60_000;
+  await publisher.reconcileVercel('owner', id, site.sha256, fingerprint,
+    'dpl_deleted123', 'dpl_baseline123', old.startedAt, old.attemptId);
+  const second = publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
+  await secondEntered;
+  const next = (await publisher.status('owner', id)).receipts.vercel;
+  assert.notEqual(next.attemptId, old.attemptId);
+  const staleResponse = await call(handler, 'owner', staleBody);
+  assert.equal(staleResponse.status, 409);
+  assert.match(staleResponse.value.error, /attempt changed/);
+  await assert.rejects(publisher.reconcileVercel('owner', id, site.sha256, fingerprint,
+    'dpl_deleted123', 'dpl_baseline123', old.startedAt, old.attemptId), /attempt changed/);
+  assert.equal(verifies, 1);
+  releaseSecond();
+  assert.equal((await second).status, 'submitted');
+  assert.equal(writes, 2);
+  assert.equal(read().events.filter(event => event.type === 'publish_reconciled').length, 1);
+});
+
+test('recovery during a delayed old preflight fences its POST after a new attempt starts', async () => {
+  const { access, read } = fixture();
+  let clock = Date.parse('2026-10-11T22:54:00Z');
+  let entered, release, calls = 0, posts = 0;
+  const gateEntered = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const publisher = createHostedPublisher({ access, env, now: () => clock,
+    deletionVerifier: async () => ({ projectId: 'prj_abcdef', deletedDeploymentId: 'dpl_deleted123', baselineDeploymentId: 'dpl_baseline123' }),
+    vercelPublisher: async args => {
+      calls++;
+      if (calls === 1) { entered(); await gate; }
+      await args.onBeforeSubmit(); posts++;
+      return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_preview123',
+        url: 'https://smoke-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 };
+    },
+  });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  const oldRun = publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
+  await gateEntered;
+  const old = (await publisher.status('owner', id)).receipts.vercel;
+  clock += 16 * 60_000; // simulate an attempt past the function execution bound
+  await publisher.reconcileVercel('owner', id, site.sha256, fingerprint,
+    'dpl_deleted123', 'dpl_baseline123', old.startedAt, old.attemptId);
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
+  release();
+  await assert.rejects(oldRun, /claim changed/);
+  assert.equal(posts, 1);
+  assert.equal(read().publishing.vercel.status, 'submitted');
+});
+
+test('a late result from an older attempt cannot overwrite a newer durable claim', async () => {
+  const { access, read, change } = fixture();
+  let entered, release;
+  const gateEntered = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const publisher = createHostedPublisher({ access, env, vercelPublisher: async args => {
+    await args.onBeforeSubmit(); entered(); await gate;
+    return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_oldpreview123',
+      url: 'https://old-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 };
+  } });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  const oldRun = publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
+  await gateEntered;
+  change(snapshot => { const next = structuredClone(snapshot); next.publishing.vercel = { ...next.publishing.vercel,
+    attemptId: 'new-attempt', startedAt: '2026-10-11T23:30:00.000Z' }; return next; });
+  release();
+  await assert.rejects(oldRun, /receipt changed/);
+  assert.equal(read().publishing.vercel.attemptId, 'new-attempt');
+  assert.equal(read().events.some(event => event.type === 'publish'), false);
 });
