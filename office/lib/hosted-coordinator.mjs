@@ -105,8 +105,8 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       requireRequestId(requestId);
       if (!validText(goal) || provider.containsSecret?.(goal)) throw new Error('Goal invalid or contains a provider key');
       const id = randomUUID();
-      await reserve(cookie, requestId, 'project');
       const domainProfile = domain ? await domain.read(cookie) : { audience: '', expertise: '', rules: '' };
+      await reserve(cookie, requestId, 'project');
       const project = { id, goal: goal.trim(), domainProfile, answer: null, plan: null, artifact: null, files: null, status: 'clarifying', events: [], createdAt: new Date(now()).toISOString(), stageStartedAt: new Date(now()).toISOString(), createRequestId: requestId };
       if (Object.values(domainProfile).some(Boolean)) event(project, 'System', 'context', 'Saved domain answers attached to Maya, Sam, and Quinn for this project');
       event(project, 'Maya', 'start', 'Reading the project goal');

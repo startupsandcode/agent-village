@@ -33,19 +33,26 @@ let usageSequence = 0;
 let lastUsageSignature = '';
 let usagePending = false;
 let usagePendingSince = 0;
+let domainVersion = 0;
+for (const field of Object.values(domainFields)) field?.addEventListener('input', () => {
+  domainVersion++; domainResult.textContent = 'Unsaved changes. Save before starting a new project.';
+});
 
 async function loadDomain() {
   if (!domainForm) return;
+  const version = domainVersion;
   try {
     const response = await fetch('/api/maya-domain', { cache: 'no-store' });
     const value = await response.json();
     if (!response.ok) throw new Error(value.error ?? 'Domain answers unavailable');
+    if (version !== domainVersion) return;
     for (const [name, field] of Object.entries(domainFields)) field.value = value[name] ?? '';
     domainResult.textContent = Object.values(value).some(Boolean) ? 'Saved domain answers loaded.' : 'Optional: add your domain answers before starting a project.';
-  } catch { domainResult.textContent = 'Domain answers could not be loaded. New projects are unavailable until setup is ready.'; }
+  } catch { if (version === domainVersion) domainResult.textContent = 'Domain answers could not be loaded. New projects are unavailable until setup is ready.'; }
 }
 domainForm?.addEventListener('submit', async event => {
   event.preventDefault();
+  const version = ++domainVersion;
   const button = domainForm.querySelector('button');
   button.disabled = true;
   try {
@@ -53,9 +60,11 @@ domainForm?.addEventListener('submit', async event => {
       body: JSON.stringify(Object.fromEntries(Object.entries(domainFields).map(([name, field]) => [name, field.value]))) });
     const value = await response.json();
     if (!response.ok) throw new Error(value.error ?? 'Domain answers unavailable');
-    for (const [name, field] of Object.entries(domainFields)) field.value = value[name];
-    domainResult.textContent = 'Saved for new projects. Current projects keep their earlier answers.';
-  } catch (error) { domainResult.textContent = error.message; }
+    if (version === domainVersion) {
+      for (const [name, field] of Object.entries(domainFields)) field.value = value[name];
+      domainResult.textContent = 'Saved for new projects. Current projects keep their earlier answers.';
+    }
+  } catch (error) { if (version === domainVersion) domainResult.textContent = error.message; }
   finally { button.disabled = false; }
 });
 

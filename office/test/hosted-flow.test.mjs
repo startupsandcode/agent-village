@@ -224,6 +224,17 @@ test('hosted runtime stops before any provider call when additive usage migratio
   assert.equal(closed, 1);
 });
 
+test('hosted runtime closes its pool before any provider call when 003 domain migration is missing', async () => {
+  let closed = 0; const queries = [];
+  class Pool {
+    async query(sql) { queries.push(sql); if (sql.includes('village_domain_profiles')) throw new Error('missing relation'); return { rows: [] }; }
+    async end() { closed++; }
+  }
+  await assert.rejects(createNeonHostedRuntime({ env: { ...env, VILLAGE_DATABASE_URL: 'postgres://placeholder', OPENAI_API_KEY: 'fake' }, auth, PoolClass: Pool }), /domain migration/);
+  assert.equal(closed, 1);
+  assert.deepEqual(queries, ['SELECT 1 FROM village_provider_usage LIMIT 0', 'SELECT 1 FROM village_domain_profiles LIMIT 0']);
+});
+
 test('hosted cancellation wins over an in-flight mock build', async () => {
   const { store, budget } = memory();
   let release; const gate = new Promise(resolve => { release = resolve; });

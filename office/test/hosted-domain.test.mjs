@@ -85,6 +85,15 @@ test('new hosted projects snapshot domain answers into all three agent inputs', 
   for (const input of calls) assert.deepEqual(input.domainProfile, profile);
 });
 
+test('invalid saved domain answers do not consume a project budget claim', async () => {
+  let reservations = 0;
+  const coordinator = createHostedCoordinator({ access: { create: async () => { throw new Error('must not create'); } },
+    budget: { reserve: async () => { reservations++; return true; } }, provider: { containsSecret: () => false },
+    domain: { read: async () => { throw new Error('Invalid saved domain answers'); } } });
+  await assert.rejects(coordinator.start('a', 'Garden site', 'create-failed-domain'), /Invalid saved domain answers/);
+  assert.equal(reservations, 0);
+});
+
 test('hosted setup interview loads and saves domain answers through the owner API', async () => {
   const html = await readFile(new URL('../private/index.html', import.meta.url), 'utf8');
   for (const name of ['audience', 'expertise', 'rules']) assert.match(html, new RegExp(`id="hosted-domain-${name}"`));
@@ -113,5 +122,32 @@ test('hosted setup interview loads and saves domain answers through the owner AP
   get('#hosted-domain-rules').value = 'Use examples';
   await listeners.get('#hosted-domain-form:submit')({ preventDefault() {} });
   assert.deepEqual(saved, { ...profile, rules: 'Use examples' });
+  assert.match(get('#hosted-domain-result').textContent, /Saved.*new projects/);
+});
+
+test('late hosted domain GET does not overwrite answers saved during the load', async () => {
+  const listeners = new Map(); const elements = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: name === '#hosted-chat', value: '', textContent: '', disabled: false,
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  let releaseOld; const old = new Promise(resolve => { releaseOld = resolve; });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return options.method === 'POST' ? reply(JSON.parse(options.body)) : old;
+    return reply({});
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }), createTextNode: value => ({ textContent: value }) },
+    fetch, sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} }, setInterval: () => 1, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  for (const [name, value] of Object.entries(profile)) get(`#hosted-domain-${name}`).value = value;
+  await listeners.get('#hosted-domain-form:submit')({ preventDefault() {} });
+  releaseOld(reply(blank));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(get('#hosted-domain-audience').value, profile.audience);
   assert.match(get('#hosted-domain-result').textContent, /Saved.*new projects/);
 });
