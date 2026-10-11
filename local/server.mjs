@@ -10,6 +10,9 @@ import { readOfficeSetup, saveOfficeSetup, validOfficeName } from './setup.mjs';
 import { inspectConnections } from './connections.mjs';
 import { loadLocalEnv } from './env.mjs';
 import { readDomainProfile, saveDomainProfile } from './domain.mjs';
+import { publishReviewedSite } from './publish-github.mjs';
+import { deployReviewedPreview, inspectPreviewDeployment } from './publish-vercel.mjs';
+import { beginPreviewPublish, completePreviewPublish, readPreviewPublish } from './publish-state.mjs';
 
 const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'office.js': 'text/javascript; charset=utf-8', 'office-data.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
@@ -23,7 +26,7 @@ async function body(request) {
   for await (const chunk of request) { raw += chunk; if (raw.length > 4096) throw new Error('Request too large'); }
   try { return JSON.parse(raw); } catch { throw new Error('Invalid JSON'); }
 }
-export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME, setupRoot = engine?.root ?? join(here, '.workspaces'), connectionInspector = inspectConnections } = {}) {
+export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME, setupRoot = engine?.root ?? join(here, '.workspaces'), connectionInspector = inspectConnections, env = process.env, githubPublisher = publishReviewedSite, vercelPublisher = deployReviewedPreview, deploymentInspector = inspectPreviewDeployment } = {}) {
   const fixedOfficeName = validOfficeName(officeName) ? officeName.trim() : '';
   let connectionProbe = null;
   let lastConnectionResult = null;
@@ -73,6 +76,43 @@ export function createLocalServer({ provider, providerError, engine = provider &
       }
       if (path.startsWith('/api/')) {
         if (!engine) return send(response, 503, { error: providerError ?? 'Provider not configured' });
+        const publishing = path.match(/^\/api\/projects\/([0-9a-f-]{36})\/publish(?:\/(github|vercel))?$/);
+        if (publishing) {
+          const [, id, service] = publishing;
+          const project = await engine.get(id);
+          if (project.status !== 'reviewed' || !project.artifact) return send(response, 409, { error: 'Only a reviewed project can be published' });
+          if (!service && request.method === 'GET') {
+            const receipt = await readPreviewPublish(engine, id);
+            if (receipt?.status === 'submitted' && env.VILLAGE_PUBLISH_VERCEL_TOKEN) {
+              try { return send(response, 200, { preview: await deploymentInspector({ receipt, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN }) }); }
+              catch { return send(response, 200, { preview: { ...receipt, lastObservedState: receipt.state, state: 'STATUS_UNAVAILABLE' } }); }
+            }
+            return send(response, 200, { preview: receipt });
+          }
+          if (request.method !== 'POST' || !service) return send(response, 405, { error: 'Method not allowed' });
+          if (origin !== `http://${host}` || (request.headers['sec-fetch-site'] && request.headers['sec-fetch-site'] !== 'same-origin')) return send(response, 403, { error: 'Local origin required' });
+          const value = await body(request);
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return send(response, 400, { error: 'Publishing target required' });
+          if (service === 'github') {
+            if (!env.VILLAGE_PUBLISH_GITHUB_TOKEN) return send(response, 503, { error: 'GitHub publishing token missing on the server' });
+            const result = await githubPublisher({ engine, id, owner: value.owner, repo: value.repo, branch: value.branch, token: env.VILLAGE_PUBLISH_GITHUB_TOKEN });
+            await engine.recordPublish(id, 'github', result);
+            return send(response, 200, result);
+          }
+          if (!env.VILLAGE_PUBLISH_VERCEL_TOKEN) return send(response, 503, { error: 'Vercel publishing token missing on the server' });
+          const existing = await readPreviewPublish(engine, id);
+          if (existing) {
+            if (existing.team !== value.team || existing.project !== value.project || existing.artifactSha256 !== project.artifact.sha256) return send(response, 409, { error: 'Preview target or reviewed files differ from the saved submission' });
+            if (existing.status === 'submitted') await engine.recordPublish(id, 'vercel', existing);
+            return send(response, existing.status === 'submitted' ? 200 : 409, existing.status === 'submitted'
+              ? { preview: existing } : { error: 'Preview submission uncertain; inspect Vercel before retrying', preview: existing });
+          }
+          const result = await vercelPublisher({ engine, id, team: value.team, project: value.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
+            onBeforeSubmit: target => beginPreviewPublish(engine, id, target) });
+          await completePreviewPublish(engine, id, result);
+          await engine.recordPublish(id, 'vercel', result);
+          return send(response, 200, { preview: { status: 'submitted', ...result } });
+        }
         if (path === '/api/projects' && request.method === 'POST') {
           const value = await body(request);
           return send(response, 200, await engine.create(value.goal, value.requestId));
@@ -111,8 +151,8 @@ export function createLocalServer({ provider, providerError, engine = provider &
       const value = await readFile(join(publicDir, name));
       return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
-      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Do not put an API key in domain answers|Domain answers must be text under 500 characters each|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters)$/.test(error.message) ? error.message : 'Request failed';
-      return send(response, safe === 'Request failed' ? 500 : 400, { error: safe });
+      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Do not put an API key in domain answers|Domain answers must be text under 500 characters each|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters|Only a reviewed project can be published|GitHub publishing credential is missing|Vercel publishing token missing on the server|Exact Vercel team and project names required|Vercel target must be an existing static project at its root|A Preview publish already exists; inspect its status before retrying|GitHub target must be the requested writable private repository|Publishing requires a non-default branch|GitHub target branch must exist and be unprotected|GitHub branch already contains delivery files; choose a clean branch|Publishing to this branch is already in progress|Preview submission uncertain; inspect Vercel before retrying|Preview target or reviewed files differ from the saved submission|Publishing cancelled or timed out(?:; check the branch before retrying)?|GitHub request failed \([0-9]{3}\); check repository access, branch, or conflict|Vercel request failed \([0-9]{3}\); no response body was logged|Invalid GitHub (?:owner|repository|branch))$/.test(error.message) ? error.message : 'Publishing or project request failed';
+      return send(response, safe === 'Publishing or project request failed' ? 500 : 400, { error: safe });
     }
   });
 }

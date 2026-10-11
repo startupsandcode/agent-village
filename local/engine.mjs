@@ -42,6 +42,17 @@ export class VillageEngine {
     const safe = this.provider.redact?.(message) ?? String(message);
     project.events.push({ at: this.now(), agent, type, message: safe.slice(0, 1200), ...extra });
   }
+  async recordPublish(id, service, receipt) {
+    const project = await this.getInternal(id);
+    if (project.status !== 'reviewed' || project.artifact?.sha256 !== receipt.artifactSha256) throw new Error('Reviewed receipt changed before publishing');
+    const receiptId = service === 'github' ? receipt.commitSha : receipt.deploymentId;
+    if (project.events.some(event => event.type === 'publish' && event.receiptId === receiptId)) return publicProject(project);
+    this.event(project, 'System', 'publish', service === 'github'
+      ? `Published reviewed files to ${receipt.repository} branch ${receipt.branch} at commit ${receipt.commitSha}`
+      : `Submitted reviewed files to Vercel Preview ${receipt.team}/${receipt.project}; deployment ${receipt.deploymentId} is ${receipt.state}`, { receiptId, url: receipt.url });
+    await this.save(project);
+    return publicProject(project);
+  }
   async create(goal, requestId) {
     if (!validText(goal) || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Goal and request ID required');
     if (this.provider.containsSecret?.(goal)) throw new Error('Do not put an API key in chat');

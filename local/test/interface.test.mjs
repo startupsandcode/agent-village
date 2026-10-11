@@ -146,6 +146,38 @@ test('domain profile containing the active key is blocked before any provider ca
     assert.ok(!(await response.text()).includes('private-key'));
   } finally { server.close(); }
 }));
+test('local publishing routes require reviewed files, same origin and server tokens; Preview retries reuse the receipt', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const completedProject = await completed(engine);
+  let githubCalls = 0, vercelCalls = 0;
+  const githubPublisher = async args => { githubCalls++; assert.equal(args.token, 'fake-github-token'); return {
+    repository: 'learner/site', branch: 'village-publish', commitSha: 'a'.repeat(40), artifactSha256: completedProject.artifact.sha256,
+    url: 'https://github.com/learner/site/tree/village-publish', idempotent: false,
+  }; };
+  const vercelPublisher = async args => {
+    vercelCalls++;
+    assert.equal(args.token, 'fake-vercel-token');
+    await args.onBeforeSubmit({ team: args.team, project: args.project, projectId: 'prj_test1234', artifactSha256: completedProject.artifact.sha256 });
+    return { team: args.team, project: args.project, projectId: 'prj_test1234', deploymentId: 'dpl_test1234', url: 'https://site-test.vercel.app', state: 'QUEUED', artifactSha256: completedProject.artifact.sha256 };
+  };
+  const server = createLocalServer({ engine, setupRoot: root, env: { VILLAGE_PUBLISH_GITHUB_TOKEN: 'fake-github-token', VILLAGE_PUBLISH_VERCEL_TOKEN: 'fake-vercel-token' }, githubPublisher, vercelPublisher,
+    deploymentInspector: async ({ receipt }) => ({ ...receipt, state: 'READY' }) });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (service, payload, origin = base) => fetch(`${base}/api/projects/${completedProject.id}/publish/${service}`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+  try {
+    assert.equal((await post('github', { owner: 'learner', repo: 'site', branch: 'village-publish' }, 'https://wrong.example')).status, 403);
+    assert.equal(githubCalls, 0);
+    assert.equal((await post('github', { owner: 'learner', repo: 'site', branch: 'village-publish' })).status, 200);
+    assert.equal(githubCalls, 1);
+    assert.equal((await post('vercel', { team: 'learner-team', project: 'site' })).status, 200);
+    assert.equal((await post('vercel', { team: 'learner-team', project: 'site' })).status, 200);
+    assert.equal(vercelCalls, 1);
+    const status = await (await fetch(`${base}/api/projects/${completedProject.id}/publish`)).json();
+    assert.equal(status.preview.state, 'READY');
+    assert.equal((await engine.get(completedProject.id)).events.filter(event => event.type === 'publish').length, 2);
+  } finally { server.close(); }
+}));
 test('reviewed site exports a runnable, receipt-checked project without chat or keys', async () => fixture(async root => {
   const engine = new VillageEngine({ root, provider: mockProvider() });
   const result = await completed(engine);

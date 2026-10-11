@@ -35,30 +35,15 @@ The website preview is static and has a restrictive Content Security Policy. Sam
 2. Choose OpenAI or Anthropic and enter **your own** key using the silent prompt above. A ChatGPT subscription is not an OpenAI API key. Do not add key values to the repository, a `.env.example`, chat, or browser storage.
 3. Open the local office, give Maya a small **static website** goal, answer the question, read the plan, then choose Build. The desks show only recorded current stages. Inspect the event trail, generated files and preview. The build runs structural and non-executable-content checks; Quinn separately reviews the exact HTML and CSS digest. This is a bounded static site path, not a general code executor.
 4. Once Quinn approves, choose **Prepare reviewed files**. The office displays the standalone project directory. It contains `index.html`, `styles.css`, a receipt-checking test, `package.json`, `.vercelignore`, and a README. It contains no chat history or provider key. In a terminal, change to that displayed directory and run `npm test`. The test checks the exact delivery file set and both file receipts; `.git` and `.vercel` are permitted local metadata and explicitly excluded from Vercel upload. Added files or directories fail the test and another Prepare request. Inspect the site before publishing.
-5. **Check my local connections** reads the existing `gh` and `vercel` CLI account names with read-only commands. It sends neither the provider key nor chat history to those commands. A reported sign-in does not establish repository write or deployment permission. The office does not publish for you.
+5. **Check my local CLI connections** reads existing `gh` and `vercel` CLI account names with read-only commands. It sends neither the provider key nor chat history to those commands. This is informational and does not grant publishing permission. The separate publish buttons below use server-side publishing credentials.
 
-### Put the reviewed site in your own GitHub and Vercel accounts
+### Publish from the local interface
 
-These are intentional terminal actions, not background steps in the office. They can create a repository, upload files, create a Vercel project, and incur service usage. Review the target account and project before each write. If you already have a repository or Vercel project, select it deliberately instead of creating a duplicate.
+The two publish buttons appear after **Prepare reviewed files**. They act only when you press them. The interface never collects publishing tokens. If you want GitHub publication, first create an empty **private** repository and a non-default branch in your own account. Give the local server `VILLAGE_PUBLISH_GITHUB_TOKEN` through your private `.env.local`; use a fine-grained GitHub token with **Contents: read and write** on only that repository. The GitHub button checks the exact owner, repository, branch, privacy and permissions, refuses conflicting delivery files, then commits the six receipt-checked files without force pushing. It preserves unrelated files. A retry with the same files returns the existing commit.
 
-```sh
-# Run these from the prepared site directory shown by the office.
-npm test
-gh auth login --web             # only if your own GitHub CLI is not already connected
-gh auth status
-gh api user --jq .login         # confirm the account that will own the repository
-git init -b main
-git add index.html styles.css verify.test.mjs package.json README.md .vercelignore
-git commit -m 'Initial reviewed website'
-gh repo create YOUR-USER/YOUR-SITE --private --source=. --remote=origin --push
-vercel login                   # sign in to your own Vercel account if needed
-vercel whoami
-vercel link                    # choose the intended team and project
-vercel project inspect --non-interactive
-vercel deploy                  # first deploy of a new project is production; later ones default to preview
-```
+For a Vercel Preview, first select or create an **existing static Vercel project** in your own team with its root directory at the project root. Set `VILLAGE_PUBLISH_VERCEL_TOKEN` in the same private server environment. The Vercel token should be limited to the intended team where supported. Enter the exact team slug and project name in the interface. The button checks the project, then sends only the reviewed HTML and CSS to Vercel's deployment API. It requests Preview, never Production, and reports the deployment ID and observed state. A queued deployment is not a verified working site; use **Check Preview status**. The local receipt blocks duplicate submissions, including after a server restart. If a submission is interrupted after it may have reached Vercel, the interface blocks an automatic retry until you inspect the target deployment.
 
-The `gh repo create` command is a **new private repository** path. For an existing repository, inspect its remote and history before choosing your own push commands. Do not run the example with `YOUR-USER/YOUR-SITE` literally. Check Vercel's target carefully: its [CLI documentation](https://vercel.com/docs/cli/deploying-from-cli) says a new project's first deployment is production, even without `--prod`. A later deployment without `--prod` is a preview. A preview can still be reachable by anyone with its URL unless you configure deployment protection. The interface itself never executes these commands or claims their result. [GitHub CLI repository creation](https://cli.github.com/manual/gh_repo_create) and [Vercel deploy](https://vercel.com/docs/cli/deploy) describe the CLI actions.
+These are two separate, explicit writes. Publishing to GitHub does not create a repository, and the direct Vercel Preview upload does not connect a GitHub repository or automatically update Production. A Vercel token may have broader team privileges than one project; verify the team and project before pressing Publish. Preview URLs can be shared unless you enable [deployment protection](https://vercel.com/docs/deployment-protection). There has been no live publish test in this PR; the tests use mocked GitHub and Vercel APIs.
 
 ### Hosted private office
 
@@ -66,7 +51,7 @@ The existing Vercel office uses application-level Sign in with Vercel and an inv
 
 Hosted Maya runs are **disabled in the current deployment**. The local engine persists projects in ignored files, which do not survive Vercel function cold starts or redeploys. The hosted code path now has an owner-scoped Postgres store, transactional budget claims, a session-bound coordinator, authenticated route, and a small chat that appears only in explicitly enabled test mode. The existing Vercel OAuth `sub` is the owner key. This path is tested with in-memory/fake adapters; it has not used a live database or provider. The current static renderer does not execute model-written code, so a Sandbox is unnecessary for this first hosted artifact type. Broader coding work would need a separately provisioned [Vercel Sandbox](https://vercel.com/docs/sandbox) with strict time, file and network limits. Hosted execution requires an operator allowlist, private database, provider key and explicit activation; a viewer session alone cannot spend. GitHub and Vercel publishing need separate, scoped user authorization and explicit target confirmation. A paid hosted test needs the owner to connect a database, configure his own OAuth callback and allowed origin, and enter his own provider key in server-only Vercel secrets. No value is entered by this PR.
 
-The existing Astra Lab worker in `village/` and the hosted Village Office have separate purposes and credentials. This local slice does not run them or submit issues, PRs, messages, or deployments. The first artifact type is a small landing page; broader coding work needs a separate bounded design and tool permissions.
+The existing Astra Lab worker in `village/` and the hosted Village Office have separate purposes and credentials. This local slice does not run them or submit issues, PRs, or messages. It can commit a reviewed site to a user-selected private branch and submit a Vercel Preview only after the corresponding user button is pressed and the server has a separate publishing credential. The first artifact type is a small landing page; broader coding work needs a separate bounded design and tool permissions.
 
 ## Verification
 

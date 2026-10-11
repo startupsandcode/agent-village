@@ -12,6 +12,10 @@ const exportPath = document.querySelector('#export-path');
 const publishStatus = document.querySelector('#publish-status');
 const connectionButton = document.querySelector('#connections');
 const connectionStatus = document.querySelector('#connection-status');
+const publishActions = document.querySelector('#publish-actions');
+const githubPublishForm = document.querySelector('#github-publish-form');
+const vercelPublishForm = document.querySelector('#vercel-publish-form');
+const previewStatusButton = document.querySelector('#preview-status');
 const firstRun = document.querySelector('#first-run');
 const officeForm = document.querySelector('#office-form');
 const requestState = document.querySelector('#request-state');
@@ -132,7 +136,59 @@ form.addEventListener('submit', async event => {
 });
 build.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { pendingBuildId ??= id(); const result = await api(`/api/projects/${projectId}/build`, 'POST', { requestId: pendingBuildId }); if (epoch !== conversationEpoch) return; display(result); pendingBuildId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
 cancel.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}/cancel`, 'POST'); if (epoch === conversationEpoch) display(result); } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
-exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Run the project test, then connect your own GitHub and Vercel accounts using the setup guide.'; setupState('publish', 'Reviewed files prepared; account connections and publication remain yours to verify.'); } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
+exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; if (publishActions) publishActions.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Check the project and exact target before choosing either publish action.'; setupState('publish', 'Reviewed files prepared. GitHub and Vercel actions are available below.'); } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
+function publishResult(node, message, url) {
+  node.textContent = message;
+  if (url) { const link = document.createElement('a'); link.href = url; link.textContent = ' Open result ↗'; link.target = '_blank'; link.rel = 'noopener'; node.append(link); }
+}
+githubPublishForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const epoch = conversationEpoch;
+  const button = githubPublishForm.querySelector('button');
+  const resultNode = document.querySelector('#github-publish-result');
+  button.disabled = true;
+  resultNode.textContent = 'Checking the private repository and reviewed files…';
+  try {
+    const result = await api(`/api/projects/${project.id}/publish/github`, 'POST', {
+      owner: document.querySelector('#github-owner').value.trim(), repo: document.querySelector('#github-repo').value.trim(), branch: document.querySelector('#github-branch').value.trim(),
+    });
+    if (epoch !== conversationEpoch) return;
+    publishResult(resultNode, `GitHub commit ${result.commitSha} ${result.idempotent ? 'already held the reviewed files' : 'published the reviewed files'}.`, result.url);
+    try { display(await api(`/api/projects/${project.id}`)); } catch {}
+  } catch (error) { if (epoch === conversationEpoch) resultNode.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+vercelPublishForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const epoch = conversationEpoch;
+  const button = vercelPublishForm.querySelector('button[type="submit"]');
+  const resultNode = document.querySelector('#vercel-publish-result');
+  button.disabled = true;
+  resultNode.textContent = 'Checking the Vercel target and submitting a Preview…';
+  try {
+    const result = await api(`/api/projects/${project.id}/publish/vercel`, 'POST', {
+      team: document.querySelector('#vercel-team').value.trim(), project: document.querySelector('#vercel-project').value.trim(),
+    });
+    if (epoch !== conversationEpoch) return;
+    const receipt = result.preview;
+    publishResult(resultNode, receipt.status === 'submitting' ? 'A prior Preview submission may have occurred. Inspect Vercel before retrying.' : `Preview submission ${receipt.deploymentId} is ${receipt.state}; it is not yet verified ready.`, receipt.url);
+    previewStatusButton.hidden = receipt.status !== 'submitted';
+    try { display(await api(`/api/projects/${project.id}`)); } catch {}
+  } catch (error) { if (epoch === conversationEpoch) resultNode.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+previewStatusButton?.addEventListener('click', async () => {
+  const epoch = conversationEpoch;
+  const projectId = project?.id;
+  const resultNode = document.querySelector('#vercel-publish-result');
+  previewStatusButton.disabled = true;
+  try {
+    const { preview } = await api(`/api/projects/${projectId}/publish`);
+    if (epoch !== conversationEpoch || project?.id !== projectId) return;
+    if (preview) publishResult(resultNode, preview.status === 'submitting' ? 'Submission status is uncertain; inspect Vercel.' : `Preview ${preview.deploymentId} is ${preview.state}.`, preview.url);
+  } catch (error) { if (epoch === conversationEpoch && project?.id === projectId) resultNode.textContent = error.message; }
+  finally { previewStatusButton.disabled = false; }
+});
 connectionButton?.addEventListener('click', async () => {
   const epoch = conversationEpoch;
   connectionButton.disabled = true;
@@ -143,7 +199,7 @@ connectionButton?.addEventListener('click', async () => {
   } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
   finally { connectionButton.disabled = false; }
 });
-newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before preparing a repository. Publishing has not been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your own account connections.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
+newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishActions) publishActions.hidden = true; if (previewStatusButton) previewStatusButton.hidden = true; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before publishing. No publish action has been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your publishing targets.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
 setInterval(async () => { if (project && (['clarifying', 'planning', 'building', 'reviewing'].includes(project.status) || project.artifact)) { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}`); if (epoch === conversationEpoch && project?.id === projectId) display(result); } catch {} } }, 1000);
 const initialEpoch = conversationEpoch;
 api('/api/status').then(async value => {

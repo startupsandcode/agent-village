@@ -50,3 +50,33 @@ export async function exportProject(engine, id) {
     return { path: destination, sha256: project.artifact.sha256 };
   } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
 }
+
+/** Capture the exact reviewed delivery bytes so later local edits cannot alter a publish. */
+export async function capturePreparedProject(engine, id) {
+  const prepared = await exportProject(engine, id);
+  const project = await engine.get(id);
+  if (project.status !== 'reviewed' || project.artifact?.sha256 !== prepared.sha256) throw new Error('Reviewed project changed');
+  const [html, css] = await Promise.all(['index.html', 'styles.css'].map(name => engine.artifact(id, name)));
+  if (digest(html, css) !== prepared.sha256) throw new Error('Reviewed files changed');
+  const expected = { 'index.html': html, 'styles.css': css, ...supportFiles(prepared.sha256) };
+  const entries = await readdir(prepared.path, { withFileTypes: true });
+  const delivery = entries.filter(item => !['.git', '.vercel'].includes(item.name));
+  if (delivery.map(item => item.name).sort().join('\0') !== Object.keys(expected).sort().join('\0') ||
+      delivery.some(item => !item.isFile() || item.isSymbolicLink()) ||
+      entries.some(item => ['.git', '.vercel'].includes(item.name) && (!item.isDirectory() || item.isSymbolicLink()))) {
+    throw new Error('Prepared project changed; inspect it before publishing');
+  }
+  const files = new Map();
+  for (const [name, value] of Object.entries(expected)) {
+    const path = join(prepared.path, name);
+    let details, content;
+    try { details = await lstat(path); content = await readFile(path); }
+    catch { throw new Error('Prepared project changed; inspect it before publishing'); }
+    if (!details.isFile() || details.isSymbolicLink() || !content.equals(Buffer.from(value))) {
+      throw new Error('Prepared project changed; inspect it before publishing');
+    }
+    files.set(name, content);
+  }
+  if (digest(files.get('index.html'), files.get('styles.css')) !== prepared.sha256) throw new Error('Reviewed files changed');
+  return { ...prepared, files };
+}

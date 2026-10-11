@@ -29,7 +29,13 @@ OPENAI_API_KEY=your-own-key-here</code></pre>
         <p>Open <a href="http://127.0.0.1:4174/">http://127.0.0.1:4174/</a>. Name your office, answer the short domain interview, and describe a small website to Maya. The status line confirms only that a key is present; the first request verifies live access. If it says <em>Missing OPENAI_API_KEY</em>, check the filename, location, provider choice, and restart the server.</p>
       </section>
 
-      <section id="preview"><div class="section-title"><span>02</span><h2>Configure a hosted Preview</h2></div>
+      <section id="publish"><div class="section-title"><span>02</span><h2>Publish a reviewed local site</h2></div>
+        <p>After Maya, Sam, and Quinn finish, choose <strong>Prepare reviewed files</strong>. The interface then shows two separate publish actions. Neither action runs until you press its button and enter an exact target.</p>
+        <p>For GitHub, use an existing private repository with an existing branch other than its default branch. Put a fine-grained, single-repository token with Contents read/write in the local server’s <code>.env.local</code> as <code>VILLAGE_PUBLISH_GITHUB_TOKEN</code>. For Vercel, use an existing static project in your own team and add <code>VILLAGE_PUBLISH_VERCEL_TOKEN</code> to the local server environment. Give that token the narrowest available team scope. Restart the local server after changing the file.</p>
+        <p>The GitHub action commits the receipt-checked files to that branch. The Vercel action uploads the reviewed HTML and CSS to a <strong>Preview</strong> deployment and shows its actual state. It does not create accounts, repositories, projects, or a Production deployment. Check the target before each click; a Preview URL may be publicly reachable unless you configure deployment protection.</p>
+      </section>
+
+      <section id="preview"><div class="section-title"><span>03</span><h2>Configure the Village Office Preview</h2></div>
         <p>Preview sign-in uses <strong>Sign in with Vercel</strong>, not a Google OAuth integration in this app. A Google account may be one way you sign in to Vercel; it does not configure the office. A Preview that says “Private office sign-in is not configured” needs the app’s server-side auth settings.</p>
         <ol>
           <li>Create your own confidential OAuth app in Vercel Team Settings → Apps. Use <code>client_secret_post</code> and the <code>openid</code> and <code>email</code> scopes. Register the exact callback <code>https://YOUR-PREVIEW-HOST/api/auth/callback</code>.</li>
@@ -40,8 +46,9 @@ OPENAI_API_KEY=your-own-key-here</code></pre>
         <p>A branch-specific Preview host can change. Check the exact URL in Vercel before setting the allowed origin and callback. A configured sign-in permits viewing the office; it does not turn on Maya’s hosted build.</p>
       </section>
 
-      <section id="runs"><div class="section-title"><span>03</span><h2>Enable a hosted test run only when ready</h2></div>
-        <p>For a paid Preview test, the owner also needs a private Postgres database with <code>office/hosted/001_projects.sql</code> applied, <code>VILLAGE_DATABASE_URL</code>, <code>OFFICE_RUN_ALLOWED_EMAILS</code>, <code>VILLAGE_PROVIDER=openai</code> or <code>anthropic</code>, and the matching <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> in Preview server-side settings. Then set <code>VILLAGE_HOSTED_RUNS_ENABLED=true</code> for that protected Preview and redeploy. Set provider spending limits before a live request.</p>
+      <section id="runs"><div class="section-title"><span>04</span><h2>Enable a hosted test run only when ready</h2></div>
+        <p>Use a new database dedicated to Agent Village for the hosted Preview. In that database’s SQL editor, run the complete contents of <code>office/hosted/001_projects.sql</code> once. Confirm that <code>village_projects</code>, <code>village_monthly_budget</code>, and <code>village_budget_claims</code> appear. Use an application database role limited to those tables where your database permits it. Keep the connection string in Preview server-side settings as <code>VILLAGE_DATABASE_URL</code>; do not paste it into this page or chat.</p>
+        <p>For a paid Preview test, also set <code>OFFICE_RUN_ALLOWED_EMAILS</code> to your own invited email, <code>VILLAGE_PROVIDER=openai</code> or <code>anthropic</code>, and the matching <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> in Preview server-side settings. Set a provider spending limit. Only after the protected Preview sign-in, database schema, and key are ready, set <code>VILLAGE_HOSTED_RUNS_ENABLED=true</code> for Preview and redeploy.</p>
         <p>The current hosted run has only deterministic mock verification. A key being present does not prove provider or database access. A learner’s quickest first test is the local path above.</p>
       </section>
     </main>
