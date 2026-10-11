@@ -6,6 +6,11 @@ import { join } from 'node:path';
 import { createProvider } from '../providers.mjs';
 import { VillageEngine } from '../engine.mjs';
 import { createLocalServer } from '../server.mjs';
+import { verifyStaticSite } from '../artifact.mjs';
+import { exportProject } from '../export.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
 
 const validSite = { title: 'Garden Club', headline: 'Grow together', summary: 'A welcoming club for neighborhood gardeners.', cta: 'Explore benefits', features: [{ title: 'Meet', description: 'Connect with nearby gardeners.' }, { title: 'Learn', description: 'Share practical growing tips.' }] };
 const sequence = [
@@ -87,6 +92,7 @@ test('full mock flow creates an inspectable artifact and exact review receipt', 
   assert.equal(result.status, 'reviewed');
   assert.equal(result.events.filter(event => event.agent === 'Sam' && event.type === 'result').length, 1);
   assert.equal(result.events.find(event => event.agent === 'Quinn' && event.type === 'review').reviewedSha256, result.artifact.sha256);
+  assert.ok(result.events.find(event => event.agent === 'Sam' && event.type === 'result').checks.includes('No executable markup'));
   const html = await readFile(join(root, result.id, 'index.html'), 'utf8');
   assert.match(html, /Grow together/);
   assert.equal(provider.calls.length, 4);
@@ -96,6 +102,29 @@ test('full mock flow creates an inspectable artifact and exact review receipt', 
   assert.equal(provider.calls.length, 4);
   await assert.rejects(engine.artifact(result.id, '../state.json'), /Artifact not found/);
 }));
+test('reviewed site exports a runnable, receipt-checked project without chat or keys', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const result = await completed(engine);
+  const output = await exportProject(engine, result.id);
+  assert.equal(output.sha256, result.artifact.sha256);
+  assert.equal((await exportProject(engine, result.id)).path, output.path);
+  const files = await Promise.all(['index.html', 'styles.css', 'verify.test.mjs', 'package.json', 'README.md'].map(name => readFile(join(output.path, name), 'utf8')));
+  assert.ok(files.every(value => !value.includes('OPENAI_API_KEY') && !value.includes('ANTHROPIC_API_KEY')));
+  const tested = await execFileAsync(process.execPath, ['verify.test.mjs'], { cwd: output.path });
+  assert.match(tested.stdout + tested.stderr, /pass 1/);
+  await writeFile(join(output.path, 'index.html'), 'changed');
+  await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
+  await writeFile(join(output.path, 'index.html'), await engine.artifact(result.id, 'index.html'));
+  await rm(join(output.path, 'verify.test.mjs'));
+  await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
+}));
+test('static site verification rejects executable and remote resources', () => {
+  const base = '<!doctype html><html lang="en"><title>Safe</title><link rel="stylesheet" href="styles.css"><h1>Safe</h1></html>';
+  const css = 'body { font-family: system-ui; color: #123456; background: #ffffff; margin: 0; padding: 2rem; line-height: 1.5; }';
+  assert.equal(verifyStaticSite(base, css).length, 5);
+  assert.throws(() => verifyStaticSite(base.replace('</html>', '<script>alert(1)</script></html>'), css), /No executable markup/);
+  assert.throws(() => verifyStaticSite(base, `${css} @import "https://example.com/a.css";`), /No remote resources/);
+});
 test('request ID remains deduplicated after server restart', async () => fixture(async root => {
   const firstProvider = mockProvider();
   const first = await new VillageEngine({ root, provider: firstProvider }).create('Garden club website', 'request-12345');
@@ -242,6 +271,10 @@ test('local HTTP reports missing configuration and enforces host and origin', as
     assert.match(status.error, /OPENAI_API_KEY/);
     const home = await fetch(base);
     assert.match(home.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    assert.match(await home.text(), /Who’s at their desk/);
+    assert.equal((await fetch(`${base}/office-assets/styles.css`)).status, 200);
+    assert.equal((await fetch(`${base}/office.js`)).status, 200);
+    assert.match(await (await fetch(`${base}/setup`)).text(), /Your first office and project/);
     const denied = await fetch(`${base}/api/projects`, { method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{}' });
     assert.equal(denied.status, 403);
     const config = await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
@@ -267,6 +300,9 @@ test('local HTTP completes the mock project and serves only approved artifact pa
     assert.equal(artifact.status, 200);
     assert.match(artifact.headers.get('content-security-policy'), /script-src 'none'/);
     assert.match(await artifact.text(), /Grow together/);
+    const prepared = await post(`/api/projects/${first.id}/export`, {});
+    assert.equal(prepared.sha256, finished.artifact.sha256);
+    assert.match(prepared.path, /\/site$/);
     assert.equal((await fetch(`${base}/artifact/${first.id}/state.json`)).status, 404);
   } finally { server.close(); }
 }));

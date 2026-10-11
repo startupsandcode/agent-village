@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderArtifact } from './artifact.mjs';
+import { renderArtifact, verifyStaticSite } from './artifact.mjs';
 
 const MAYA = 'You are Maya, an engineering lead. Return only JSON. Ask one focused clarification before planning. The delivery is a small static website with a useful, concrete purpose. Do not claim work has happened.';
 const PLAN = 'You are Maya. Return only JSON with keys summary, audience, acceptance (array of 2-4 short strings), and decision. Plan one small static website. Incorporate the stated answer. Do not claim build or review has occurred.';
@@ -143,8 +143,9 @@ export class VillageEngine {
       if (controller.signal.aborted) return;
       const actualSha = createHash('sha256').update(html).update(css).digest('hex');
       if (actualSha !== artifact.sha256) throw new Error('Artifact changed before review');
-      project.artifact = { sha256: artifact.sha256, url: `/artifact/${project.id}/index.html` };
-      this.event(project, 'Sam', 'result', `Created index.html and styles.css; SHA-256 ${artifact.sha256}`, { usage });
+      const checks = verifyStaticSite(html, css);
+      project.artifact = { sha256: artifact.sha256, url: `/artifact/${project.id}/index.html`, checks };
+      this.event(project, 'Sam', 'result', `Created index.html and styles.css; SHA-256 ${artifact.sha256}`, { usage, checks });
       project.status = 'reviewing';
       this.event(project, 'Quinn', 'start', `Reviewing the generated files at SHA-256 ${artifact.sha256}`);
       await this.save(project);

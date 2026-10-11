@@ -37,6 +37,7 @@ For substantive code issues, Maya delegates a bounded implementation task to Sam
 The office is a website on your own machine. It needs Node.js 20 or later and a GitHub CLI login with access to this private repository (`gh auth status`). From the repository root, run:
 
 ```bash
+export VILLAGE_GITHUB_REPO=startupsandcode/agent-village
 node office/server.mjs
 ```
 
@@ -73,4 +74,4 @@ Before inviting viewers, test unauthenticated `/office` and `/api/office`; both 
 
 ## Local Maya chat
 
-For a plain-language project goal, provider-backed clarification, a bounded website build, and an inspectable Maya/Sam/Quinn trail, see [the local interface setup](local/README.md). It runs alongside the existing office and Astra worker without changing their configuration.
+For a plain-language project goal, provider-backed clarification, a bounded website build, an illustrated office with recorded Maya/Sam/Quinn activity, and a reviewed-file export, see [the local interface setup](local/README.md). It runs alongside the existing office and Astra worker without changing their configuration. The export includes a repeatable receipt test and user-operated GitHub/Vercel publication steps. Hosted Maya runs are visibly blocked until private durable project storage and an isolated executor are configured; a hosted provider key alone does not enable them.

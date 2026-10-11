@@ -14,14 +14,24 @@ const SESSION_COOKIE = '__Host-office_session';
 const FLOW_MS = 10 * 60_000;
 const SESSION_MS = 60 * 60_000;
 
-export function officeOriginForHost(host) {
-  const origin = typeof host === 'string' ? OFFICE_ORIGINS.get(host.toLowerCase()) : null;
+export function officeOriginForHost(host, env = process.env) {
+  let origins = OFFICE_ORIGINS;
+  if (env.OFFICE_ALLOWED_ORIGINS !== undefined) {
+    origins = new Map();
+    for (const raw of env.OFFICE_ALLOWED_ORIGINS.split(',').map(value => value.trim()).filter(Boolean)) {
+      let url;
+      try { url = new URL(raw); } catch { throw new Error('Invalid office origin configuration'); }
+      if (url.protocol !== 'https:' || url.origin !== raw || url.username || url.password || url.port || !/^[a-z0-9.-]+$/i.test(url.hostname)) throw new Error('Invalid office origin configuration');
+      origins.set(url.hostname.toLowerCase(), raw);
+    }
+  }
+  const origin = typeof host === 'string' ? origins.get(host.toLowerCase()) : null;
   if (!origin) throw new Error('Unregistered office host');
   return origin;
 }
 
-function callbackForHost(host) {
-  return `${officeOriginForHost(host)}/api/auth/callback`;
+function callbackForHost(host, env) {
+  return `${officeOriginForHost(host, env)}/api/auth/callback`;
 }
 
 function getCookie(header, name) {
@@ -102,7 +112,7 @@ async function verifyIdToken(token, expected, fetchImpl, now) {
 export function createAuth({ env = process.env, fetchImpl = fetch, now = Date.now } = {}) {
   function begin(host = DEFAULT_HOST) {
     const settings = config(env);
-    const callback = callbackForHost(host);
+    const callback = callbackForHost(host, env);
     const state = randomBytes(32).toString('base64url');
     const nonce = randomBytes(32).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
@@ -123,7 +133,7 @@ export function createAuth({ env = process.env, fetchImpl = fetch, now = Date.no
     const settings = config(env);
     const flow = readFlow(cookieHeader);
     if (typeof code !== 'string' || !code || !equal(state, flow.state)) throw new Error('Invalid OAuth state');
-    const callback = callbackForHost(host);
+    const callback = callbackForHost(host, env);
     if (flow.callback !== callback) throw new Error('Invalid OAuth callback host');
     const tokenResponse = await fetchImpl(TOKEN_URL, { method: 'POST', body: new URLSearchParams({ grant_type: 'authorization_code', client_id: settings.clientId, client_secret: settings.clientSecret, code, code_verifier: flow.verifier, redirect_uri: callback }) });
     if (!tokenResponse.ok) throw new Error('Invalid authorization code');

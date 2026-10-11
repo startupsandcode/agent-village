@@ -37,7 +37,7 @@ export function createOfficeServer({
   publicDir = resolve(officeDir, 'public'),
   privatePageFile = resolve(officeDir, 'private', 'index.html'),
   now = Date.now,
-  getTasks = createTaskLoader(),
+  getTasks = createTaskLoader({ repo: process.env.VILLAGE_GITHUB_REPO || null }),
 } = {}) {
   return createServer(async (request, response) => {
     const head = request.method === 'HEAD';
@@ -50,7 +50,7 @@ export function createOfficeServer({
       try { reports = await loadCheckins(checkinDir); } catch { reports = Object.fromEntries(['Maya', 'Sam', 'Quinn', 'Theo', 'Susie'].map(name => [name, { error: true }])); }
       let tasks;
       try { tasks = await getTasks(); } catch { tasks = { status: 'error', updatedAt: null, items: [] }; }
-      const body = JSON.stringify({ generatedAt: new Date(now()).toISOString(), agents: readAgents(reports, now()), tasks });
+      const body = JSON.stringify({ generatedAt: new Date(now()).toISOString(), repository: process.env.VILLAGE_GITHUB_REPO || null, agents: readAgents(reports, now()), tasks });
       return respond(response, 200, body, 'application/json; charset=utf-8', head);
     }
     if (pathname.startsWith('/api/')) return respond(response, 404, 'Not found', undefined, head);

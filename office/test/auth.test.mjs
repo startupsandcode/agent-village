@@ -69,6 +69,13 @@ test('OAuth rejects unregistered hosts and a callback on a different host before
   await assert.rejects(auth.complete({ code: 'code', state: flow.state, cookie, host: 'agent-village-six.vercel.app' }), /host|origin|callback/i);
   assert.equal(called, false);
 });
+test('cloned office uses only its explicitly configured callback hosts', () => {
+  const cloned = createAuth({ env: { ...env, OFFICE_ALLOWED_ORIGINS: 'https://my-office.example.com' }, now: () => NOW });
+  assert.equal(new URL(cloned.begin('my-office.example.com').url).searchParams.get('redirect_uri'), 'https://my-office.example.com/api/auth/callback');
+  assert.throws(() => cloned.begin('agent-village.startupsandcode.com'), /Unregistered office host/);
+  assert.throws(() => createAuth({ env: { ...env, OFFICE_ALLOWED_ORIGINS: 'https://my-office.example.com/extra' } }).begin('my-office.example.com'), /Invalid office origin/);
+  assert.throws(() => createAuth({ env: { ...env, OFFICE_ALLOWED_ORIGINS: 'http://my-office.example.com' } }).begin('my-office.example.com'), /Invalid office origin/);
+});
 
 test('callback accepts only signed state, valid nonce, and a verified invited email', async () => {
   const first = createAuth({ env, now: () => NOW });

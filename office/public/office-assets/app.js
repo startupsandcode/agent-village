@@ -13,6 +13,7 @@ const fetchMessage = document.querySelector('#fetch-message');
 let lastSuccessfulUpdate = null;
 let latestData = null;
 let lastAnnouncement = null;
+let currentRepository = null;
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -31,7 +32,8 @@ function timeLabel(value) {
 function safeIssueLink(number) {
   const issue = Number(number);
   if (!Number.isSafeInteger(issue) || issue < 1) return null;
-  return `https://github.com/startupsandcode/agent-village/issues/${issue}`;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(currentRepository)) return null;
+  return `https://github.com/${currentRepository}/issues/${issue}`;
 }
 
 function renderAgent(profile, report, checkinsConfigured = true) {
@@ -135,6 +137,7 @@ async function refresh() {
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    currentRepository = typeof data.repository === 'string' ? data.repository : null;
     latestData = data;
     lastSuccessfulUpdate = data.generatedAt || new Date().toISOString();
     const checkinsConfigured = data.checkinsConfigured !== false;
@@ -166,6 +169,15 @@ async function refresh() {
 }
 
 refreshButton.addEventListener('click', refresh);
+fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
+  const readiness = document.querySelector('#maya-readiness');
+  if (!readiness) return;
+  if (!response.ok) { readiness.textContent = 'Hosted run setup is unavailable.'; return; }
+  const status = await response.json();
+  const officeName = document.querySelector('#office-name');
+  if (officeName && status.officeName) officeName.textContent = status.officeName;
+  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} provider ${status.providerConfigured ? 'configured server-side' : 'key not configured'}. ${status.reason}`;
+}).catch(() => { const readiness = document.querySelector('#maya-readiness'); if (readiness) readiness.textContent = 'Hosted run setup is unavailable.'; });
 renderAgents();
 refresh();
 setInterval(refresh, 30_000);

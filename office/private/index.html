@@ -16,7 +16,7 @@
       <header class="site-header">
         <a class="brand" href="/" aria-label="Agent Village office home">
           <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
-          <span>Agent Village</span>
+          <span id="office-name">Agent Village</span>
         </a>
         <nav aria-label="Page sections">
           <a href="#work-board">Work board</a>
@@ -99,6 +99,12 @@
             <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
             <span class="sidebar-stamp">Reported, not guessed</span>
           </aside>
+        </section>
+        <section class="hosted-maya" aria-labelledby="maya-title">
+          <p class="section-index">Work with Maya</p>
+          <h2 id="maya-title">Hosted project runs</h2>
+          <p id="maya-readiness" role="status">Checking this office’s run setup…</p>
+          <p>For a working local build, use the <a href="https://github.com/startupsandcode/agent-village/blob/village-interface-20261011-01/local/README.md">local setup guide</a>. Hosted runs stay unavailable until private project storage and an isolated executor are connected.</p>
         </section>
       </main>
 

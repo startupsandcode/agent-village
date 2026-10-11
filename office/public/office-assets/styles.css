@@ -141,6 +141,10 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
 .board-empty p { margin: 8px 0 0; color: var(--muted); line-height: 1.45; }
 .board-footnote { margin: 13px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .site-footer { min-height: 90px; display: flex; justify-content: space-between; align-items: center; gap: 20px; border-top: 1px solid #d4dedc; color: var(--muted); font-size: 12px; }
+.hosted-maya { margin: 55px 0; padding: 28px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
+.hosted-maya h2 { margin-bottom: 14px; }
+.hosted-maya p { max-width: 780px; line-height: 1.5; }
+.hosted-maya a { color: var(--teal); font-weight: 800; }
 .site-footer span:first-child { color: var(--ink); font-weight: 900; }
 
 @media (max-width: 1140px) {

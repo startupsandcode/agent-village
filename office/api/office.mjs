@@ -5,7 +5,8 @@ import { createAuth } from '../lib/auth.mjs';
 const unavailableReports = Object.fromEntries(ROSTER.map(({ name }) => [name, { error: true }]));
 
 export function createOfficeHandler({ env = process.env, token = env.GITHUB_ISSUES_TOKEN || env.GITHUB_AGENT_TOKEN, fetchImpl = fetch, now = Date.now, auth = createAuth({ env, now }) } = {}) {
-  const getTasks = createGitHubIssuesLoader({ token, fetchImpl, now });
+  const repository = env.VILLAGE_GITHUB_REPO || (env.OFFICE_ALLOWED_ORIGINS ? null : 'startupsandcode/agent-village');
+  const getTasks = createGitHubIssuesLoader({ token, repo: repository, fetchImpl, now });
   return async function handler(request, response) {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
@@ -25,6 +26,7 @@ export function createOfficeHandler({ env = process.env, token = env.GITHUB_ISSU
     const timestamp = now();
     const body = JSON.stringify({
       generatedAt: new Date(timestamp).toISOString(),
+      repository,
       checkinsConfigured: false,
       agents: readAgents(unavailableReports, timestamp),
       tasks: await getTasks(),

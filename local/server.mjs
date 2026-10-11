@@ -5,9 +5,10 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProvider } from './providers.mjs';
 import { VillageEngine } from './engine.mjs';
+import { exportProject } from './export.mjs';
 
 const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
-const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
+const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'office.js': 'text/javascript; charset=utf-8', 'office-data.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
 function send(response, status, value, type = 'application/json; charset=utf-8', extra = {}) {
   response.writeHead(status, { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', ...extra });
   response.end(type.startsWith('application/json') ? JSON.stringify(value) : value);
@@ -18,7 +19,7 @@ async function body(request) {
   for await (const chunk of request) { raw += chunk; if (raw.length > 4096) throw new Error('Request too large'); }
   try { return JSON.parse(raw); } catch { throw new Error('Invalid JSON'); }
 }
-export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public') } = {}) {
+export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME } = {}) {
   return createServer(async (request, response) => {
     const host = request.headers.host ?? '';
     if (!/^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)) return send(response, 403, { error: 'Local host required' });
@@ -27,19 +28,20 @@ export function createLocalServer({ provider, providerError, engine = provider &
     let path;
     try { path = new URL(request.url, `http://${host}`).pathname; } catch { return send(response, 400, { error: 'Bad path' }); }
     try {
-      if (path === '/api/status' && request.method === 'GET') return send(response, 200, { ready: !!engine, provider: provider?.name ?? null, model: provider?.model ?? null, error: providerError ?? null });
+      if (path === '/api/status' && request.method === 'GET') return send(response, 200, { ready: !!engine, provider: provider?.name ?? null, model: provider?.model ?? null, error: providerError ?? null, officeName: typeof officeName === 'string' && officeName.trim().length <= 60 ? officeName.trim() : '' });
       if (path.startsWith('/api/')) {
         if (!engine) return send(response, 503, { error: providerError ?? 'Provider not configured' });
         if (path === '/api/projects' && request.method === 'POST') {
           const value = await body(request);
           return send(response, 200, await engine.create(value.goal, value.requestId));
         }
-        const match = path.match(/^\/api\/projects\/([0-9a-f-]{36})(?:\/(answer|build|cancel))?$/);
+        const match = path.match(/^\/api\/projects\/([0-9a-f-]{36})(?:\/(answer|build|cancel|export))?$/);
         if (!match) return send(response, 404, { error: 'Not found' });
         const [, id, action] = match;
         if (!action && request.method === 'GET') return send(response, 200, await engine.get(id));
         if (request.method !== 'POST') return send(response, 405, { error: 'Method not allowed' });
         if (action === 'cancel') return send(response, 200, await engine.cancel(id));
+        if (action === 'export') return send(response, 200, await exportProject(engine, id));
         const value = await body(request);
         if (action === 'answer') return send(response, 200, await engine.answer(id, value.answer, value.requestId));
         if (action === 'build') return send(response, 202, await engine.build(id, value.requestId));
@@ -50,12 +52,20 @@ export function createLocalServer({ provider, providerError, engine = provider &
         return send(response, 200, value, types[artifact[2]], { 'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'" });
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Method not allowed' });
+      if (path === '/office-assets/styles.css') {
+        const value = await readFile(join(here, '..', 'office', 'public', 'office-assets', 'styles.css'));
+        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/css; charset=utf-8');
+      }
+      if (path === '/setup') {
+        const value = await readFile(join(here, 'README.md'));
+        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/plain; charset=utf-8');
+      }
       const name = path === '/' ? 'index.html' : path.slice(1);
       if (!Object.hasOwn(types, name)) return send(response, 404, { error: 'Not found' });
       const value = await readFile(join(publicDir, name));
       return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
-      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat)$/.test(error.message) ? error.message : 'Request failed';
+      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing)$/.test(error.message) ? error.message : 'Request failed';
       return send(response, safe === 'Request failed' ? 500 : 400, { error: safe });
     }
   });

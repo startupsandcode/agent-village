@@ -5,14 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const repoDir = resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const ARGS = ['issue', 'list', '-R', 'startupsandcode/agent-village', '--state', 'open', '--limit', '100', '--json', 'number,title,url,updatedAt'];
+const DEFAULT_REPO = 'startupsandcode/agent-village';
+function validRepo(repo) { return typeof repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) && !repo.split('/').some(part => part === '.' || part === '..'); }
 
 async function runGh(args) {
   const { stdout } = await execFileAsync('gh', args, { cwd: repoDir, timeout: 10_000, maxBuffer: 1024 * 1024, windowsHide: true });
   return stdout;
 }
 
-function parseItems(output) {
+function parseItems(output, repo) {
   const parsed = JSON.parse(output);
   if (!Array.isArray(parsed)) throw new Error('Invalid GitHub issue list.');
   return parsed.map(item => {
@@ -20,12 +21,12 @@ function parseItems(output) {
       throw new Error('Invalid GitHub issue list.');
     }
     const url = new URL(item.url);
-    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !/^\/[^/]+\/[^/]+\/issues\/[1-9]\d*$/.test(url.pathname)) throw new Error('Invalid issue URL.');
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.pathname !== `/${repo}/issues/${item.number}` || url.search || url.hash) throw new Error('Invalid issue URL.');
     return { number: item.number, title: item.title, url: item.url, updatedAt: item.updatedAt };
   });
 }
 
-export function createTaskLoader({ now = Date.now, runGh: command = runGh } = {}) {
+export function createTaskLoader({ now = Date.now, runGh: command = runGh, repo = process.env.VILLAGE_GITHUB_REPO || DEFAULT_REPO } = {}) {
   let cached;
   let loadedAt = -Infinity;
   let pending;
@@ -35,8 +36,10 @@ export function createTaskLoader({ now = Date.now, runGh: command = runGh } = {}
     if (pending) return pending;
     pending = (async () => {
       try {
-        const output = await command([...ARGS]);
-        cached = { status: 'ok', updatedAt: new Date(now()).toISOString(), items: parseItems(output) };
+        if (!validRepo(repo)) throw new Error('Invalid repository');
+        const args = ['issue', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,updatedAt'];
+        const output = await command(args);
+        cached = { status: 'ok', updatedAt: new Date(now()).toISOString(), items: parseItems(output, repo) };
       } catch {
         cached = { status: 'error', updatedAt: null, items: [] };
       }

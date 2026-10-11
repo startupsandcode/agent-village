@@ -1,5 +1,6 @@
 .DS_Store
 .env*
+!office/.env.example
 .vercel/
 node_modules/
 .npm-cache/

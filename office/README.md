@@ -27,6 +27,13 @@ After the cutover on 2026-09-18, anonymous GET and HEAD requests to `/` returned
 When changing OAuth settings, invite emails, or access code, repeat those checks from a clean browser session. Sign in with an invited account and confirm `/office` and `/api/office` load the workboard; an uninvited account must be denied. Check that public assets and responses contain no GitHub token or OAuth secrets.
 
 The hosted desks still say that live check-ins are not connected. Local check-in files do not persist to Vercel.
+For the **local** office issue board, set `VILLAGE_GITHUB_REPO` to the repository you intend to read before `node office/server.mjs`; without it the board is unavailable. The local server uses your existing `gh` login only for that explicitly selected repository.
+
+## A cloned office
+
+Set `OFFICE_ALLOWED_ORIGINS` to a comma-separated list of **exact HTTPS origins** for your own Vercel host and custom domain, and register `<origin>/api/auth/callback` in your own confidential Vercel OAuth app. When this variable is set, John's default hosts are no longer allowed. Set `OFFICE_ALLOWED_EMAILS` to your own invited email list and generate your own `OFFICE_SESSION_SECRET`. Set `VILLAGE_GITHUB_REPO=your-owner/your-repo` and give the server a credential limited to reading that repository's issues. A cloned hosted office with its own origins but no repository setting shows an unavailable board; it does not fall back to John's issues. `office/.env.example` contains variable names and placeholders; enter real values only in your Vercel project's server-side secret settings. Do not copy John's OAuth app, allowlist, provider key, or issue token. If the issue credential is absent or does not match the repository, the board reports unavailable rather than showing another repository's tasks.
+
+`/api/maya-status` uses the same office session guard as `/api/office`. It reports provider configuration without returning a key. The hosted Maya run remains disabled because this repository has not connected private durable project storage or an isolated job executor. A user can use the local interface described in `local/README.md` now; setting a Vercel secret alone does not make a hosted run work.
 
 ## Web Analytics
 

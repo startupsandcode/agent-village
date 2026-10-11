@@ -16,7 +16,7 @@ class Element {
 function response(value) { return { ok: true, json: async () => value }; }
 
 test('late answer response cannot resurrect a project after Start another project', async () => {
-  const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#build', '#cancel', '#new-project', '#artifact'];
+  const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#build', '#cancel', '#new-project', '#artifact', '#export', '#export-path', '#publish-status'];
   const elements = Object.fromEntries(names.map(name => [name, new Element(name)]));
   elements['#chat-form'].name = 'form';
   elements['#chat-form'].button = new Element('button');
@@ -31,6 +31,7 @@ test('late answer response cannot resurrect a project after Start another projec
   ] };
   const storage = new Map();
   const context = {
+    window: { dispatchEvent() {} }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     document: { querySelector: name => elements[name], createElement: name => new Element(name) },
     sessionStorage: { setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) },
     crypto: { randomUUID: () => 'request-12345' },
@@ -45,6 +46,7 @@ test('late answer response cannot resurrect a project after Start another projec
   assert.equal(storage.get('villageProjectId'), base.id);
   elements['#message'].value = 'New gardeners';
   const pending = form.handlers.submit({ preventDefault() {} });
+  elements['#publish-status'].textContent = 'Reviewed files prepared locally.';
   elements['#new-project'].handlers.click();
   releaseAnswer(response(ready));
   await pending;
@@ -53,6 +55,7 @@ test('late answer response cannot resurrect a project after Start another projec
   assert.equal(elements['#events'].childElementCount, 0);
   assert.equal(elements['#message'].disabled, false);
   assert.equal(form.button.disabled, false);
+  assert.match(elements['#publish-status'].textContent, /reviewed local site is required/);
 });
 test('late status poll cannot restore a project after Start another project', async () => {
   const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#build', '#cancel', '#new-project', '#artifact'];
@@ -71,6 +74,7 @@ test('late status poll cannot restore a project after Start another project', as
   let poll, getCount = 0, releaseLate;
   const lateResponse = new Promise(resolve => { releaseLate = resolve; });
   const context = {
+    window: { dispatchEvent() {} }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     document: { querySelector: name => elements[name], createElement: name => new Element(name) },
     sessionStorage: { setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) },
     crypto: { randomUUID: () => 'request-12345' },
