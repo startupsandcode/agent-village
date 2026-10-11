@@ -76,3 +76,37 @@ test('a reloaded hosted chat observes an existing clarification result', async (
   assert.equal(get('#hosted-cancel').hidden, true);
   assert.match(get('#hosted-request-state').textContent, /needs answer/);
 });
+
+test('an older status read cannot replace a newer cancellation result', async () => {
+  const elements = new Map();
+  const listeners = new Map();
+  const intervals = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '',
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  const active = { id: 'project-1', version: 2, status: 'clarifying', events: [], artifact: null };
+  let reads = 0;
+  let resolveStaleRead;
+  const staleRead = new Promise(resolve => { resolveStaleRead = resolve; });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (options.method === 'POST') return reply({ ...active, version: 3, status: 'cancelled' });
+    return ++reads === 1 ? reply(active) : staleRead;
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const pendingRead = intervals.get(2000)();
+  await listeners.get('#hosted-cancel:click')();
+  assert.equal(get('#hosted-cancel').hidden, true);
+  resolveStaleRead(reply(active));
+  await pendingRead;
+  assert.equal(get('#hosted-cancel').hidden, true);
+  assert.match(get('#hosted-request-state').textContent, /Cancellation recorded/);
+});

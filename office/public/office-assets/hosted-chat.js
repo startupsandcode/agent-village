@@ -114,7 +114,8 @@ setInterval(async () => {
     const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
     if (!response.ok) return;
     const result = await response.json();
-    if (thisEpoch === epoch && !busy && project?.id === id && (result.version !== project.version || result.status !== project.status)) {
+    if (thisEpoch === epoch && !busy && project?.id === id && Number.isSafeInteger(result.version) &&
+        Number.isSafeInteger(project.version) && result.version > project.version) {
       render(result);
       state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
     }
