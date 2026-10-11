@@ -22,6 +22,7 @@ let pendingMessage = null;
 let pendingBuildId = null;
 let simulated = false;
 let conversationEpoch = 0;
+function setupState(name, value) { const target = document.querySelector(`#setup-${name}-state`); if (target) target.textContent = value; }
 function pendingRequest(message) {
   if (requestState) { requestState.hidden = !message; requestState.textContent = message ?? ''; }
   window.dispatchEvent(new CustomEvent('village-request', { detail: message }));
@@ -36,6 +37,7 @@ officeForm?.addEventListener('submit', async event => {
   try {
     const saved = await api('/api/setup', 'POST', { name: input.value });
     document.querySelector('#office-name').textContent = saved.name;
+    setupState('office', saved.name);
     firstRun.hidden = true;
   } catch (error) { result.textContent = error.message; }
   finally { button.disabled = false; }
@@ -51,6 +53,7 @@ async function api(path, method = 'GET', data) {
 }
 function display(value) {
   project = value;
+  setupState('project', `${value.status.replaceAll('_', ' ')} · ${value.goal}`);
   window.villageProject = value;
   window.dispatchEvent(new CustomEvent('village-project', { detail: value }));
   sessionStorage.setItem('villageProjectId', value.id);
@@ -110,7 +113,7 @@ form.addEventListener('submit', async event => {
 });
 build.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { pendingBuildId ??= id(); const result = await api(`/api/projects/${projectId}/build`, 'POST', { requestId: pendingBuildId }); if (epoch !== conversationEpoch) return; display(result); pendingBuildId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
 cancel.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}/cancel`, 'POST'); if (epoch === conversationEpoch) display(result); } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
-exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Run the project test, then connect your own GitHub and Vercel accounts using the setup guide.'; } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
+exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Run the project test, then connect your own GitHub and Vercel accounts using the setup guide.'; setupState('publish', 'Reviewed files prepared; account connections and publication remain yours to verify.'); } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
 connectionButton?.addEventListener('click', async () => {
   const epoch = conversationEpoch;
   connectionButton.disabled = true;
@@ -121,12 +124,14 @@ connectionButton?.addEventListener('click', async () => {
   } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
   finally { connectionButton.disabled = false; }
 });
-newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before preparing a repository. Publishing has not been requested.'; newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
+newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before preparing a repository. Publishing has not been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your own account connections.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
 setInterval(async () => { if (project && (['clarifying', 'planning', 'building', 'reviewing'].includes(project.status) || project.artifact)) { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}`); if (epoch === conversationEpoch && project?.id === projectId) display(result); } catch {} } }, 1000);
 const initialEpoch = conversationEpoch;
 api('/api/status').then(async value => {
   const officeName = document.querySelector('#office-name');
   if (officeName && value.officeName) officeName.textContent = value.officeName;
+  setupState('office', value.officeName || 'Choose a name above.');
+  setupState('provider', value.ready ? `${value.provider} configured on this server; live access unverified until a request succeeds.` : value.error || 'Provider key missing.');
   if (firstRun) firstRun.hidden = Boolean(value.officeName) || value.officeNameEditable === false;
   simulated = value.provider === 'mock';
   provider.textContent = simulated ? 'SIMULATED PROVIDER FOR QA · Responses are deterministic fixtures; no live model calls.' : value.ready ? `Server ready · ${value.provider} · ${value.model}. API use may incur provider charges.` : `Setup needed: ${value.error}. Set the key in your shell, then restart this server.`;

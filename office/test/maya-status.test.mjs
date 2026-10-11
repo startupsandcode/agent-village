@@ -13,8 +13,8 @@ test('hosted Maya status denies anonymous access and never returns a configured 
   assert.equal(anonymous.statusCode, 401);
   const invited = response(); handler({ method: 'GET', headers: { cookie: 'valid' } }, invited);
   assert.equal(invited.statusCode, 200);
-  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need a connected private project store and a bounded hosted coordinator. The local office can run now.', setup: {
-    viewerSignIn: 'connected', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_required_for_static_sites', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
+  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need private project storage, operator permission, a server-side provider key, and explicit activation. The local office can run now.', setup: {
+    viewerSignIn: 'connected', runPermission: 'not_authorized', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_required_for_static_sites', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
   } });
   assert.ok(!invited.body.includes(secret));
   const head = response(); handler({ method: 'HEAD', headers: { cookie: 'valid' } }, head);
@@ -28,6 +28,22 @@ test('hosted setup remains blocked when only a provider key and publishing token
   assert.equal(status.setup.provider, 'key_present_unverified');
   assert.equal(status.setup.githubPublishing, 'not_connected');
   assert.equal(status.setup.vercelPublishing, 'not_connected');
+  assert.ok(!result.body.includes('fake'));
+});
+test('spending operator allowlist alone does not activate hosted runs', () => {
+  const handler = createMayaStatusHandler({ env: { OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com', OPENAI_API_KEY: 'fake' }, auth: { authorize: () => ({ status: 200, email: 'owner@example.com' }) } });
+  const result = response(); handler({ method: 'GET', headers: {} }, result);
+  const status = JSON.parse(result.body);
+  assert.equal(status.setup.runPermission, 'configured_unverified');
+  assert.equal(status.runAvailable, false);
+});
+test('hosted test mode is only shown after explicit activation and required settings', () => {
+  const handler = createMayaStatusHandler({ env: { OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com', OPENAI_API_KEY: 'fake', VILLAGE_DATABASE_URL: 'fake', VILLAGE_HOSTED_RUNS_ENABLED: 'true' }, auth: { authorize: () => ({ status: 200, email: 'owner@example.com' }) } });
+  const result = response(); handler({ method: 'GET', headers: {} }, result);
+  const status = JSON.parse(result.body);
+  assert.equal(status.runAvailable, true);
+  assert.equal(status.setup.durableProjects, 'configured_unverified');
+  assert.match(status.reason, /unverified/);
   assert.ok(!result.body.includes('fake'));
 });
 test('cloned hosted office does not inherit the original issue board without its own repository setting', async () => {

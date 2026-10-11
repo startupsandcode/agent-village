@@ -13,16 +13,23 @@ export function createMayaStatusHandler({ env = process.env, auth = createAuth({
       response.statusCode = access.status;
       response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ error: 'Office access denied' })); return;
     }
-    const provider = env.VILLAGE_PROVIDER === 'anthropic' ? 'anthropic' : 'openai';
-    const keyPresent = Boolean(env[provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY']);
+    const provider = env.VILLAGE_PROVIDER ?? 'openai';
+    const keyPresent = provider === 'openai' ? Boolean(env.OPENAI_API_KEY) : provider === 'anthropic' ? Boolean(env.ANTHROPIC_API_KEY) : false;
+    const runOperators = env.OFFICE_RUN_ALLOWED_EMAILS?.split(',').map(value => value.trim().toLowerCase()).filter(Boolean) ?? [];
+    const runOperator = runOperators.includes(access.email?.toLowerCase());
+    const databaseConfigured = Boolean(env.VILLAGE_DATABASE_URL);
+    const pilotModel = (!env.VILLAGE_OPENAI_MODEL || env.VILLAGE_OPENAI_MODEL === 'gpt-4.1-mini') &&
+      (!env.VILLAGE_ANTHROPIC_MODEL || env.VILLAGE_ANTHROPIC_MODEL === 'claude-sonnet-5-5');
+    const runAvailable = env.VILLAGE_HOSTED_RUNS_ENABLED === 'true' && ['openai', 'anthropic'].includes(provider) && runOperator && keyPresent && databaseConfigured && pilotModel;
     response.statusCode = 200;
     const officeName = typeof env.VILLAGE_OFFICE_NAME === 'string' && env.VILLAGE_OFFICE_NAME.trim().length <= 60 ? env.VILLAGE_OFFICE_NAME.trim() : '';
     response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ provider, providerKeyPresent: keyPresent, officeName,
-      runAvailable: false, reason: 'Hosted runs need a connected private project store and a bounded hosted coordinator. The local office can run now.',
+      runAvailable, reason: runAvailable ? 'Hosted test mode is enabled. Provider and database behavior are unverified until a request succeeds.' : 'Hosted runs need private project storage, operator permission, a server-side provider key, and explicit activation. The local office can run now.',
       setup: {
         viewerSignIn: 'connected',
+        runPermission: runOperator ? 'configured_unverified' : 'not_authorized',
         provider: keyPresent ? 'key_present_unverified' : 'missing_key',
-        durableProjects: 'not_connected',
+        durableProjects: databaseConfigured ? 'configured_unverified' : 'not_connected',
         isolatedExecutor: 'not_required_for_static_sites',
         githubPublishing: 'not_connected',
         vercelPublishing: 'not_connected',

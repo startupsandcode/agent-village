@@ -3,13 +3,8 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './artifact.mjs';
+import { MAYA, PLAN, SAM, QUINN, validText, validPlan, validReview } from '../office/lib/project-roles.mjs';
 
-const MAYA = 'You are Maya, an engineering lead. Return only JSON. Ask one focused clarification before planning. The delivery is a small static website with a useful, concrete purpose. Do not claim work has happened.';
-const PLAN = 'You are Maya. Return only JSON with keys summary, audience, acceptance (array of 2-4 short strings), and decision. Plan one small static website. Incorporate the stated answer. Do not claim build or review has occurred.';
-const SAM = 'You are Sam, a static website builder. Return only JSON with title (string), theme (forest|ocean|sunrise|slate), and sections (array of 2-6 ordered objects). First section must be {type:"hero",heading,body,actionText}. Remaining sections may be {type:"text",heading,body}, {type:"cards",heading,items:[{title,body},...]}, {type:"faq",heading,items:[{question,answer},...]}, or {type:"cta",heading,body}. Use 2-4 items in cards/faq. Choose the section types, order, theme and project-specific copy from the approved plan. Do not return HTML, CSS, JavaScript, external links, secrets, or claims of tests.';
-const QUINN = 'You are Quinn, an independent reviewer. Review the actual generated HTML and CSS against the plan. Return only JSON with approved (boolean), summary (string), findings (array of short strings). Do not approve if the artifact misses the goal. Never claim you ran a browser or tests.';
-
-function validText(value, max = 1000) { return typeof value === 'string' && value.trim() && value.length <= max; }
 function publicProject(project) { const { goal, answer, plan, status, events, id, createdAt, artifact } = project; return { id, goal, answer, plan, status, events, createdAt, artifact }; }
 
 export class VillageEngine {
@@ -94,7 +89,7 @@ export class VillageEngine {
     await this.save(project);
     try {
       const { result, usage } = await this.provider.generate({ system: PLAN, input: JSON.stringify({ goal: project.goal, answer: project.answer }) });
-      if (!validText(result.summary, 500) || !validText(result.audience, 200) || !Array.isArray(result.acceptance) || result.acceptance.length < 2 || result.acceptance.length > 4 || result.acceptance.some(value => !validText(value, 200)) || !validText(result.decision, 300)) throw new Error('Maya returned an invalid plan');
+      if (!validPlan(result)) throw new Error('Maya returned an invalid plan');
       project.plan = { summary: result.summary, audience: result.audience,
         acceptance: [...result.acceptance], decision: result.decision };
       project.status = 'ready';
@@ -157,7 +152,7 @@ export class VillageEngine {
       if (controller.signal.aborted) return;
       if (artifactDigest(currentHtml, currentCss) !== actualSha) throw new Error('Artifact changed during review');
       const verdict = review.result;
-      if (typeof verdict.approved !== 'boolean' || !validText(verdict.summary, 500) || !Array.isArray(verdict.findings) || verdict.findings.length > 6 || verdict.findings.some(value => !validText(value, 300))) throw new Error('Quinn returned an invalid review');
+      if (!validReview(verdict)) throw new Error('Quinn returned an invalid review');
       project.status = verdict.approved ? 'reviewed' : 'changes_requested';
       this.event(project, 'Quinn', verdict.approved ? 'review' : 'blocked', verdict.summary, { findings: verdict.findings, reviewedSha256: artifact.sha256, usage: review.usage });
     } catch (error) {

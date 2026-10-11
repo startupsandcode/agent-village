@@ -145,6 +145,17 @@ h2 { font-size: clamp(28px, 3vw, 39px); line-height: 1.15; letter-spacing: -.055
 .hosted-maya h2 { margin-bottom: 14px; }
 .hosted-maya p { max-width: 780px; line-height: 1.5; }
 .hosted-maya a { color: var(--teal); font-weight: 800; }
+.hosted-maya ol { line-height: 1.6; }
+#hosted-chat { margin-top: 25px; padding-top: 20px; border-top: 1px solid var(--line); }
+#hosted-chat-form { display: grid; gap: 9px; max-width: 700px; }
+#hosted-chat-form label { font-weight: 800; }
+#hosted-message { padding: 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.hosted-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+#hosted-chat button { width: fit-content; padding: 10px 15px; border: 0; border-radius: 8px; background: var(--teal); color: white; font: inherit; font-weight: 800; }
+#hosted-chat button:disabled { opacity: .5; }
+#hosted-events { padding-left: 25px; }
+#hosted-events li { margin: 9px 0; overflow-wrap: anywhere; }
+#hosted-artifact iframe { width: 100%; height: 400px; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .site-footer span:first-child { color: var(--ink); font-weight: 900; }
 
 @media (max-width: 1140px) {

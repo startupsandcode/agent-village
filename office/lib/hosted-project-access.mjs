@@ -1,5 +1,5 @@
 // Bind every hosted project operation to the verified Vercel OAuth subject.
-// A future route must use this facade; caller-supplied owner IDs are ignored.
+// Hosted routes use this facade; caller-supplied owner IDs are ignored.
 export function createHostedProjectAccess({ auth, store }) {
   if (typeof auth?.authorize !== 'function' || !store) throw new Error('Hosted project access is not configured');
   function owner(cookie) {

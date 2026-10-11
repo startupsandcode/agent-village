@@ -176,18 +176,19 @@ fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
   const status = await response.json();
   const officeName = document.querySelector('#office-name');
   if (officeName && status.officeName) officeName.textContent = status.officeName;
-  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} ${status.providerKeyPresent ? 'key present server-side, not verified with the provider' : 'key missing'}. ${status.reason}`;
+  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : status.provider === 'openai' ? 'OpenAI' : 'Provider configuration'} ${status.providerKeyPresent ? 'key present server-side, not verified with the provider' : 'key missing'}. ${status.reason}`;
   const list = document.querySelector('#maya-setup-list');
   if (list && status.setup) {
     const labels = [
       ['viewerSignIn', 'Private viewer sign-in'],
+      ['runPermission', 'Provider spending permission'],
       ['provider', 'Server-side provider key'],
       ['durableProjects', 'Owner-scoped project and file storage'],
       ['isolatedExecutor', 'Sandbox for broader code tasks'],
       ['githubPublishing', 'GitHub publishing connection'],
       ['vercelPublishing', 'Vercel publishing connection'],
     ];
-    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : status.setup[key] === 'not_required_for_static_sites' ? 'needed only for broader code tasks' : 'not connected'}`)));
+    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'configured_unverified' ? 'configured, unverified' : status.setup[key] === 'not_authorized' ? 'not authorized' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : status.setup[key] === 'not_required_for_static_sites' ? 'needed only for broader code tasks' : 'not connected'}`)));
   }
 }).catch(() => { const readiness = document.querySelector('#maya-readiness'); if (readiness) readiness.textContent = 'Hosted run setup is unavailable.'; });
 renderAgents();

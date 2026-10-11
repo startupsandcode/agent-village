@@ -1,8 +1,9 @@
-// Persistence boundary for a future hosted runner. No provider or database is opened here.
+// Owner-scoped persistence boundary. The runtime supplies a parameterized query function.
 // `query` is an injected parameterized Postgres query(text, values) function.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,80}$/;
-const MAX_SNAPSHOT_BYTES = 262_144;
+// PostgreSQL jsonb::text adds whitespace; leave ample room below the SQL check.
+const MAX_SNAPSHOT_BYTES = 131_072;
 
 function owner(value) {
   if (typeof value !== 'string' || !value || value.length > 200) throw new Error('Verified owner required');
