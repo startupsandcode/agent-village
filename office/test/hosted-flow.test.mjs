@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer, request as httpRequest } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { createHostedProjectAccess } from '../lib/hosted-project-access.mjs';
 import { createHostedCoordinator } from '../lib/hosted-coordinator.mjs';
 import { createHostedMayaHandler } from '../api/maya-projects.mjs';
 import { createNeonHostedRuntime } from '../lib/neon-runtime.mjs';
+import { artifactDigest } from '../lib/static-site.mjs';
 
 const env = { OFFICE_ALLOWED_ORIGINS: 'https://office.example', OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com' };
 const auth = { authorize: cookie => cookie === 'owner' ? { status: 200, sub: 'owner-sub', email: 'owner@example.com' }
@@ -64,6 +67,8 @@ test('hosted route completes a scoped mock goal, plan, build, review and artifac
   const id = created.value.id;
   assert.equal((await call(handler, 'other', null, { method: 'GET', url: `/api/maya-projects?id=${id}` })).status, 404);
   assert.equal((await call(handler, 'other', { action: 'cancel', id })).status, 404);
+  assert.equal((await call(handler, 'owner', { action: 'answer', id, answer: 'Local neighbors', requestId: ['answer-12345'] })).status, 400);
+  assert.equal(provider.calls, 1);
   const planned = await call(handler, 'owner', { action: 'answer', id, answer: 'Local neighbors', requestId: 'answer-12345' });
   assert.equal(planned.value.status, 'ready');
   const built = await call(handler, 'owner', { action: 'build', id, requestId: 'build-12345' });
@@ -75,6 +80,47 @@ test('hosted route completes a scoped mock goal, plan, build, review and artifac
   const artifact = await call(handler, 'owner', null, { method: 'GET', url: `/api/maya-projects?id=${id}&file=index.html` });
   assert.equal(artifact.status, 200); assert.match(artifact.value, /Grow together/);
   assert.equal((await call(handler, 'other', null, { method: 'GET', url: `/api/maya-projects?id=${id}&file=index.html` })).status, 404);
+
+  const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const artifactRewrite = config.rewrites.find(rule => rule.source === '/api/maya-artifacts/:id/:file');
+  assert.equal(artifactRewrite?.destination, '/api/maya-projects?id=:id&file=:file');
+  const server = createServer((request, response) => {
+    const match = /^\/api\/maya-artifacts\/([0-9a-f-]+)\/(index\.html|styles\.css)$/.exec(request.url);
+    if (!match) { response.writeHead(404); response.end(); return; }
+    request.url = artifactRewrite.destination.replace(':id', match[1]).replace(':file', match[2]);
+    handler(request, response);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const networkGet = (path, cookie) => new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname: '127.0.0.1', port, path, headers: { host: 'office.example', ...(cookie ? { cookie } : {}) } }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8'), headers: response.headers }));
+    });
+    request.on('error', reject); request.end();
+  });
+  try {
+    const htmlUrl = `https://office.example/api/maya-artifacts/${id}/index.html`;
+    const htmlResponse = await networkGet(new URL(htmlUrl).pathname, 'owner');
+    assert.equal(htmlResponse.status, 200);
+    assert.equal(htmlResponse.body, artifact.value); // the exact reviewed bytes, without rewriting
+    assert.match(htmlResponse.headers['content-type'], /^text\/html/);
+    assert.equal(htmlResponse.headers['cache-control'], 'no-store');
+    const stylesheet = /<link rel="stylesheet" href="([^"]+)">/.exec(htmlResponse.body)?.[1];
+    assert.equal(stylesheet, 'styles.css');
+    const cssPath = new URL(stylesheet, htmlUrl).pathname;
+    assert.equal(cssPath, `/api/maya-artifacts/${id}/styles.css`);
+    const cssResponse = await networkGet(cssPath, 'owner');
+    assert.equal(cssResponse.status, 200);
+    assert.match(cssResponse.headers['content-type'], /^text\/css/);
+    assert.equal(artifactDigest(htmlResponse.body, cssResponse.body), reviewed.value.artifact.sha256);
+    for (const path of [new URL(htmlUrl).pathname, cssPath]) {
+      assert.equal((await networkGet(path, 'other')).status, 404);
+      assert.equal((await networkGet(path, 'viewer')).status, 403);
+      assert.equal((await networkGet(path)).status, 401);
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
 test('hosted route rejects viewer spend, cross-site requests and forged project state', async () => {
@@ -86,8 +132,12 @@ test('hosted route rejects viewer spend, cross-site requests and forged project 
   assert.equal((await call(handler, 'owner', body, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await call(handler, 'owner', body, { fetchSite: 'cross-site' })).status, 403);
   assert.equal((await call(handler, 'owner', { ...body, status: 'reviewed', snapshot: { files: 'forged' } })).status, 400);
+  for (const requestId of [['create-12345'], [['create-12345']], 12345678, { value: 'create-12345' }]) {
+    assert.equal((await call(handler, 'owner', { ...body, requestId })).status, 400);
+  }
   assert.equal((await call(handler, 'owner', { action: '__proto__' })).status, 400);
   assert.equal(calls, 0);
+  assert.equal(budget.calls, 0);
   assert.equal((await call(createHostedMayaHandler({ env, auth }), 'owner', body)).status, 503);
 });
 
@@ -154,4 +204,31 @@ test('hosted start exposes a cancellable clarification before the provider retur
   release();
   assert.equal((await clarifying).value.status, 'cancelled');
   assert.equal((await call(handler, 'owner', null, { method: 'GET', url: `/api/maya-projects?id=${started.value.id}` })).value.status, 'cancelled');
+});
+
+test('clarification claims the execution month and rejects an expired start', async () => {
+  const { store } = memory();
+  let clock = Date.parse('2026-01-31T23:59:55Z');
+  const claims = []; let providerCalls = 0;
+  let denyClarification = false;
+  const budget = { async reserve(_cookie, claim) { claims.push(claim); return !(denyClarification && claim.kind === 'clarify'); } };
+  const provider = { async generate() { providerCalls++; return { result: { question: 'Who is it for?' }, usage: {} }; } };
+  const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider, now: () => clock });
+  const first = await coordinator.start('owner', 'Garden website', 'jan-project-123');
+  assert.deepEqual(claims.map(claim => [claim.kind, claim.month]), [['project', '2026-01']]);
+  clock = Date.parse('2026-02-01T00:00:05Z');
+  assert.equal((await coordinator.clarify('owner', first.id)).status, 'needs_answer');
+  assert.deepEqual(claims.map(claim => [claim.kind, claim.month]), [['project', '2026-01'], ['clarify', '2026-02']]);
+  assert.equal(providerCalls, 1);
+
+  const stale = await coordinator.start('owner', 'Old garden website', 'stale-project-123');
+  clock += 91_000;
+  assert.equal((await coordinator.clarify('owner', stale.id)).status, 'interrupted');
+  assert.equal(providerCalls, 1);
+  assert.deepEqual(claims.map(claim => claim.kind), ['project', 'clarify', 'project']);
+
+  const capped = await coordinator.start('owner', 'Capped website', 'capped-project-123');
+  denyClarification = true;
+  await assert.rejects(coordinator.clarify('owner', capped.id), /Monthly project or provider budget reached/);
+  assert.equal(providerCalls, 1);
 });

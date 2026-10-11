@@ -58,6 +58,9 @@ test('hosted store rejects invalid identity, request and oversized state before 
   await assert.rejects(store.read({ ownerSub: '', id }), /Verified owner/);
   await assert.rejects(store.create({ ownerSub: 'owner', id: '../outside', requestId: 'request-123', snapshot: {} }), /project ID/);
   await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: 'x', snapshot: {} }), /request ID/);
+  await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: ['request-123'], snapshot: {} }), /request ID/);
+  await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: [['request-123']], snapshot: {} }), /request ID/);
+  await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: 12345678, snapshot: {} }), /request ID/);
   await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: 'request-123', snapshot: { data: 'x'.repeat(262_145) } }), /too large/);
   await assert.rejects(store.create({ ownerSub: 'owner', id, requestId: 'request-123', snapshot: { data: Array.from({ length: 50_000 }, () => '') } }), /too large/);
   assert.equal(db.calls.length, 0);

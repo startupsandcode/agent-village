@@ -16,7 +16,7 @@ function visible(record) {
   const { files, ...project } = record.snapshot;
   return { ...project, version: record.version };
 }
-function requireRequestId(value) { if (!REQUEST_ID.test(value ?? '')) throw new Error('Request ID required'); }
+function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
 function requireProject(record) { if (!record) throw new Error('Project not found'); return record; }
 
 export function createHostedCoordinator({ access, budget, provider, now = Date.now }) {
@@ -94,13 +94,17 @@ export function createHostedCoordinator({ access, budget, provider, now = Date.n
       if (!validText(goal) || provider.containsSecret?.(goal)) throw new Error('Goal invalid or contains a provider key');
       const id = randomUUID();
       await reserve(cookie, requestId, 'project');
-      await reserve(cookie, requestId, 'clarify');
       const project = { id, goal: goal.trim(), answer: null, plan: null, artifact: null, files: null, status: 'clarifying', events: [], createdAt: new Date(now()).toISOString(), stageStartedAt: new Date(now()).toISOString(), createRequestId: requestId };
       event(project, 'Maya', 'start', 'Reading the project goal');
       const stored = await access.create(cookie, { id, requestId, snapshot: project });
       return visible(stored);
     },
     async clarify(cookie, id) {
+      const current = await read(cookie, id);
+      if (current.status !== 'clarifying' || current.clarifyRunId) return current;
+      // Charge the month in which a provider call actually starts, not the
+      // month in which a user created a project that might wait overnight.
+      await reserve(cookie, id, 'clarify');
       const record = requireProject(await access.read(cookie, id));
       if (record.snapshot.status !== 'clarifying' || record.snapshot.clarifyRunId) return visible(record);
       const next = structuredClone(record.snapshot);

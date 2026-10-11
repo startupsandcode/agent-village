@@ -43,7 +43,8 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (request.method === 'POST' && request.headers?.origin !== origin) return send(response, 403, { error: 'Same-origin office request required' });
       const url = request.method === 'GET' ? new URL(request.url, origin) : null;
       const id = url?.searchParams.get('id');
-      if (url && (!id || [...url.searchParams.keys()].some(key => !['id', 'file'].includes(key)))) throw new Error('Project ID required');
+      const queryKeys = [...(url?.searchParams.keys() ?? [])];
+      if (url && (!id || queryKeys.some(key => !['id', 'file'].includes(key)) || new Set(queryKeys).size !== queryKeys.length)) throw new Error('Project ID required');
       const file = url?.searchParams.get('file');
       const body = request.method === 'POST' ? strictBody(request) : null;
       runtime = runtimeFactory ? await runtimeFactory({ env, auth }) : null;

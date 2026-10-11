@@ -40,4 +40,10 @@ test('transactional budget deduplicates claims and enforces project, call and sp
   assert.equal(db.usage.get('owner-sub:2026-10').calls, 1);
   assert.ok(db.calls.every(call => !call.sql.includes('owner-sub')));
   await assert.rejects(budget.reserve('viewer', { ...base, id: 'request-123', kind: 'project' }), /access denied/);
+  const beforeInvalid = db.calls.length;
+  await assert.rejects(budget.reserve('owner', { ...base, id: ['request-123'], kind: 'project' }), /Invalid budget claim/);
+  await assert.rejects(budget.reserve('owner', { ...base, id: [['request-123']], kind: 'project' }), /Invalid budget claim/);
+  await assert.rejects(budget.reserve('owner', { ...base, id: 12345678, kind: 'project' }), /Invalid budget claim/);
+  await assert.rejects(budget.reserve('owner', { ...base, month: ['2026-10'], id: 'request-123', kind: 'project' }), /Invalid budget claim/);
+  assert.equal(db.calls.length, beforeInvalid);
 });

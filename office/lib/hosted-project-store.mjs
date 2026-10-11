@@ -30,7 +30,7 @@ export function createHostedProjectStore({ query }) {
     async create({ ownerSub, id, requestId, snapshot }) {
       const sub = owner(ownerSub);
       projectId(id);
-      if (!REQUEST_ID.test(requestId ?? '')) throw new Error('Invalid request ID');
+      if (typeof requestId !== 'string' || !REQUEST_ID.test(requestId)) throw new Error('Invalid request ID');
       const encoded = snapshotJson(snapshot);
       const inserted = await query(`INSERT INTO village_projects (owner_sub, id, create_request_id, snapshot)
         VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING

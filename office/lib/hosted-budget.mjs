@@ -4,8 +4,10 @@ export function createHostedBudget({ transaction, auth }) {
   return {
     async reserve(cookie, { id, kind, month, maxProjects, maxCalls, maxReservedMicros, reservedMicros }) {
       const access = auth.authorize(cookie);
-      if (access.status !== 200 || !access.sub) throw new Error('Office access denied');
-      if (!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(month) || !/^[A-Za-z0-9_-]{8,80}$/.test(id) || !['project', 'clarify', 'answer', 'build', 'review'].includes(kind)) throw new Error('Invalid budget claim');
+      if (access.status !== 200 || typeof access.sub !== 'string' || !access.sub || access.sub.length > 200) throw new Error('Office access denied');
+      if (typeof month !== 'string' || !/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(month) ||
+          typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id) ||
+          !['project', 'clarify', 'answer', 'build', 'review'].includes(kind)) throw new Error('Invalid budget claim');
       if (![maxProjects, maxCalls, maxReservedMicros, reservedMicros].every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error('Invalid budget limit');
       const sub = access.sub;
       return transaction(async query => {

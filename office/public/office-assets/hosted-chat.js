@@ -20,7 +20,9 @@ async function request(body) {
   if (!response.ok) throw new Error(value.error ?? 'Project request failed');
   return value;
 }
-function render(value) {
+function render(value, expectedEpoch = epoch) {
+  if (expectedEpoch !== epoch || !value || (project && (value.id !== project.id ||
+      !Number.isSafeInteger(value.version) || !Number.isSafeInteger(project.version) || value.version < project.version))) return false;
   project = value;
   sessionStorage.setItem('hostedVillageProjectId', value.id);
   message.disabled = !['needs_answer'].includes(value.status);
@@ -41,12 +43,13 @@ function render(value) {
     const label = document.createElement('p');
     label.textContent = `${value.status === 'reviewed' ? 'Reviewed' : 'Awaiting or requiring review'} website · SHA-256 ${value.artifact.sha256}`;
     const link = document.createElement('a');
-    link.href = `/api/maya-projects?id=${encodeURIComponent(value.id)}&file=index.html`;
+    link.href = `/api/maya-artifacts/${encodeURIComponent(value.id)}/index.html`;
     link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open generated site';
     const frame = document.createElement('iframe');
     frame.src = link.href; frame.title = 'Generated website preview'; frame.sandbox = 'allow-same-origin';
     artifact.append(label, link, frame);
   }
+  return true;
 }
 async function act(action, values = {}) {
   if (busy) return;
@@ -64,7 +67,10 @@ async function act(action, values = {}) {
     polling = true;
     try {
       const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(project.id)}`, { cache: 'no-store' });
-      if (pollActive && thisEpoch === epoch && response.ok) render(await response.json());
+      if (pollActive && response.ok) {
+        const result = await response.json();
+        if (pollActive) render(result, thisEpoch);
+      }
     } catch { /* the action response still reports the outcome */ }
     finally { polling = false; }
   }, 500);
@@ -72,10 +78,11 @@ async function act(action, values = {}) {
     const result = await request({ action, ...(project ? { id: project.id } : {}), ...values,
       ...(['start', 'create', 'answer', 'build', 'review'].includes(action) ? { requestId: pending.requestId } : {}) });
     if (thisEpoch !== epoch) return;
-    pending = null; message.value = ''; render(result); state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
+    pending = null; message.value = '';
+    if (render(result, thisEpoch)) state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
     return result;
   } catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
-  finally { pollActive = false; clearInterval(timer); if (thisEpoch === epoch) { busy = false; build.disabled = false; review.disabled = false; if (project) render(project); else form.querySelector('button').disabled = false; } }
+  finally { pollActive = false; clearInterval(timer); if (thisEpoch === epoch) { busy = false; build.disabled = false; review.disabled = false; if (project) render(project, thisEpoch); else form.querySelector('button').disabled = false; } }
 }
 form?.addEventListener('submit', async event => {
   event.preventDefault();
@@ -92,7 +99,7 @@ review?.addEventListener('click', () => act('review'));
 cancel?.addEventListener('click', async () => {
   if (!project) return;
   const thisEpoch = epoch;
-  try { const result = await request({ action: 'cancel', id: project.id }); if (thisEpoch === epoch) { render(result); state.textContent = 'Cancellation recorded.'; } }
+  try { const result = await request({ action: 'cancel', id: project.id }); if (render(result, thisEpoch)) state.textContent = 'Cancellation recorded.'; }
   catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
 });
 another?.addEventListener('click', () => {
@@ -116,13 +123,13 @@ setInterval(async () => {
     const result = await response.json();
     if (thisEpoch === epoch && !busy && project?.id === id && Number.isSafeInteger(result.version) &&
         Number.isSafeInteger(project.version) && result.version > project.version) {
-      render(result);
-      state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
+      if (render(result, thisEpoch)) state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
     }
   } catch { /* next interval can retry a status read */ }
   finally { restoringPoll = false; }
 }, 2000);
 fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
+  const restoreEpoch = epoch;
   if (!response.ok) return;
   const status = await response.json();
   if (!status.runAvailable) return;
@@ -133,7 +140,7 @@ fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
     const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(saved)}`, { cache: 'no-store' });
     if (response.ok) {
       const restored = await response.json();
-      render(restored);
+      if (!render(restored, restoreEpoch)) return;
       if (restored.status === 'clarifying') act('clarify');
     }
     else sessionStorage.removeItem('hostedVillageProjectId');
