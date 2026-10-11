@@ -13,8 +13,8 @@ test('hosted Maya status denies anonymous access and never returns a configured 
   assert.equal(anonymous.statusCode, 401);
   const invited = response(); handler({ method: 'GET', headers: { cookie: 'valid' } }, invited);
   assert.equal(invited.statusCode, 200);
-  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need a private durable project store and isolated executor. The local office can run now.', setup: {
-    viewerSignIn: 'connected', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_connected', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
+  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need a connected private project store and a bounded hosted coordinator. The local office can run now.', setup: {
+    viewerSignIn: 'connected', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_required_for_static_sites', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
   } });
   assert.ok(!invited.body.includes(secret));
   const head = response(); handler({ method: 'HEAD', headers: { cookie: 'valid' } }, head);

@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 const runFile = promisify(execFile);
 const commands = {
   github: ['gh', ['api', 'user', '--jq', '.login']],
-  vercel: ['vercel', ['whoami']],
+  vercel: ['vercel', ['whoami', '--non-interactive']],
 };
 
 export async function inspectConnections({ run = runFile, env = process.env } = {}) {
@@ -13,6 +13,7 @@ export async function inspectConnections({ run = runFile, env = process.env } = 
     HOME: env.HOME,
     ...(env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: env.XDG_CONFIG_HOME } : {}),
     VERCEL_TELEMETRY_DISABLED: '1',
+    NO_UPDATE_NOTIFIER: '1',
   };
   const result = {};
   for (const [service, [file, args]] of Object.entries(commands)) {

@@ -18,12 +18,12 @@ export function createMayaStatusHandler({ env = process.env, auth = createAuth({
     response.statusCode = 200;
     const officeName = typeof env.VILLAGE_OFFICE_NAME === 'string' && env.VILLAGE_OFFICE_NAME.trim().length <= 60 ? env.VILLAGE_OFFICE_NAME.trim() : '';
     response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ provider, providerKeyPresent: keyPresent, officeName,
-      runAvailable: false, reason: 'Hosted runs need a private durable project store and isolated executor. The local office can run now.',
+      runAvailable: false, reason: 'Hosted runs need a connected private project store and a bounded hosted coordinator. The local office can run now.',
       setup: {
         viewerSignIn: 'connected',
         provider: keyPresent ? 'key_present_unverified' : 'missing_key',
         durableProjects: 'not_connected',
-        isolatedExecutor: 'not_connected',
+        isolatedExecutor: 'not_required_for_static_sites',
         githubPublishing: 'not_connected',
         vercelPublishing: 'not_connected',
       } }));

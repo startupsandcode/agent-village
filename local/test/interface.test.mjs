@@ -68,6 +68,14 @@ test('provider missing-key and HTTP errors are explicit without body leakage', a
   const provider = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'private-key' }, fetchImpl: async () => ({ ok: false, status: 401 }) });
   await assert.rejects(provider.generate({ system: 'x', input: 'y' }), /Provider request failed \(401\)/);
 });
+test('both providers reject oversized input before any billable request', async () => {
+  let calls = 0;
+  for (const [name, key] of [['openai', 'OPENAI_API_KEY'], ['anthropic', 'ANTHROPIC_API_KEY']]) {
+    const provider = createProvider({ name, env: { [key]: 'fake' }, fetchImpl: async () => { calls++; throw new Error('Unexpected request'); } });
+    await assert.rejects(provider.generate({ system: 'system', input: 'x'.repeat(32_768) }), /input exceeds project limit/);
+  }
+  assert.equal(calls, 0);
+});
 test('provider truncation and cancellation fail without treating partial JSON as success', async () => {
   const openai = createProvider({ name: 'openai', env: { OPENAI_API_KEY: 'fake' }, fetchImpl: async () => ({ ok: true, json: async () => ({ status: 'incomplete', output_text: '{"question":"partial"}' }) }) });
   await assert.rejects(openai.generate({ system: 'x', input: 'y' }), /truncated/);
@@ -370,17 +378,41 @@ test('invalid fixed office name does not block local first-run naming', async ()
     assert.equal((await fetch(`${base}/api/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'My Village' }) })).status, 200);
   } finally { server.close(); }
 }));
-test('local connection status is read-only and available before a provider key', async () => fixture(async root => {
+test('local connection check requires same-origin POST and bounds repeated CLI probes', async () => fixture(async root => {
   let inspected = 0;
   const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root,
-    connectionInspector: async () => { inspected++; return { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } }; } });
+    connectionInspector: async () => { inspected++; await new Promise(resolve => setTimeout(resolve, 20)); return { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } }; } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const check = (headers = {}) => fetch(`${base}/api/connections`, { method: 'POST', headers: { origin: base, ...headers } });
+  try {
+    assert.equal((await fetch(`${base}/api/connections`)).status, 405);
+    assert.equal((await check({ origin: 'https://evil.example' })).status, 403);
+    assert.equal((await check({ 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await fetch(`${base}/api/connections`, { method: 'POST' })).status, 403);
+    assert.equal(inspected, 0);
+    const [first, second] = await Promise.all([check(), check()]);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    const result = await first.json();
+    assert.deepEqual(result, { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } });
+    assert.equal(inspected, 1);
+    assert.equal((await check()).status, 200);
+    assert.equal(inspected, 1);
+  } finally { server.close(); }
+}));
+test('failed connection probes are also rate bounded', async () => fixture(async root => {
+  let inspected = 0;
+  const server = createLocalServer({ providerError: 'Missing key', setupRoot: root,
+    connectionInspector: async () => { inspected++; throw new Error('CLI failed'); } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    const result = await (await fetch(`${base}/api/connections`)).json();
-    assert.deepEqual(result, { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } });
-    assert.equal(inspected, 1);
-    assert.equal((await fetch(`${base}/api/connections`, { method: 'POST' })).status, 405);
+    for (let i = 0; i < 3; i++) {
+      const response = await fetch(`${base}/api/connections`, { method: 'POST', headers: { origin: base } });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { github: { state: 'unavailable' }, vercel: { state: 'unavailable' } });
+    }
     assert.equal(inspected, 1);
   } finally { server.close(); }
 }));

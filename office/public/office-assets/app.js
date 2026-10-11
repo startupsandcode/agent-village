@@ -183,11 +183,11 @@ fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
       ['viewerSignIn', 'Private viewer sign-in'],
       ['provider', 'Server-side provider key'],
       ['durableProjects', 'Owner-scoped project and file storage'],
-      ['isolatedExecutor', 'Isolated bounded build executor'],
+      ['isolatedExecutor', 'Sandbox for broader code tasks'],
       ['githubPublishing', 'GitHub publishing connection'],
       ['vercelPublishing', 'Vercel publishing connection'],
     ];
-    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : 'not connected'}`)));
+    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : status.setup[key] === 'not_required_for_static_sites' ? 'needed only for broader code tasks' : 'not connected'}`)));
   }
 }).catch(() => { const readiness = document.querySelector('#maya-readiness'); if (readiness) readiness.textContent = 'Hosted run setup is unavailable.'; });
 renderAgents();

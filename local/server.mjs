@@ -23,6 +23,19 @@ async function body(request) {
 }
 export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME, setupRoot = engine?.root ?? join(here, '.workspaces'), connectionInspector = inspectConnections } = {}) {
   const fixedOfficeName = validOfficeName(officeName) ? officeName.trim() : '';
+  let connectionProbe = null;
+  let lastConnectionResult = null;
+  let lastConnectionProbeAt = 0;
+  async function boundedConnectionProbe() {
+    if (connectionProbe) return connectionProbe;
+    if (lastConnectionResult && Date.now() - lastConnectionProbeAt < 30_000) return lastConnectionResult;
+    lastConnectionProbeAt = Date.now();
+    connectionProbe = Promise.resolve().then(() => connectionInspector()).catch(() => ({ github: { state: 'unavailable' }, vercel: { state: 'unavailable' } })).then(result => {
+      lastConnectionResult = result;
+      return result;
+    }).finally(() => { connectionProbe = null; });
+    return connectionProbe;
+  }
   return createServer(async (request, response) => {
     const host = request.headers.host ?? '';
     if (!/^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)) return send(response, 403, { error: 'Local host required' });
@@ -40,7 +53,11 @@ export function createLocalServer({ provider, providerError, engine = provider &
         const value = await body(request);
         return send(response, 200, await saveOfficeSetup(setupRoot, value.name));
       }
-      if (path === '/api/connections') return request.method === 'GET' ? send(response, 200, await connectionInspector()) : send(response, 405, { error: 'Method not allowed' });
+      if (path === '/api/connections') {
+        if (request.method !== 'POST') return send(response, 405, { error: 'Method not allowed' });
+        if (origin !== `http://${host}` || (request.headers['sec-fetch-site'] && request.headers['sec-fetch-site'] !== 'same-origin')) return send(response, 403, { error: 'Local origin required' });
+        return send(response, 200, await boundedConnectionProbe());
+      }
       if (path.startsWith('/api/')) {
         if (!engine) return send(response, 503, { error: providerError ?? 'Provider not configured' });
         if (path === '/api/projects' && request.method === 'POST') {

@@ -1,4 +1,5 @@
 const TIMEOUT_MS = 45000;
+const MAX_INPUT_BYTES = 32_768;
 
 function pickText(value) {
   const match = String(value).match(/\{[\s\S]*\}/);
@@ -52,6 +53,7 @@ export function createProvider({ name = process.env.VILLAGE_PROVIDER ?? 'openai'
     containsSecret(value) { return key.length >= 8 && String(value).includes(key); },
     redact(value) { return key.length >= 8 ? String(value).replaceAll(key, '[redacted]') : String(value); },
     async generate({ system, input, signal }) {
+      if (typeof system !== 'string' || typeof input !== 'string' || Buffer.byteLength(system) + Buffer.byteLength(input) > MAX_INPUT_BYTES) throw new Error('Provider input exceeds project limit');
       if (name === 'openai') {
         const data = await post('https://api.openai.com/v1/responses', {
           authorization: `Bearer ${key}`, 'content-type': 'application/json',

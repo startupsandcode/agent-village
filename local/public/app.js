@@ -115,7 +115,7 @@ connectionButton?.addEventListener('click', async () => {
   const epoch = conversationEpoch;
   connectionButton.disabled = true;
   try {
-    const result = await api('/api/connections');
+    const result = await api('/api/connections', 'POST');
     if (epoch !== conversationEpoch) return;
     connectionStatus.textContent = `GitHub: ${result.github?.state === 'connected' ? `signed in as ${result.github.account}` : 'not verified'} · Vercel: ${result.vercel?.state === 'connected' ? `signed in as ${result.vercel.account}` : 'not verified'}. This does not grant publishing access.`;
   } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
