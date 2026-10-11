@@ -111,6 +111,40 @@ test('hosted provider error preserves reported tokens without claiming a success
   assert.equal(receipts[0].outputTokens, 1800);
 });
 
+test('one failed Quinn response keeps the artifact inspectable and permits one budgeted review retry', async () => {
+  const { store, budget } = memory();
+  const replies = [{ question: 'Which colors?' },
+    { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build static site' },
+    site, { approved: true, summary: 'Matches the plan' },
+    { approved: true, summary: 'Matches the plan', findings: [] }];
+  const formats = [];
+  const provider = { async generate({ format }) { formats.push(format); return { result: replies.shift(), usage: { input: 10, output: 20 } }; } };
+  const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider });
+  const handler = createHostedMayaHandler({ env, auth, coordinator, enabled: true });
+  const started = await call(handler, 'owner', { action: 'create', goal: 'Garden website', requestId: 'create-review-retry-1' });
+  const id = started.value.id;
+  await call(handler, 'owner', { action: 'answer', id, answer: 'Forest green', requestId: 'answer-review-retry-1' });
+  const built = await call(handler, 'owner', { action: 'build', id, requestId: 'build-review-retry-1' });
+  const failed = await call(handler, 'owner', { action: 'review', id, requestId: 'review-retry-first' });
+  assert.equal(failed.value.status, 'blocked');
+  assert.equal(failed.value.retryReviewAvailable, true);
+  assert.equal(failed.value.artifact.sha256, built.value.artifact.sha256);
+  assert.doesNotMatch(JSON.stringify(failed.value), /"files"/);
+  const artifact = await call(handler, 'owner', null, { method: 'GET', url: `/api/maya-projects?id=${id}&file=index.html` });
+  assert.equal(artifact.status, 200);
+  assert.match(artifact.value, /Garden Club/);
+  const reviewed = await call(handler, 'owner', { action: 'review', id, requestId: 'review-retry-second' });
+  assert.equal(reviewed.value.status, 'reviewed');
+  assert.equal(reviewed.value.retryReviewAvailable, false);
+  assert.equal(reviewed.value.events.at(-1).reviewedSha256, built.value.artifact.sha256);
+  assert.deepEqual(formats, [undefined, undefined, undefined, 'review', 'review']);
+  assert.equal(budget.calls, 6); // project and five separately reserved provider calls
+  const duplicate = await call(handler, 'owner', { action: 'review', id, requestId: 'review-retry-second' });
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.value.status, 'reviewed');
+  assert.equal(formats.length, 5);
+});
+
 test('hosted route completes a scoped mock goal, plan, build, review and artifact flow', async () => {
   const { store, budget } = memory();
   const replies = [{ question: 'Who is it for?' }, { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build static site' }, site,

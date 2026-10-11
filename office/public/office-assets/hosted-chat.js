@@ -130,7 +130,8 @@ function render(value, expectedEpoch = epoch) {
   form.querySelector('label').textContent = value.status === 'needs_answer' ? 'Your answer to Maya' : 'Project goal';
   form.querySelector('button').disabled = busy || message.disabled;
   build.hidden = value.status !== 'ready';
-  review.hidden = value.status !== 'awaiting_review';
+  review.hidden = value.status !== 'awaiting_review' && !value.retryReviewAvailable;
+  review.textContent = value.retryReviewAvailable ? 'Retry Quinn review once' : 'Ask Quinn to review';
   cancel.hidden = !['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
   another.hidden = ['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
   events.replaceChildren(...value.events.map(entry => {

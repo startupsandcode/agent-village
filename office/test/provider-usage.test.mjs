@@ -27,3 +27,17 @@ test('truncated and invalid provider results retain reported usage for an error 
   const missing = createProvider({ env: { OPENAI_API_KEY: 'test-key' }, fetchImpl: async () => ({ ok: true, json: async () => ({ status: 'completed', output_text: '{"question":"Who?"}' }) }) });
   assert.equal((await missing.generate({ system: 'x', input: 'y' })).usage, null);
 });
+
+test('OpenAI review requests constrain the three review fields with a strict output schema', async () => {
+  let body;
+  const provider = createProvider({ env: { OPENAI_API_KEY: 'test-key' }, fetchImpl: async (_url, request) => {
+    body = JSON.parse(request.body);
+    return { ok: true, json: async () => ({ status: 'completed', output_text: '{"approved":true,"summary":"Matches","findings":[]}' }) };
+  } });
+  const reply = await provider.generate({ system: 'Review the site', input: '{}', format: 'review' });
+  assert.equal(reply.result.approved, true);
+  assert.equal(body.text.format.type, 'json_schema');
+  assert.equal(body.text.format.strict, true);
+  assert.deepEqual(body.text.format.schema.required, ['approved', 'summary', 'findings']);
+  assert.equal(body.text.format.schema.additionalProperties, false);
+});

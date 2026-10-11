@@ -1,5 +1,10 @@
 const TIMEOUT_MS = 45000;
 const MAX_INPUT_BYTES = 32_768;
+const reviewFormat = { type: 'json_schema', name: 'village_review', strict: true, schema: {
+  type: 'object', properties: { approved: { type: 'boolean' }, summary: { type: 'string' },
+    findings: { type: 'array', items: { type: 'string' } } },
+  required: ['approved', 'summary', 'findings'], additionalProperties: false,
+} };
 
 function pickText(value) {
   const match = String(value).match(/\{[\s\S]*\}/);
@@ -67,12 +72,14 @@ export function createProvider({ name = process.env.VILLAGE_PROVIDER ?? 'openai'
     name, model,
     containsSecret(value) { return key.length >= 8 && String(value).includes(key); },
     redact(value) { return key.length >= 8 ? String(value).replaceAll(key, '[redacted]') : String(value); },
-    async generate({ system, input, signal }) {
+    async generate({ system, input, signal, format }) {
       if (typeof system !== 'string' || typeof input !== 'string' || Buffer.byteLength(system) + Buffer.byteLength(input) > MAX_INPUT_BYTES) throw new Error('Provider input exceeds project limit');
+      if (format !== undefined && format !== 'review') throw new Error('Invalid provider output format');
       if (name === 'openai') {
         const data = await post('https://api.openai.com/v1/responses', {
           authorization: `Bearer ${key}`, 'content-type': 'application/json',
-        }, { model, instructions: system, input, max_output_tokens: 1800 }, { fetchImpl, signal, timeoutMs });
+        }, { model, instructions: system, input, max_output_tokens: 1800,
+          ...(format === 'review' ? { text: { format: reviewFormat } } : {}) }, { fetchImpl, signal, timeoutMs });
         return resultWithUsage(name, data, () => {
           if (data.status !== 'completed') throw new Error(data.status === 'incomplete' ? 'Provider output truncated at token limit' : 'Provider did not complete');
           const text = data.output_text ?? data.output?.flatMap(item => item.content ?? []).filter(item => item.type === 'output_text').map(item => item.text).join('') ?? '';

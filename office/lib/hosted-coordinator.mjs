@@ -12,9 +12,15 @@ const STALE_MS = 90_000;
 function event(project, agent, type, message, usage) {
   project.events.push({ at: new Date().toISOString(), agent, type, message: String(message).slice(0, 1200), ...(usage ? { usage } : {}) });
 }
+function canRetryReview(project) {
+  return project.status === 'blocked' && (project.reviewRetryCount ?? 0) < 1 &&
+    project.events?.at(-1)?.agent === 'Quinn' && project.events.at(-1).type === 'error' &&
+    typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
+    artifactDigest(project.files.html, project.files.css) === project.artifact.sha256;
+}
 function visible(record) {
   const { files, ...project } = record.snapshot;
-  return { ...project, version: record.version };
+  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)), version: record.version };
 }
 function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
 function requireProject(record) { if (!record) throw new Error('Project not found'); return record; }
@@ -69,7 +75,8 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
           month: new Date(now()).toISOString().slice(0, 7) });
         began = true;
       }
-      reply = await provider.generate({ system, input: JSON.stringify(input), signal: controller.signal });
+      reply = await provider.generate({ system, input: JSON.stringify(input), signal: controller.signal,
+        ...(agent === 'Quinn' ? { format: 'review' } : {}) });
     } catch (error) { failure = error; }
     try {
       if (began) await usage.complete(cookie, callId, provider.name, provider.model, reply?.usage ?? failure?.usage);
@@ -84,13 +91,13 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       }
     } finally { clearInterval(timer); }
   }
-  async function advance(cookie, id, requestId, from, to, agent, message, kind, prepare = () => {}) {
+  async function advance(cookie, id, requestId, from, to, agent, message, kind, prepare = () => {}, budgetId = id) {
     requireRequestId(requestId);
     const record = requireProject(await access.read(cookie, id));
     const project = record.snapshot;
     if (project[`${kind}RequestId`] === requestId) return { duplicate: true, record };
     if (project.status !== from) throw new Error('Action not expected');
-    await reserve(cookie, id, kind);
+    await reserve(cookie, budgetId, kind);
     const next = structuredClone(project);
     next.status = to; next.stageStartedAt = new Date(now()).toISOString(); next[`${kind}RequestId`] = requestId;
     prepare(next);
@@ -160,7 +167,12 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       }, 'Sam', `${id}:build:${requestId}`);
     },
     async review(cookie, id, requestId) {
-      const step = await advance(cookie, id, requestId, 'awaiting_review', 'reviewing', 'Quinn', 'Reviewing the exact generated files', 'review');
+      const before = await read(cookie, id);
+      const retry = before.retryReviewAvailable;
+      if (before.status === 'blocked' && !retry) throw new Error('Action not expected');
+      const step = await advance(cookie, id, requestId, retry ? 'blocked' : 'awaiting_review', 'reviewing', 'Quinn',
+        retry ? 'Retrying review of the same generated files' : 'Reviewing the exact generated files', 'review',
+        next => { if (retry) next.reviewRetryCount = (next.reviewRetryCount ?? 0) + 1; }, retry ? `${id}-review-retry-1` : id);
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
       if (!current.files || artifactDigest(current.files.html, current.files.css) !== current.artifact?.sha256) throw new Error('Artifact receipt invalid');
@@ -189,7 +201,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       if (!['index.html', 'styles.css'].includes(name)) throw new Error('Artifact not found');
       const record = requireProject(await access.read(cookie, id));
       const { artifact, files, status } = record.snapshot;
-      if (!['reviewed', 'changes_requested', 'awaiting_review', 'reviewing'].includes(status) || !files || artifactDigest(files.html, files.css) !== artifact?.sha256) throw new Error('Artifact not found');
+      if (!['reviewed', 'changes_requested', 'awaiting_review', 'reviewing', 'blocked'].includes(status) || !files || artifactDigest(files.html, files.css) !== artifact?.sha256) throw new Error('Artifact not found');
       verifyStaticSite(files.html, files.css);
       return { content: files[name === 'index.html' ? 'html' : 'css'], sha256: artifact.sha256 };
     },
