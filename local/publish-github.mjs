@@ -48,7 +48,7 @@ async function github(fetchImpl, token, signal, path, method = 'GET', body) {
  * action. The caller must keep token server-side and never put it in a response.
  * A fine-grained token needs Contents: write on this one repository.
  */
-export async function publishReviewedSite({ engine, id, snapshot, owner, repo, branch, token, fetchImpl = fetch, signal }) {
+export async function publishReviewedSite({ engine, id, snapshot, owner, repo, branch, token, fetchImpl = fetch, signal, onBeforeRefUpdate = async () => {} }) {
   if (snapshot === undefined) {
     if (!engine || typeof engine.checkedWorkspace !== 'function' || typeof engine.get !== 'function') throw new Error('Invalid project engine');
     requiredName(id, /^[0-9a-f-]{36}$/i, 'project ID');
@@ -117,6 +117,7 @@ export async function publishReviewedSite({ engine, id, snapshot, owner, repo, b
       parents: [parent],
     });
     const commitSha = checkedSha(createdCommit.sha, 'created commit');
+    await onBeforeRefUpdate();
     const updatedRef = await github(fetchImpl, token, requestSignal, `${base}/git/refs/heads/${encodeURIComponent(branch)}`, 'PATCH', { sha: commitSha, force: false });
     if (checkedSha(updatedRef.object?.sha, 'updated ref') !== commitSha ||
         updatedRef.ref !== `refs/heads/${branch}`) throw new Error('GitHub ref receipt did not match published commit; inspect branch before retrying');

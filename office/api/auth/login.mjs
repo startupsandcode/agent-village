@@ -15,9 +15,14 @@ export function createLoginHandler({ auth = createAuth() } = {}) {
       response.setHeader('Location', url);
       response.setHeader('Set-Cookie', cookie);
       response.end();
-    } catch {
+    } catch (error) {
       response.statusCode = 503;
-      response.end('Office sign in is unavailable');
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.end(error.message === 'Unregistered office host'
+        ? 'Office sign in is unavailable on this URL. Open the configured Preview address.'
+        : error.message === 'Office authentication configuration is missing'
+          ? 'Office sign in is not configured for this Preview.'
+          : 'Office sign in is unavailable');
     }
   };
 }

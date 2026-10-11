@@ -105,6 +105,11 @@ test('login route selects the callback from the registered request host', () => 
   handler({ method: 'GET', headers: { host: 'attacker.example' } }, unknown);
   assert.equal(unknown.statusCode, 503);
   assert.equal(unknown.headers.location, undefined);
+  assert.equal(unknown.body, 'Office sign in is unavailable on this URL. Open the configured Preview address.');
+  const missing = response();
+  createLoginHandler({ auth: createAuth({ env: { ...env, VERCEL_APP_CLIENT_SECRET: '' } }) })({ method: 'GET', headers: { host: 'agent-village.startupsandcode.com' } }, missing);
+  assert.equal(missing.statusCode, 503);
+  assert.equal(missing.body, 'Office sign in is not configured for this Preview.');
 });
 
 test('callback route forwards its host to OAuth completion', async () => {

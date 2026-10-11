@@ -10,8 +10,8 @@ const shapes = {
   review: ['action', 'id', 'requestId'],
   cancel: ['action', 'id'],
   publishStatus: ['action', 'id'],
-  publishGithub: ['action', 'id', 'artifactSha256'],
-  publishVercel: ['action', 'id', 'artifactSha256'],
+  publishGithub: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
+  publishVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
 };
 function send(response, status, value, type = 'application/json; charset=utf-8') {
   response.statusCode = status;
@@ -68,7 +68,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       }
       if (body.action === 'publishGithub' || body.action === 'publishVercel') {
         if (!publishing) return send(response, 503, { error: 'Hosted publishing is not connected' });
-        return send(response, 200, await publishing.publish(cookie, body.id, body.action === 'publishGithub' ? 'github' : 'vercel', body.artifactSha256));
+        return send(response, 200, await publishing.publish(cookie, body.id, body.action === 'publishGithub' ? 'github' : 'vercel', body.artifactSha256, body.targetFingerprint));
       }
       const result = body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
         : body.action === 'start' ? await active.start(cookie, body.goal, body.requestId)
@@ -80,7 +80,8 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       return send(response, 200, result);
     } catch (error) {
       if (['Project not found', 'Artifact not found'].includes(error.message)) return send(response, 404, { error: error.message });
-      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status)$/.test(error.message);
+      if (error.message === 'Publish target changed; refresh status') return send(response, 409, { error: error.message });
+      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
       return send(response, safe ? 400 : 500, { error: safe ? error.message : 'Project request failed' });
     } finally { try { await runtime?.close(); } catch { /* response contains the operation result */ } }
   };

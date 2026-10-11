@@ -1,4 +1,5 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
+import { createHash } from 'node:crypto';
 import { publishReviewedSite } from '../../local/publish-github.mjs';
 import { deployReviewedPreview, inspectPreviewDeployment } from '../../local/publish-vercel.mjs';
 
@@ -13,12 +14,16 @@ function target(env, service) {
     const { VILLAGE_PUBLISH_GITHUB_OWNER: owner, VILLAGE_PUBLISH_GITHUB_REPO: repo,
       VILLAGE_PUBLISH_GITHUB_BRANCH: branch, VILLAGE_PUBLISH_GITHUB_TOKEN: token,
       VILLAGE_PUBLISH_GITHUB_DEDICATED_REPO_CONFIRMED: confirmed } = env;
-    return { owner, repo, branch, available: Boolean(token && confirmed === 'true' && gitOwner.test(owner ?? '') && gitRepo.test(repo ?? '') && !repo.includes('..') &&
+    const destination = { owner, repo, branch };
+    return { ...destination, fingerprint: createHash('sha256').update(JSON.stringify({ service, destination })).digest('hex'),
+      available: Boolean(token && confirmed === 'true' && gitOwner.test(owner ?? '') && gitRepo.test(repo ?? '') && !repo.includes('..') &&
       gitBranch.test(branch ?? '') && !branch.includes('..')) };
   }
   const { VILLAGE_PUBLISH_VERCEL_TEAM: team, VILLAGE_PUBLISH_VERCEL_PROJECT: project,
     VILLAGE_PUBLISH_VERCEL_TOKEN: token } = env;
-  return { team, project, available: Boolean(token && name.test(team ?? '') && name.test(project ?? '')) };
+  const destination = { team, project };
+  return { ...destination, fingerprint: createHash('sha256').update(JSON.stringify({ service, destination })).digest('hex'),
+    available: Boolean(token && name.test(team ?? '') && name.test(project ?? '')) };
 }
 function reviewed(record, expectedSha) {
   const project = record?.snapshot;
@@ -56,9 +61,10 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       }
       return { projectId: id, artifactSha256: project.artifact?.sha256 ?? null, reviewed: project.status === 'reviewed', targets, receipts };
     },
-    async publish(cookie, id, service, expectedSha) {
+    async publish(cookie, id, service, expectedSha, displayedFingerprint) {
       if (!['github', 'vercel'].includes(service)) throw new Error('Invalid publish action');
       const configured = target(env, service);
+      if (!sha.test(displayedFingerprint ?? '') || displayedFingerprint !== configured.fingerprint) throw new Error('Publish target changed; refresh status');
       if (!configured.available) throw new Error(`${service === 'github' ? 'GitHub' : 'Vercel'} publishing is not configured`);
       let claim, captured;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -82,10 +88,32 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       if (!claim) throw new Error('Publish claim changed; inspect status');
       // The durable submitting claim prevents a second write if the function dies
       // after the external API accepts a request but before a receipt is saved.
-      const receipt = service === 'github'
-        ? await githubPublisher({ snapshot: captured, owner: configured.owner, repo: configured.repo, branch: configured.branch, token: env.VILLAGE_PUBLISH_GITHUB_TOKEN })
-        : await vercelPublisher({ engine: { get: async () => ({ status: 'reviewed', artifact: { sha256: expectedSha } }), artifact: async (_id, file) => file === 'index.html' ? captured.html : captured.css },
-          id, team: configured.team, project: configured.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN });
+      let externalUpdateAttempted = false;
+      let receipt;
+      try {
+        receipt = service === 'github'
+          ? await githubPublisher({ snapshot: captured, owner: configured.owner, repo: configured.repo, branch: configured.branch, token: env.VILLAGE_PUBLISH_GITHUB_TOKEN,
+            onBeforeRefUpdate: () => { externalUpdateAttempted = true; } })
+          : await vercelPublisher({ engine: { get: async () => ({ status: 'reviewed', artifact: { sha256: expectedSha } }), artifact: async (_id, file) => file === 'index.html' ? captured.html : captured.css },
+            id, team: configured.team, project: configured.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
+            onBeforeSubmit: () => { externalUpdateAttempted = true; } });
+      } catch (error) {
+        if (externalUpdateAttempted) throw error; // Outcome may be unknown; retain durable claim.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const current = await read(cookie, id);
+          const previous = current.snapshot.publishing?.[service];
+          if (previous?.status !== 'submitting' || previous.startedAt !== claim.startedAt) break;
+          const next = structuredClone(current.snapshot);
+          delete next.publishing[service];
+          next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish_error',
+            message: service === 'github' ? 'GitHub publish stopped before a branch update was attempted; inspect the target and retry.'
+              : 'Vercel publish stopped before a deployment request was attempted; inspect the target and retry.' });
+          if (await access.update(cookie, { id, expectedVersion: current.version, snapshot: next })) {
+            throw new Error('Publishing stopped before target update; setup can be corrected and retried');
+          }
+        }
+        throw new Error('Publish claim changed; inspect status');
+      }
       for (let attempt = 0; attempt < 3; attempt++) {
         const current = await read(cookie, id);
         const previous = current.snapshot.publishing?.[service];

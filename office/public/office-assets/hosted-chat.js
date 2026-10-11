@@ -21,6 +21,7 @@ let epoch = 0;
 let restoringPoll = false;
 let publishVersion = -1;
 let publishStatusSequence = 0;
+let targetFingerprints = null;
 
 async function request(body) {
   const response = await fetch('/api/maya-projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -66,10 +67,14 @@ function render(value, expectedEpoch = epoch) {
 }
 async function loadPublishStatus(id, expectedEpoch = epoch) {
   const sequence = ++publishStatusSequence;
+  targetFingerprints = null;
+  publishGithub.hidden = true;
+  publishVercel.hidden = true;
   try {
     const result = await request({ action: 'publishStatus', id });
     if (expectedEpoch !== epoch || project?.id !== id || sequence !== publishStatusSequence) return;
     const { github, vercel } = result.targets;
+    targetFingerprints = { github: github.fingerprint, vercel: vercel.fingerprint };
     publishTargets.textContent = `GitHub: ${github.owner && github.repo && github.branch ? `${github.owner}/${github.repo} · ${github.branch}` : 'not configured'}; Vercel Preview: ${vercel.team && vercel.project ? `${vercel.team}/${vercel.project}` : 'not configured'}. Reviewed SHA-256 ${result.artifactSha256}.`;
     publishGithub.hidden = !github.available || result.receipts.github != null;
     publishVercel.hidden = !vercel.available || result.receipts.vercel != null;
@@ -89,11 +94,13 @@ async function publish(service) {
   const id = project.id;
   const reviewedSha = project.artifact.sha256;
   const button = service === 'github' ? publishGithub : publishVercel;
+  const targetFingerprint = targetFingerprints?.[service];
+  if (!targetFingerprint || button.hidden) return;
   publishStatusSequence++;
   button.disabled = true;
   publishResult.textContent = `Submitting reviewed ${service === 'github' ? 'files to GitHub' : 'site to Vercel Preview'}…`;
   try {
-    const result = await request({ action: service === 'github' ? 'publishGithub' : 'publishVercel', id, artifactSha256: reviewedSha });
+    const result = await request({ action: service === 'github' ? 'publishGithub' : 'publishVercel', id, artifactSha256: reviewedSha, targetFingerprint });
     if (expectedEpoch !== epoch || project?.id !== id) return;
     publishResult.textContent = result.status === 'submitting' ? 'Submission status is uncertain. Inspect the configured target; automatic retry is blocked.' :
       `${service} accepted ${result.receipt?.commitSha ?? result.receipt?.deploymentId}; check the recorded status below.`;
@@ -162,7 +169,7 @@ cancel?.addEventListener('click', async () => {
   catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
 });
 another?.addEventListener('click', () => {
-  epoch++; project = null; pending = null; busy = false; publishVersion = -1; publishStatusSequence++;
+  epoch++; project = null; pending = null; busy = false; publishVersion = -1; publishStatusSequence++; targetFingerprints = null;
   sessionStorage.removeItem('hostedVillageProjectId');
   events.replaceChildren(); artifact.replaceChildren(); message.value = ''; message.disabled = false;
   publishPanel.hidden = true; publishTargets.textContent = ''; publishResult.textContent = '';

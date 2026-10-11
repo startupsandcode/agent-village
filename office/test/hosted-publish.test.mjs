@@ -48,7 +48,8 @@ test('hosted publish is owner scoped, same origin, exact reviewed receipt, and s
       artifactSha256: site.sha256, url: 'https://github.com/alice/smoke-site/tree/village-publish' };
   } });
   const handler = createHostedMayaHandler({ env, auth, publisher, coordinator: {}, enabled: true });
-  const body = { action: 'publishGithub', id, artifactSha256: site.sha256 };
+  const fingerprint = (await publisher.status('owner', id)).targets.github.fingerprint;
+  const body = { action: 'publishGithub', id, artifactSha256: site.sha256, targetFingerprint: fingerprint };
   assert.equal((await call(handler, 'viewer', body)).status, 403);
   assert.equal((await call(handler, 'other', body)).status, 404);
   assert.equal((await call(handler, 'owner', body, 'https://other.example')).status, 403);
@@ -80,15 +81,16 @@ test('hosted duplicate in flight or interrupted submission cannot create a secon
   const publisher = createHostedPublisher({ access, env, vercelPublisher: async () => { calls++; started(); await gate;
     return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_abcdef',
       url: 'https://smoke-site.vercel.app', state: 'QUEUED', artifactSha256: site.sha256 }; } });
-  const first = publisher.publish('owner', id, 'vercel', site.sha256);
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  const first = publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
   await entered;
-  const repeated = await publisher.publish('owner', id, 'vercel', site.sha256);
+  const repeated = await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint);
   assert.equal(repeated.status, 'submitting');
   assert.equal(calls, 1);
   assert.equal(read().events.filter(event => event.type === 'publish').length, 0);
   release();
   assert.equal((await first).status, 'submitted');
-  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256)).status, 'submitted');
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
   assert.equal(calls, 1);
   assert.equal(read().events.filter(event => event.type === 'publish').length, 1);
 });
@@ -97,8 +99,59 @@ test('hosted missing configuration and changed reviewed bytes fail before extern
   const { access, change } = fixture();
   let calls = 0;
   const publisher = createHostedPublisher({ access, env: { ...env, VILLAGE_PUBLISH_GITHUB_TOKEN: '' }, githubPublisher: async () => { calls++; } });
-  await assert.rejects(publisher.publish('owner', id, 'github', site.sha256), /not configured/);
+  const status = await publisher.status('owner', id);
+  await assert.rejects(publisher.publish('owner', id, 'github', site.sha256, status.targets.github.fingerprint), /not configured/);
   change(project => ({ ...project, files: { ...project.files, html: project.files.html + 'changed' } }));
-  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256), /Reviewed artifact receipt required/);
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, status.targets.vercel.fingerprint), /Reviewed artifact receipt required/);
   assert.equal(calls, 0);
+});
+
+test('a destination changed after status is shown is rejected before any claim or external write', async () => {
+  const { access, read } = fixture();
+  const settings = { ...env };
+  let calls = 0;
+  const publisher = createHostedPublisher({ access, env: settings, githubPublisher: async args => { calls++;
+    assert.equal(args.repo, 'other-site');
+    return { repository: 'alice/other-site', branch: 'village-publish', commitSha: 'c'.repeat(40),
+      artifactSha256: site.sha256, url: 'https://github.com/alice/other-site/tree/village-publish' };
+  } });
+  const displayed = (await publisher.status('owner', id)).targets.github.fingerprint;
+  settings.VILLAGE_PUBLISH_GITHUB_REPO = 'other-site';
+  await assert.rejects(publisher.publish('owner', id, 'github', site.sha256, displayed), /Publish target changed; refresh status/);
+  assert.equal(calls, 0);
+  assert.equal(read().publishing, undefined);
+  const fresh = (await publisher.status('owner', id)).targets.github.fingerprint;
+  assert.notEqual(fresh, displayed);
+  assert.equal((await publisher.publish('owner', id, 'github', site.sha256, fresh)).status, 'submitted');
+  assert.equal(calls, 1);
+});
+
+test('proven preflight failures release the durable claim; uncertain external results do not', async () => {
+  for (const service of ['github', 'vercel']) {
+    const { access, read } = fixture();
+    let calls = 0;
+    const options = { access, env,
+      githubPublisher: async () => { calls++; throw new Error('preflight rejected target'); },
+      vercelPublisher: async () => { calls++; throw new Error('preflight rejected target'); } };
+    const publisher = createHostedPublisher(options);
+    const fingerprint = (await publisher.status('owner', id)).targets[service].fingerprint;
+    await assert.rejects(publisher.publish('owner', id, service, site.sha256, fingerprint), /setup can be corrected and retried/);
+    assert.equal(read().publishing?.[service], undefined);
+    assert.equal(read().events.at(-1).type, 'publish_error');
+    await assert.rejects(publisher.publish('owner', id, service, site.sha256, fingerprint), /setup can be corrected and retried/);
+    assert.equal(calls, 2);
+  }
+  for (const service of ['github', 'vercel']) {
+    const { access, read } = fixture();
+    let calls = 0;
+    const failAfterAttempt = async options => { calls++;
+      await (service === 'github' ? options.onBeforeRefUpdate() : options.onBeforeSubmit());
+      throw new Error('external outcome unknown'); };
+    const publisher = createHostedPublisher({ access, env, githubPublisher: failAfterAttempt, vercelPublisher: failAfterAttempt });
+    const fingerprint = (await publisher.status('owner', id)).targets[service].fingerprint;
+    await assert.rejects(publisher.publish('owner', id, service, site.sha256, fingerprint), /external outcome unknown/);
+    assert.equal(read().publishing?.[service].status, 'submitting');
+    assert.equal((await publisher.publish('owner', id, service, site.sha256, fingerprint)).status, 'submitting');
+    assert.equal(calls, 1);
+  }
 });
