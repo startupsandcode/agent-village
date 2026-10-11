@@ -8,6 +8,7 @@ import { VillageEngine } from '../engine.mjs';
 import { createLocalServer } from '../server.mjs';
 import { artifactDigest, renderArtifact, verifyStaticSite } from '../artifact.mjs';
 import { exportProject } from '../export.mjs';
+import { readDomainProfile, saveDomainProfile } from '../domain.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
@@ -113,6 +114,37 @@ test('full mock flow creates an inspectable artifact and exact review receipt', 
   assert.equal((await engine.build(result.id, 'build-12345')).events.length, result.events.length);
   assert.equal(provider.calls.length, 4);
   await assert.rejects(engine.artifact(result.id, '../state.json'), /Artifact not found/);
+}));
+test('domain interview is saved locally, snapshotted, and shared with all three roles', async () => fixture(async root => {
+  const profile = { audience: 'Local gardeners', expertise: 'Native plants', rules: 'Use plain language' };
+  await saveDomainProfile(root, profile);
+  assert.deepEqual(await readDomainProfile(root), profile);
+  const provider = mockProvider();
+  const engine = new VillageEngine({ root, provider });
+  const result = await completed(engine);
+  assert.deepEqual(result.domainProfile, profile);
+  assert.match(result.events.find(event => event.type === 'context').message, /domain answers attached/);
+  for (const call of provider.calls) assert.deepEqual(JSON.parse(call.input).domainProfile, profile);
+  await saveDomainProfile(root, { ...profile, expertise: 'Changed after project' });
+  assert.deepEqual((await engine.get(result.id)).domainProfile, profile);
+  await assert.rejects(saveDomainProfile(root, { ...profile, audience: 'x'.repeat(501) }), /500 characters/);
+  await saveDomainProfile(root, { audience: '庭'.repeat(500), expertise: '庭'.repeat(500), rules: '庭'.repeat(500) });
+  assert.equal((await readDomainProfile(root)).audience.length, 500);
+}));
+test('domain profile containing the active key is blocked before any provider call', async () => fixture(async root => {
+  await saveDomainProfile(root, { audience: 'private-key', expertise: '', rules: '' });
+  const provider = mockProvider();
+  provider.containsSecret = value => String(value).includes('private-key');
+  const engine = new VillageEngine({ root, provider });
+  await assert.rejects(engine.create('Garden site', 'domain-secret-123'), /Do not put an API key in domain answers/);
+  assert.equal(provider.calls.length, 0);
+  const server = createLocalServer({ provider, setupRoot: root, engine });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/domain`);
+    assert.equal(response.status, 400);
+    assert.ok(!(await response.text()).includes('private-key'));
+  } finally { server.close(); }
 }));
 test('reviewed site exports a runnable, receipt-checked project without chat or keys', async () => fixture(async root => {
   const engine = new VillageEngine({ root, provider: mockProvider() });
@@ -331,7 +363,8 @@ test('cancellation during review-start save never invokes Quinn', async () => fi
   assert.ok(!result.events.some(event => event.type === 'review'));
 }));
 test('local HTTP reports missing configuration and enforces host and origin', async () => {
-  const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server' });
+  const root = await mkdtemp(join(tmpdir(), 'village-http-'));
+  const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -343,12 +376,20 @@ test('local HTTP reports missing configuration and enforces host and origin', as
     assert.match(await home.text(), /Who’s at their desk/);
     assert.equal((await fetch(`${base}/office-assets/styles.css`)).status, 200);
     assert.equal((await fetch(`${base}/office.js`)).status, 200);
-    assert.match(await (await fetch(`${base}/setup`)).text(), /Your first office and project/);
+    const setup = await fetch(`${base}/setup`);
+    assert.match(setup.headers.get('content-type'), /^text\/html/);
+    assert.match(await setup.text(), /Start on your computer/);
+    assert.match(await (await fetch(`${base}/setup.css`)).text(), /\.setup-shell/);
+    assert.deepEqual(await (await fetch(`${base}/api/domain`)).json(), { audience: '', expertise: '', rules: '' });
+    assert.equal((await fetch(`${base}/api/domain`, { method: 'POST', headers: { origin: 'https://wrong.example', 'content-type': 'application/json' }, body: JSON.stringify({ audience: 'Gardeners', expertise: '', rules: '' }) })).status, 403);
+    const savedDomain = await fetch(`${base}/api/domain`, { method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ audience: 'Gardeners', expertise: 'Native plants', rules: 'Plain language' }) });
+    assert.equal(savedDomain.status, 200);
+    assert.equal((await savedDomain.json()).expertise, 'Native plants');
     const denied = await fetch(`${base}/api/projects`, { method: 'POST', headers: { origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{}' });
     assert.equal(denied.status, 403);
     const config = await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.equal(config.status, 503);
-  } finally { server.close(); }
+  } finally { server.close(); await rm(root, { recursive: true, force: true }); }
 });
 test('first-run office name is saved locally without provider credentials', async () => fixture(async root => {
   const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root, officeName: '' });

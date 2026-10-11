@@ -4,7 +4,7 @@ This is the first portable Agent Village slice. A visitor gives Maya a plain-lan
 
 ## Start from a fresh clone
 
-You need Node.js 20 or newer, existing GitHub access to this private repository, and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. Four calls is the maximum in one completed project (clarification, plan, build, review). Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal.
+You need Node.js 20.12 or newer, existing GitHub access to this private repository, and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. Four calls is the maximum in one completed project (clarification, plan, build, review). Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal.
 
 ```sh
 git clone --branch village-interface-20261011-01 --single-branch https://github.com/startupsandcode/agent-village.git
@@ -13,7 +13,9 @@ cd agent-village
 
 While [draft PR #30](https://github.com/startupsandcode/agent-village/pull/30) is unmerged, the branch option above is required. After merge, a normal clone of `main` will contain the interface.
 
-In a local `zsh` terminal, choose **one** provider and enter the key at a silent prompt. Do not paste it into the browser, chat, a command line, a file, or a Git commit:
+In a local `zsh` terminal, choose **one** provider and enter the key at a silent prompt. Do not paste it into the browser, chat, a command line argument, a tracked file, or a Git commit:
+
+Alternatively, create a private `.env.local` file at the repository root with `VILLAGE_PROVIDER=openai` and `OPENAI_API_KEY=your-own-key` (or `VILLAGE_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=your-own-key`). Run `chmod 600 .env.local` before starting the server; startup rejects files readable by other local users. `node local/server.mjs` loads it at startup. Git ignores `.env.local`; keep the file private on your computer and never share it. Already exported shell variables take precedence. The setup guide at `/setup` explains both methods and the hosted Preview separately.
 
 ```sh
 export VILLAGE_PROVIDER=openai
@@ -29,7 +31,7 @@ The website preview is static and has a restrictive Content Security Policy. Sam
 
 ## Your first office and project
 
-1. Open the local page and enter a name in **Name your office**. The name is saved to ignored `local/.workspaces/office-setup.json` and stays on this computer. You may instead set `VILLAGE_OFFICE_NAME='My Village'` in the server shell to fix the name there. The Maya, Sam, and Quinn roles work without customization. No John account or project record is copied into a fresh clone.
+1. Open the local page and enter a name in **Name your office**. The name is saved to ignored `local/.workspaces/office-setup.json` and stays on this computer. You may instead set `VILLAGE_OFFICE_NAME='My Village'` in the server shell to fix the name there. Answer the three optional domain questions in the interface; they are saved to ignored `local/.workspaces/domain-profile.json`. New projects snapshot this context and pass it to Maya, Sam, and Quinn. Editing it later does not rewrite prior projects. Do not enter secrets or private customer data. No John account or project record is copied into a fresh clone.
 2. Choose OpenAI or Anthropic and enter **your own** key using the silent prompt above. A ChatGPT subscription is not an OpenAI API key. Do not add key values to the repository, a `.env.example`, chat, or browser storage.
 3. Open the local office, give Maya a small **static website** goal, answer the question, read the plan, then choose Build. The desks show only recorded current stages. Inspect the event trail, generated files and preview. The build runs structural and non-executable-content checks; Quinn separately reviews the exact HTML and CSS digest. This is a bounded static site path, not a general code executor.
 4. Once Quinn approves, choose **Prepare reviewed files**. The office displays the standalone project directory. It contains `index.html`, `styles.css`, a receipt-checking test, `package.json`, `.vercelignore`, and a README. It contains no chat history or provider key. In a terminal, change to that displayed directory and run `npm test`. The test checks the exact delivery file set and both file receipts; `.git` and `.vercel` are permitted local metadata and explicitly excluded from Vercel upload. Added files or directories fail the test and another Prepare request. Inspect the site before publishing.

@@ -13,6 +13,13 @@
 .start-steps ol { margin: 0 0 12px; padding-left: 25px; line-height: 1.6; }
 .start-steps li { margin: 5px 0; }
 .start-steps a { color: var(--teal); font-weight: 800; }
+.domain-interview { margin: 0 0 28px; padding: 25px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
+.domain-interview h2 { margin: 0 0 8px; }
+.domain-interview p { max-width: 760px; line-height: 1.5; }
+.domain-interview form { display: grid; gap: 9px; max-width: 760px; }
+.domain-interview label { margin-top: 8px; font-weight: 800; }
+.domain-interview textarea { width: 100%; padding: 11px 12px; border: 1px solid #8daaa8; border-radius: 8px; font: inherit; resize: vertical; }
+.domain-interview button { justify-self: start; padding: 11px 16px; border: 0; border-radius: 8px; background: var(--teal); color: white; font-weight: 800; cursor: pointer; }
 .chat, .activity { padding: 25px; margin: 0 0 48px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
 .chat h2, .activity h2 { margin-bottom: 14px; }
 .bubble { max-width: 760px; padding: 14px 17px; margin: 12px 0; border-radius: 12px; white-space: pre-wrap; line-height: 1.5; }

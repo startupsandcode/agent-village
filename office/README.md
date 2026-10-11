@@ -18,7 +18,7 @@ Set these **server-only** environment variables in the existing project for Prod
 | `OFFICE_ALLOWED_EMAILS` | Comma-separated, exact invited email addresses; compared without case on every private request |
 | `GITHUB_AGENT_TOKEN` | Existing server-only GitHub token with Issues read access (`GITHUB_ISSUES_TOKEN` takes precedence when set) |
 
-Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register a preview callback and deliberately adapt the server configuration before testing a preview sign-in.
+Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register the Preview's exact callback in your Vercel OAuth app and set its exact HTTPS origin in Preview-scoped `OFFICE_ALLOWED_ORIGINS` before testing. The public `/setup` page walks through this configuration.
 
 ## Production access checks
 

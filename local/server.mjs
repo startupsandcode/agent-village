@@ -8,6 +8,8 @@ import { VillageEngine } from './engine.mjs';
 import { exportProject } from './export.mjs';
 import { readOfficeSetup, saveOfficeSetup, validOfficeName } from './setup.mjs';
 import { inspectConnections } from './connections.mjs';
+import { loadLocalEnv } from './env.mjs';
+import { readDomainProfile, saveDomainProfile } from './domain.mjs';
 
 const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'office.js': 'text/javascript; charset=utf-8', 'office-data.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
@@ -53,6 +55,17 @@ export function createLocalServer({ provider, providerError, engine = provider &
         const value = await body(request);
         return send(response, 200, await saveOfficeSetup(setupRoot, value.name));
       }
+      if (path === '/api/domain' && request.method === 'GET') {
+        const profile = await readDomainProfile(setupRoot);
+        if (Object.values(profile).some(item => provider?.containsSecret?.(item))) return send(response, 400, { error: 'Do not put an API key in domain answers' });
+        return send(response, 200, profile);
+      }
+      if (path === '/api/domain' && request.method === 'POST') {
+        if (origin !== `http://${host}` || (request.headers['sec-fetch-site'] && request.headers['sec-fetch-site'] !== 'same-origin')) return send(response, 403, { error: 'Local origin required' });
+        const value = await body(request);
+        if (Object.values(value ?? {}).some(item => provider?.containsSecret?.(item))) return send(response, 400, { error: 'Do not put an API key in domain answers' });
+        return send(response, 200, await saveDomainProfile(setupRoot, value));
+      }
       if (path === '/api/connections') {
         if (request.method !== 'POST') return send(response, 405, { error: 'Method not allowed' });
         if (origin !== `http://${host}` || (request.headers['sec-fetch-site'] && request.headers['sec-fetch-site'] !== 'same-origin')) return send(response, 403, { error: 'Local origin required' });
@@ -86,21 +99,26 @@ export function createLocalServer({ provider, providerError, engine = provider &
         return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/css; charset=utf-8');
       }
       if (path === '/setup') {
-        const value = await readFile(join(here, 'README.md'));
-        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/plain; charset=utf-8');
+        const value = await readFile(join(here, '..', 'office', 'public', 'setup.html'));
+        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/html; charset=utf-8', { 'content-security-policy': "default-src 'self'; style-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
+      }
+      if (path === '/setup.css') {
+        const value = await readFile(join(here, '..', 'office', 'public', 'setup.css'));
+        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/css; charset=utf-8');
       }
       const name = path === '/' ? 'index.html' : path.slice(1);
       if (!Object.hasOwn(types, name)) return send(response, 404, { error: 'Not found' });
       const value = await readFile(join(publicDir, name));
       return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
-      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters)$/.test(error.message) ? error.message : 'Request failed';
+      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Do not put an API key in domain answers|Domain answers must be text under 500 characters each|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters)$/.test(error.message) ? error.message : 'Request failed';
       return send(response, safe === 'Request failed' ? 500 : 400, { error: safe });
     }
   });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await loadLocalEnv();
   let provider, providerError;
   try { provider = createProvider(); } catch (error) { providerError = error.message; }
   const server = createLocalServer({ provider, providerError });

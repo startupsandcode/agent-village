@@ -43,6 +43,25 @@ officeForm?.addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 
+const domainForm = document.querySelector('#domain-form');
+const domainFields = { audience: document.querySelector('#domain-audience'), expertise: document.querySelector('#domain-expertise'), rules: document.querySelector('#domain-rules') };
+if (domainForm) api('/api/domain').then(profile => {
+  for (const [name, field] of Object.entries(domainFields)) field.value = profile[name] || '';
+  if (Object.values(profile).some(Boolean)) setupState('domain', 'Saved for new projects.');
+}).catch(() => { document.querySelector('#domain-result').textContent = 'Could not load saved domain answers.'; });
+domainForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = domainForm.querySelector('button');
+  const result = document.querySelector('#domain-result');
+  button.disabled = true;
+  try {
+    const profile = await api('/api/domain', 'POST', Object.fromEntries(Object.entries(domainFields).map(([name, field]) => [name, field.value])));
+    setupState('domain', Object.values(profile).some(Boolean) ? 'Saved for new projects.' : 'No domain answers saved.');
+    result.textContent = 'Saved on this computer. New projects will use these answers.';
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+
 function bubble(kind, message) { const item = document.createElement('p'); item.className = `bubble ${kind}`; item.textContent = message; conversation.append(item); }
 function id() { return crypto.randomUUID(); }
 async function api(path, method = 'GET', data) {

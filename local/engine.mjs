@@ -4,8 +4,9 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './artifact.mjs';
 import { MAYA, PLAN, SAM, QUINN, validText, validPlan, validReview } from '../office/lib/project-roles.mjs';
+import { readDomainProfile } from './domain.mjs';
 
-function publicProject(project) { const { goal, answer, plan, status, events, id, createdAt, artifact } = project; return { id, goal, answer, plan, status, events, createdAt, artifact }; }
+function publicProject(project) { const { goal, answer, plan, status, events, id, createdAt, artifact, domainProfile } = project; return { id, goal, answer, plan, status, events, createdAt, artifact, domainProfile }; }
 
 export class VillageEngine {
   constructor({ root = new URL('./.workspaces/', import.meta.url), provider, now = () => new Date().toISOString() }) {
@@ -63,12 +64,15 @@ export class VillageEngine {
       catch { continue; }
       if (stored.requestId === requestId) return publicProject(await this.getInternal(entry.name));
     }
-    const project = { id: randomUUID(), requestId, goal: goal.trim(), answer: null, plan: null, status: 'clarifying', events: [], createdAt: this.now(), artifact: null };
+    const domainProfile = await readDomainProfile(this.root);
+    if (Object.values(domainProfile).some(value => this.provider.containsSecret?.(value))) throw new Error('Do not put an API key in domain answers');
+    const project = { id: randomUUID(), requestId, goal: goal.trim(), answer: null, plan: null, status: 'clarifying', events: [], createdAt: this.now(), artifact: null, domainProfile };
     this.projects.set(project.id, project);
+    if (Object.values(domainProfile).some(Boolean)) this.event(project, 'System', 'context', 'Saved domain answers attached to Maya, Sam, and Quinn for this project');
     this.event(project, 'Maya', 'start', 'Reading the project goal');
     await this.save(project);
     try {
-      const { result, usage } = await this.provider.generate({ system: MAYA, input: JSON.stringify({ goal }), signal: undefined });
+      const { result, usage } = await this.provider.generate({ system: MAYA, input: JSON.stringify({ goal, domainProfile }), signal: undefined });
       if (!validText(result.question, 300)) throw new Error('Maya returned an invalid question');
       project.status = 'needs_answer';
       this.event(project, 'Maya', 'question', result.question, { usage });
@@ -88,7 +92,7 @@ export class VillageEngine {
     this.event(project, 'User', 'answer', project.answer);
     await this.save(project);
     try {
-      const { result, usage } = await this.provider.generate({ system: PLAN, input: JSON.stringify({ goal: project.goal, answer: project.answer }) });
+      const { result, usage } = await this.provider.generate({ system: PLAN, input: JSON.stringify({ goal: project.goal, answer: project.answer, domainProfile: project.domainProfile }) });
       if (!validPlan(result)) throw new Error('Maya returned an invalid plan');
       project.plan = { summary: result.summary, audience: result.audience,
         acceptance: [...result.acceptance], decision: result.decision };
@@ -125,7 +129,7 @@ export class VillageEngine {
   }
   async runBuild(project, controller) {
     try {
-      const { result, usage } = await this.provider.generate({ system: SAM, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan }), signal: controller.signal });
+      const { result, usage } = await this.provider.generate({ system: SAM, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan, domainProfile: project.domainProfile }), signal: controller.signal });
       if (controller.signal.aborted) return;
       const artifact = renderArtifact(result);
       const dir = join(this.root, project.id);
@@ -145,7 +149,7 @@ export class VillageEngine {
       this.event(project, 'Quinn', 'start', `Reviewing the generated files at SHA-256 ${artifact.sha256}`);
       await this.save(project);
       if (controller.signal.aborted) return;
-      const review = await this.provider.generate({ system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, html, css, sha256: actualSha }), signal: controller.signal });
+      const review = await this.provider.generate({ system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, domainProfile: project.domainProfile, html, css, sha256: actualSha }), signal: controller.signal });
       if (controller.signal.aborted) return;
       const currentHtml = await readFile(join(dir, 'index.html'), 'utf8');
       const currentCss = await readFile(join(dir, 'styles.css'), 'utf8');
