@@ -1,6 +1,9 @@
 import { createAuth, officeOriginForHost } from '../lib/auth.mjs';
 
 const tables = ['village_projects', 'village_monthly_budget', 'village_budget_claims'];
+function safeIssue(error) {
+  return error?.code === '42P01' ? 'missing_table' : error?.code === '42501' ? 'permission_denied' : 'unavailable';
+}
 function send(response, status, value) {
   response.statusCode = status;
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -26,13 +29,13 @@ export function createMayaHealthHandler({ env = process.env, auth = createAuth({
         connectionTimeoutMillis: 5000, idleTimeoutMillis: 1000, query_timeout: 5000 });
       try {
         for (const table of tables) await pool.query(`SELECT 1 FROM ${table} LIMIT 0`);
-        let usageReady = false;
+        let usageReady = false; let usageIssue = null;
         try { await pool.query('SELECT 1 FROM village_provider_usage LIMIT 0'); usageReady = true; }
-        catch { /* additive 002 migration is still pending */ }
+        catch (error) { usageIssue = safeIssue(error); }
         let domainReady = false;
         try { await pool.query('SELECT 1 FROM village_domain_profiles LIMIT 0'); domainReady = true; }
         catch { /* additive 003 migration is still pending */ }
-        return send(response, 200, { ready: true, tables, usageReady, domainReady });
+        return send(response, 200, { ready: true, tables, usageReady, usageIssue, domainReady });
       } finally { await pool.end(); }
     } catch { return send(response, 503, { ready: false, error: 'Database schema or access is not ready' }); }
   };

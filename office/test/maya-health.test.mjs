@@ -62,6 +62,22 @@ test('003 database readiness is reported separately from the running 001 schema'
   assert.equal(result.value.domainReady, false);
 });
 
+test('health reports a safe category for a missing usage table or denied app role', async () => {
+  for (const [code, expected] of [['42P01', 'missing_table'], ['42501', 'permission_denied'], ['XX000', 'unavailable']]) {
+    class Pool {
+      async query(sql) { if (sql.includes('village_provider_usage')) throw Object.assign(new Error('private database detail'), { code }); return { rows: [] }; }
+      async end() {}
+    }
+    const result = await call(createMayaHealthHandler({ env, auth, PoolClass: Pool }), 'owner');
+    assert.equal(result.status, 200);
+    assert.equal(result.value.ready, true);
+    assert.equal(result.value.usageReady, false);
+    assert.equal(result.value.usageIssue, expected);
+    assert.equal(result.value.domainReady, true);
+    assert.ok(!JSON.stringify(result.value).includes('private database detail'));
+  }
+});
+
 test('database health does not leak connection errors and always closes the pool', async () => {
   let closed = 0;
   class Pool { async query() { throw new Error('database secret diagnostic'); } async end() { closed++; } }
