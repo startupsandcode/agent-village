@@ -12,6 +12,7 @@ const shapes = {
   publishStatus: ['action', 'id'],
   publishGithub: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
   publishVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
+  reconcileVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint', 'deletedDeploymentId', 'baselineDeploymentId'],
 };
 function send(response, status, value, type = 'application/json; charset=utf-8') {
   response.statusCode = status;
@@ -69,6 +70,11 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (body.action === 'publishGithub' || body.action === 'publishVercel') {
         if (!publishing) return send(response, 503, { error: 'Hosted publishing is not connected' });
         return send(response, 200, await publishing.publish(cookie, body.id, body.action === 'publishGithub' ? 'github' : 'vercel', body.artifactSha256, body.targetFingerprint));
+      }
+      if (body.action === 'reconcileVercel') {
+        if (!publishing) return send(response, 503, { error: 'Hosted publishing is not connected' });
+        return send(response, 200, await publishing.reconcileVercel(cookie, body.id, body.artifactSha256,
+          body.targetFingerprint, body.deletedDeploymentId, body.baselineDeploymentId));
       }
       const result = body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
         : body.action === 'start' ? await active.start(cookie, body.goal, body.requestId)

@@ -13,6 +13,7 @@ const publishTargets = document.querySelector('#hosted-publish-targets');
 const publishResult = document.querySelector('#hosted-publish-result');
 const publishGithub = document.querySelector('#hosted-publish-github');
 const publishVercel = document.querySelector('#hosted-publish-vercel');
+const publishReconcile = document.querySelector('#hosted-publish-reconcile');
 const publishRefresh = document.querySelector('#hosted-publish-refresh');
 const usageStatus = document.querySelector('#hosted-usage-status');
 const usageAgents = document.querySelector('#hosted-usage-agents');
@@ -163,6 +164,7 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
   targetFingerprints = null;
   publishGithub.hidden = true;
   publishVercel.hidden = true;
+  publishReconcile.hidden = true;
   try {
     const result = await request({ action: 'publishStatus', id });
     if (expectedEpoch !== epoch || project?.id !== id || sequence !== publishStatusSequence) return;
@@ -170,7 +172,8 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
     targetFingerprints = { github: github.fingerprint, vercel: vercel.fingerprint };
     publishTargets.textContent = `GitHub: ${github.owner && github.repo && github.branch ? `${github.owner}/${github.repo} · ${github.branch}` : 'not configured'}; Vercel Preview: ${vercel.team && vercel.project ? `${vercel.team}/${vercel.project}` : 'not configured'}. Reviewed SHA-256 ${result.artifactSha256}.`;
     publishGithub.hidden = !github.available || result.receipts.github != null;
-    publishVercel.hidden = !vercel.available || result.receipts.vercel != null;
+    publishVercel.hidden = !vercel.available || (result.receipts.vercel != null && result.receipts.vercel.status !== 'reconciled');
+    publishReconcile.hidden = !vercel.available || result.receipts.vercel?.status !== 'submitting';
     const lines = [];
     for (const service of ['github', 'vercel']) {
       const receipt = result.receipts[service];
@@ -178,7 +181,9 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
         ? `${service}: submission is uncertain. Inspect the configured target; automatic retry is blocked.`
         : receipt.status === 'needs_inspection'
           ? `${service}: unsafe ${receipt.receipt?.target ?? 'unknown'} deployment ${receipt.receipt?.deploymentId ?? 'unknown ID'}; inspect and remove if needed. Automatic retry is blocked.`
-          : `${service}: ${receipt.receipt?.commitSha ?? receipt.receipt?.deploymentId} · ${receipt.receipt?.state ?? 'commit recorded'}${receipt.receipt?.url ? ` · ${receipt.receipt.url}` : ''}`);
+          : receipt.status === 'reconciled'
+            ? `${service}: supplied deployment ID ${receipt.receipt?.deletedDeploymentId} is absent; protected baseline ${receipt.receipt?.baselineDeploymentId} retained. You may explicitly deploy Preview now.`
+            : `${service}: ${receipt.receipt?.commitSha ?? receipt.receipt?.deploymentId} · ${receipt.receipt?.state ?? 'commit recorded'}${receipt.receipt?.url ? ` · ${receipt.receipt.url}` : ''}`);
     }
     publishResult.textContent = lines.length ? lines.join('\n') : 'No publication has been requested.';
   } catch (error) { if (expectedEpoch === epoch && project?.id === id && sequence === publishStatusSequence) publishResult.textContent = error.message; }
@@ -211,6 +216,24 @@ async function publish(service) {
 }
 publishGithub?.addEventListener('click', () => publish('github'));
 publishVercel?.addEventListener('click', () => publish('vercel'));
+publishReconcile?.addEventListener('click', async () => {
+  if (!project || project.status !== 'reviewed' || publishReconcile.hidden || !targetFingerprints?.vercel) return;
+  const deletedDeploymentId = window.prompt('Enter the exact deleted Vercel deployment ID after verifying it is gone:');
+  if (!deletedDeploymentId) return;
+  const baselineDeploymentId = window.prompt('Enter the exact protected placeholder Production deployment ID:');
+  if (!baselineDeploymentId) return;
+  const id = project.id, expectedEpoch = epoch;
+  publishReconcile.disabled = true;
+  try {
+    await request({ action: 'reconcileVercel', id, artifactSha256: project.artifact.sha256,
+      targetFingerprint: targetFingerprints.vercel, deletedDeploymentId, baselineDeploymentId });
+    if (expectedEpoch !== epoch || project?.id !== id) return;
+    await loadPublishStatus(id, expectedEpoch);
+    const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (response.ok) render(await response.json(), expectedEpoch);
+  } catch (error) { if (expectedEpoch === epoch && project?.id === id) publishResult.textContent = error.message; }
+  finally { publishReconcile.disabled = false; }
+});
 publishRefresh?.addEventListener('click', () => { if (project?.id) loadPublishStatus(project.id); });
 async function act(action, values = {}) {
   if (busy) return;

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderArtifact } from '../lib/static-site.mjs';
 import { createHostedPublisher } from '../lib/hosted-publish.mjs';
-import { UnsafeVercelDeploymentError } from '../lib/publish-vercel.mjs';
+import { UnsafeVercelDeploymentError, deployReviewedPreview, verifyDeletedVercelAttempt } from '../lib/publish-vercel.mjs';
 import { createHostedMayaHandler } from '../api/maya-projects.mjs';
 
 const id = '11111111-1111-4111-8111-111111111111';
@@ -178,4 +178,126 @@ test('known unsafe Vercel target is recorded for inspection and never marked pub
   assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'needs_inspection');
   assert.equal(calls, 1);
   assert.ok(!JSON.stringify(read()).includes('mock-vercel-token'));
+});
+
+test('deleted uncertain Vercel attempt can be reconciled once against an inert baseline before retry', async () => {
+  const { access, read } = fixture();
+  const deletedDeploymentId = 'dpl_deleted123';
+  const baselineDeploymentId = 'dpl_baseline123';
+  let publishes = 0;
+  let verified = 0;
+  const publisher = createHostedPublisher({ access, env,
+    vercelPublisher: async args => { publishes++; if (publishes === 1) { await args.onBeforeSubmit(); throw new Error('unknown result'); }
+      return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_preview123',
+        url: 'https://smoke-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 }; },
+    deletionVerifier: async args => { verified++; assert.equal(args.deletedDeploymentId, deletedDeploymentId);
+      assert.equal(args.baselineDeploymentId, baselineDeploymentId); return { projectId: 'prj_abcdef', deletedDeploymentId, baselineDeploymentId }; },
+  });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /unknown result/);
+  assert.equal(read().publishing.vercel.status, 'submitting');
+  const handler = createHostedMayaHandler({ env, auth, publisher, coordinator: {}, enabled: true });
+  const body = { action: 'reconcileVercel', id, artifactSha256: site.sha256, targetFingerprint: fingerprint,
+    deletedDeploymentId, baselineDeploymentId };
+  assert.equal((await call(handler, 'viewer', body)).status, 403);
+  assert.equal((await call(handler, 'owner', body, 'https://other.example')).status, 403);
+  assert.equal((await call(handler, 'owner', { ...body, extra: 'x' })).status, 400);
+  await assert.rejects(publisher.reconcileVercel('other', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId), /Project not found/);
+  await assert.rejects(publisher.reconcileVercel('owner', id, site.sha256, 'f'.repeat(64), deletedDeploymentId, baselineDeploymentId), /target changed/);
+  assert.equal(publishes, 1);
+  const http = await call(handler, 'owner', body);
+  assert.equal(http.status, 200);
+  const result = http.value;
+  assert.equal(result.status, 'reconciled');
+  assert.equal(verified, 1);
+  assert.equal(read().events.at(-1).type, 'publish_reconciled');
+  assert.equal((await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, deletedDeploymentId, baselineDeploymentId)).status, 'reconciled');
+  assert.equal(verified, 1);
+  const changed = createHostedPublisher({ access, env: { ...env, VILLAGE_PUBLISH_VERCEL_PROJECT: 'different-site' },
+    vercelPublisher: async () => { publishes++; } });
+  const changedFingerprint = (await changed.status('owner', id)).targets.vercel.fingerprint;
+  await assert.rejects(changed.publish('owner', id, 'vercel', site.sha256, changedFingerprint), /target or reviewed receipt changed/);
+  assert.equal(publishes, 1);
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
+  assert.equal(publishes, 2);
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
+  assert.equal(publishes, 2);
+  assert.equal(read().events.filter(event => event.type === 'publish_reconciled').length, 1);
+});
+
+test('Vercel reconciliation checks protection, complete sole-baseline inventory, and deleted ID', async () => {
+  const old = 'dpl_deleted123', baseline = 'dpl_baseline123', projectId = 'prj_abcdef';
+  const args = { team: 'small-team', project: 'smoke-site', token: 'mock-vercel-token',
+    deletedDeploymentId: old, baselineDeploymentId: baseline };
+  let inventory = [{ uid: baseline, projectId, target: 'production', readyState: 'READY' }];
+  let bypass = null, oldStatus = 404;
+  const seen = [];
+  const fetchImpl = async (url, options) => {
+    seen.push(url);
+    assert.equal(options.headers.authorization, 'Bearer mock-vercel-token');
+    if (url.includes('/v9/projects/')) return { ok: true, json: async () => ({ id: projectId, name: 'smoke-site',
+      link: null, ssoProtection: { deploymentType: 'all' }, protectionBypass: bypass }) };
+    if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: inventory, pagination: { count: inventory.length } }) };
+    return { status: oldStatus };
+  };
+  assert.deepEqual(await verifyDeletedVercelAttempt({ ...args, fetchImpl }), { projectId,
+    deletedDeploymentId: old, baselineDeploymentId: baseline });
+  assert.equal(seen.length, 3);
+  inventory = [...inventory, { id: 'dpl_duplicate123', projectId, target: null, readyState: 'READY' }];
+  await assert.rejects(verifyDeletedVercelAttempt({ ...args, fetchImpl }), /inventory changed/);
+  inventory = inventory.slice(0, 1); oldStatus = 200;
+  await assert.rejects(verifyDeletedVercelAttempt({ ...args, fetchImpl }), /not verified deleted/);
+  oldStatus = 404; bypass = { unsafe: { scope: 'automation-bypass' } };
+  await assert.rejects(verifyDeletedVercelAttempt({ ...args, fetchImpl }), /target changed/);
+});
+
+test('reconciled Preview retry rechecks the sole baseline immediately before POST', async () => {
+  const calls = [];
+  let inventory = [{ uid: 'dpl_baseline123', projectId: 'prj_abcdef', target: 'production', state: 'READY' }];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, method: options.method ?? 'GET' });
+    if (url.includes('/v9/projects/')) return { ok: true, json: async () => ({ id: 'prj_abcdef', name: 'smoke-site',
+      framework: null, ssoProtection: { deploymentType: 'all' } }) };
+    if (url.includes('/v7/deployments') && url.includes('target=production')) return { ok: true, json: async () => ({ deployments: inventory.slice(0, 1) }) };
+    if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: inventory, pagination: { count: inventory.length } }) };
+    return { ok: true, json: async () => ({ id: 'dpl_preview123', url: 'smoke-preview.vercel.app', target: null, readyState: 'READY' }) };
+  };
+  const inputs = { engine: { get: async () => ({ status: 'reviewed', artifact: { sha256: site.sha256 } }),
+    artifact: async (_id, file) => file === 'index.html' ? site.html : site.css }, id, team: 'small-team', project: 'smoke-site',
+    token: 'mock-vercel-token', fetchImpl, expectedSoleBaselineId: 'dpl_baseline123' };
+  inventory = [...inventory, { uid: 'dpl_duplicate123', projectId: 'prj_abcdef', target: null, state: 'READY' }];
+  await assert.rejects(deployReviewedPreview(inputs), /inventory changed/);
+  assert.equal(calls.some(call => call.method === 'POST'), false);
+  inventory = inventory.slice(0, 1);
+  assert.equal((await deployReviewedPreview(inputs)).deploymentId, 'dpl_preview123');
+  assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+});
+
+test('failed reconciled preflight retains baseline constraint on every later retry', async () => {
+  const { access, read } = fixture();
+  let attempts = 0, externalWrites = 0, inventorySafe = false;
+  const publisher = createHostedPublisher({ access, env,
+    deletionVerifier: async () => ({ projectId: 'prj_abcdef', deletedDeploymentId: 'dpl_deleted123', baselineDeploymentId: 'dpl_baseline123' }),
+    vercelPublisher: async args => {
+      attempts++;
+      if (attempts === 1) { await args.onBeforeSubmit(); throw new Error('unknown result'); }
+      assert.equal(args.expectedSoleBaselineId, 'dpl_baseline123');
+      if (!inventorySafe) throw new Error('Vercel deployment inventory changed; manual inspection required');
+      await args.onBeforeSubmit(); externalWrites++;
+      return { team: 'small-team', project: 'smoke-site', projectId: 'prj_abcdef', deploymentId: 'dpl_preview123',
+        url: 'https://smoke-preview.vercel.app', state: 'READY', artifactSha256: site.sha256 };
+    },
+  });
+  const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /unknown result/);
+  await publisher.reconcileVercel('owner', id, site.sha256, fingerprint, 'dpl_deleted123', 'dpl_baseline123');
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /setup can be corrected and retried/);
+  assert.equal(read().publishing.vercel.status, 'reconciled');
+  assert.equal(externalWrites, 0);
+  await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /setup can be corrected and retried/);
+  assert.equal(read().publishing.vercel.status, 'reconciled');
+  assert.equal(externalWrites, 0);
+  inventorySafe = true;
+  assert.equal((await publisher.publish('owner', id, 'vercel', site.sha256, fingerprint)).status, 'submitted');
+  assert.equal(externalWrites, 1);
 });

@@ -1,7 +1,7 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
 import { createHash } from 'node:crypto';
 import { publishReviewedSite } from './publish-github.mjs';
-import { deployReviewedPreview, inspectPreviewDeployment, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
+import { deployReviewedPreview, inspectPreviewDeployment, verifyDeletedVercelAttempt, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
 
 const sha = /^[a-f0-9]{64}$/;
 const name = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -42,7 +42,8 @@ function publicReceipt(value) {
 }
 
 export function createHostedPublisher({ access, env, githubPublisher = publishReviewedSite,
-  vercelPublisher = deployReviewedPreview, deploymentInspector = inspectPreviewDeployment } = {}) {
+  vercelPublisher = deployReviewedPreview, deploymentInspector = inspectPreviewDeployment,
+  deletionVerifier = verifyDeletedVercelAttempt } = {}) {
   if (!access || !env) throw new Error('Hosted publishing dependencies required');
   async function read(cookie, id) {
     const record = await access.read(cookie, id);
@@ -50,6 +51,32 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
     return record;
   }
   return {
+    async reconcileVercel(cookie, id, expectedSha, displayedFingerprint, deletedDeploymentId, baselineDeploymentId) {
+      const configured = target(env, 'vercel');
+      if (!sha.test(displayedFingerprint ?? '') || displayedFingerprint !== configured.fingerprint) throw new Error('Publish target changed; refresh status');
+      if (!configured.available) throw new Error('Vercel publishing is not configured');
+      const current = await read(cookie, id);
+      reviewed(current, expectedSha);
+      const previous = current.snapshot.publishing?.vercel;
+      if (previous?.artifactSha256 !== expectedSha || JSON.stringify(previous?.target) !== JSON.stringify(configured)) {
+        throw new Error('Publish target or reviewed receipt changed');
+      }
+      if (previous.status === 'reconciled' && previous.receipt?.deletedDeploymentId === deletedDeploymentId &&
+          previous.receipt?.baselineDeploymentId === baselineDeploymentId) return publicReceipt(previous);
+      if (previous.status !== 'submitting') throw new Error('Only an uncertain Vercel submission can be reconciled');
+      const receipt = await deletionVerifier({ team: configured.team, project: configured.project,
+        token: env.VILLAGE_PUBLISH_VERCEL_TOKEN, deletedDeploymentId, baselineDeploymentId });
+      if (receipt.deletedDeploymentId !== deletedDeploymentId || receipt.baselineDeploymentId !== baselineDeploymentId ||
+          !/^prj_[A-Za-z0-9_-]{4,80}$/.test(receipt.projectId ?? '')) throw new Error('Vercel deletion evidence changed');
+      const next = structuredClone(current.snapshot);
+      next.publishing.vercel = { ...previous, status: 'reconciled', receipt };
+      next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish_reconciled',
+        message: `Operator-supplied Vercel deployment ${deletedDeploymentId} is absent; protected inert baseline ${baselineDeploymentId} is the sole deployment. A new explicit Preview submission is permitted.`,
+        receiptId: deletedDeploymentId, artifactSha256: expectedSha });
+      const saved = await access.update(cookie, { id, expectedVersion: current.version, snapshot: next });
+      if (!saved) throw new Error('Publish claim changed; inspect status');
+      return publicReceipt(next.publishing.vercel);
+    },
     async status(cookie, id) {
       const record = await read(cookie, id);
       const project = record.snapshot;
@@ -66,14 +93,17 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       const configured = target(env, service);
       if (!sha.test(displayedFingerprint ?? '') || displayedFingerprint !== configured.fingerprint) throw new Error('Publish target changed; refresh status');
       if (!configured.available) throw new Error(`${service === 'github' ? 'GitHub' : 'Vercel'} publishing is not configured`);
-      let claim, captured;
+      let claim, captured, expectedSoleBaselineId = null, priorReconciled = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         const current = await read(cookie, id);
         const project = reviewed(current, expectedSha);
         const existing = project.publishing?.[service];
         if (existing) {
           if (existing.artifactSha256 !== expectedSha || JSON.stringify(existing.target) !== JSON.stringify(configured)) throw new Error('Publish target or reviewed receipt changed');
-          return publicReceipt(existing);
+          if (existing.status !== 'reconciled') return publicReceipt(existing);
+          expectedSoleBaselineId = existing.receipt?.baselineDeploymentId;
+          if (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(expectedSoleBaselineId ?? '')) throw new Error('Reconciliation baseline missing');
+          priorReconciled = existing;
         }
         captured = { html: project.files.html, css: project.files.css, sha256: expectedSha };
         const next = structuredClone(project);
@@ -96,6 +126,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
             onBeforeRefUpdate: () => { externalUpdateAttempted = true; } })
           : await vercelPublisher({ engine: { get: async () => ({ status: 'reviewed', artifact: { sha256: expectedSha } }), artifact: async (_id, file) => file === 'index.html' ? captured.html : captured.css },
             id, team: configured.team, project: configured.project, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN,
+            expectedSoleBaselineId,
             onBeforeSubmit: () => { externalUpdateAttempted = true; } });
       } catch (error) {
         if (service === 'vercel' && externalUpdateAttempted && error instanceof UnsafeVercelDeploymentError) {
@@ -118,7 +149,8 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
           const previous = current.snapshot.publishing?.[service];
           if (previous?.status !== 'submitting' || previous.startedAt !== claim.startedAt) break;
           const next = structuredClone(current.snapshot);
-          delete next.publishing[service];
+          if (priorReconciled) next.publishing[service] = priorReconciled;
+          else delete next.publishing[service];
           next.events.push({ at: new Date().toISOString(), agent: 'System', type: 'publish_error',
             message: service === 'github' ? 'GitHub publish stopped before a branch update was attempted; inspect the target and retry.'
               : 'Vercel publish stopped before a deployment request was attempted; inspect the target and retry.' });
