@@ -30,6 +30,14 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
       (selected.framework !== null && selected.framework !== undefined) ||
       ['rootDirectory', 'buildCommand', 'installCommand', 'outputDirectory', 'devCommand', 'commandForIgnoringBuildStep', 'ignoreCommand']
         .some(key => selected[key] != null && selected[key] !== '')) throw new Error('Vercel target must be an existing static project at its root with no Git link or custom build settings');
+  // Vercel assigns a project's first deployment to production even when target is omitted.
+  const history = await request(fetchImpl,
+    `/v7/deployments?projectId=${encodeURIComponent(selected.id)}&target=production&limit=1&slug=${encodeURIComponent(team)}`, token);
+  const prior = history?.deployments?.[0];
+  if (prior?.projectId !== selected.id || prior?.target !== 'production' ||
+      (prior?.readyState ?? prior?.state) !== 'READY') {
+    throw new Error('Vercel Preview requires an existing production deployment; no upload was attempted');
+  }
   await onBeforeSubmit({ team, project, projectId: selected.id, artifactSha256: record.artifact.sha256 });
   const deployment = await request(fetchImpl, `/v13/deployments${query}`, token, { method: 'POST', body: JSON.stringify({
     name: project,
@@ -38,6 +46,7 @@ export async function deployReviewedPreview({ engine, id, team, project, token, 
       { file: 'index.html', data: Buffer.from(html).toString('base64'), encoding: 'base64' },
       { file: 'styles.css', data: Buffer.from(css).toString('base64'), encoding: 'base64' },
     ],
+    autoAssignCustomDomains: false,
     projectSettings: { framework: null, buildCommand: '' },
     meta: { villageProjectId: id, villageArtifactSha256: record.artifact.sha256 },
   }) });

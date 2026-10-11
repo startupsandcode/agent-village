@@ -9,6 +9,7 @@ const inputs = { engine, id: '00000000-0000-4000-8000-000000000001', team: 'smal
 function fakeFetch(calls) { return async (url, options) => {
   calls.push({ url, options });
   if (options.method === 'POST') return { ok: true, json: async () => ({ id: 'dpl_abcdef1234', url: 'small-site-abc.vercel.app', target: null, readyState: 'QUEUED' }) };
+  if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: [{ id: 'dpl_existing123', projectId: 'prj_abcdef1234', target: 'production', state: 'READY' }] }) };
   return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null, rootDirectory: null }) };
 }; }
 
@@ -18,18 +19,31 @@ test('Preview upload is explicit, scoped to an existing static project, and cont
   const result = await deployReviewedPreview({ ...inputs, fetchImpl: fakeFetch(calls), onBeforeSubmit: target => { stages.push({ target, count: calls.length }); } });
   assert.equal(result.url, 'https://small-site-abc.vercel.app');
   assert.equal(result.state, 'QUEUED');
-  assert.equal(calls.length, 2);
-  assert.equal(stages[0].count, 1);
+  assert.equal(calls.length, 3);
+  assert.equal(stages[0].count, 2);
   assert.equal(stages[0].target.projectId, 'prj_abcdef1234');
   assert.match(calls[0].url, /\/v9\/projects\/small-site\?slug=small-team$/);
-  assert.match(calls[1].url, /\/v13\/deployments\?slug=small-team$/);
-  const sent = JSON.parse(calls[1].options.body);
+  assert.match(calls[1].url, /\/v7\/deployments\?projectId=prj_abcdef1234&target=production&limit=1&slug=small-team$/);
+  assert.match(calls[2].url, /\/v13\/deployments\?slug=small-team$/);
+  const sent = JSON.parse(calls[2].options.body);
   assert.equal(sent.project, 'prj_abcdef1234');
   assert.equal(sent.target, undefined);
+  assert.equal(sent.autoAssignCustomDomains, false);
   assert.deepEqual(sent.projectSettings, { framework: null, buildCommand: '' });
   assert.deepEqual(sent.files.map(file => file.file), ['index.html', 'styles.css']);
   assert.equal(Buffer.from(sent.files[0].data, 'base64').toString(), '<h1>Reviewed</h1>');
   assert.ok(!JSON.stringify(sent).includes(inputs.token));
+});
+
+test('an empty Vercel project cannot receive a first deployment through the Preview action', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (url.includes('/v7/deployments')) return { ok: true, json: async () => ({ deployments: [] }) };
+    return { ok: true, json: async () => ({ id: 'prj_abcdef1234', name: 'small-site', framework: null }) };
+  };
+  await assert.rejects(deployReviewedPreview({ ...inputs, fetchImpl }), /existing production deployment/);
+  assert.deepEqual(calls.map(call => call.options.method ?? 'GET'), ['GET', 'GET']);
 });
 
 test('wrong target and unreviewed site cause no deployment write', async () => {
