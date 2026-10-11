@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { createProvider } from './providers.mjs';
 import { VillageEngine } from './engine.mjs';
 import { exportProject } from './export.mjs';
+import { readOfficeSetup, saveOfficeSetup, validOfficeName } from './setup.mjs';
+import { inspectConnections } from './connections.mjs';
 
 const here = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'office.js': 'text/javascript; charset=utf-8', 'office-data.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
@@ -19,7 +21,8 @@ async function body(request) {
   for await (const chunk of request) { raw += chunk; if (raw.length > 4096) throw new Error('Request too large'); }
   try { return JSON.parse(raw); } catch { throw new Error('Invalid JSON'); }
 }
-export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME } = {}) {
+export function createLocalServer({ provider, providerError, engine = provider && new VillageEngine({ provider }), publicDir = join(here, 'public'), officeName = process.env.VILLAGE_OFFICE_NAME, setupRoot = engine?.root ?? join(here, '.workspaces'), connectionInspector = inspectConnections } = {}) {
+  const fixedOfficeName = validOfficeName(officeName) ? officeName.trim() : '';
   return createServer(async (request, response) => {
     const host = request.headers.host ?? '';
     if (!/^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/.test(host)) return send(response, 403, { error: 'Local host required' });
@@ -28,7 +31,16 @@ export function createLocalServer({ provider, providerError, engine = provider &
     let path;
     try { path = new URL(request.url, `http://${host}`).pathname; } catch { return send(response, 400, { error: 'Bad path' }); }
     try {
-      if (path === '/api/status' && request.method === 'GET') return send(response, 200, { ready: !!engine, provider: provider?.name ?? null, model: provider?.model ?? null, error: providerError ?? null, officeName: typeof officeName === 'string' && officeName.trim().length <= 60 ? officeName.trim() : '' });
+      if (path === '/api/status' && request.method === 'GET') {
+        const setup = await readOfficeSetup(setupRoot);
+        return send(response, 200, { ready: !!engine, provider: provider?.name ?? null, model: provider?.model ?? null, error: providerError ?? null, officeName: fixedOfficeName || setup.name, officeNameEditable: !fixedOfficeName });
+      }
+      if (path === '/api/setup' && request.method === 'POST') {
+        if (fixedOfficeName) return send(response, 409, { error: 'Office name is set by the server environment' });
+        const value = await body(request);
+        return send(response, 200, await saveOfficeSetup(setupRoot, value.name));
+      }
+      if (path === '/api/connections') return request.method === 'GET' ? send(response, 200, await connectionInspector()) : send(response, 405, { error: 'Method not allowed' });
       if (path.startsWith('/api/')) {
         if (!engine) return send(response, 503, { error: providerError ?? 'Provider not configured' });
         if (path === '/api/projects' && request.method === 'POST') {
@@ -65,7 +77,7 @@ export function createLocalServer({ provider, providerError, engine = provider &
       const value = await readFile(join(publicDir, name));
       return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
-      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing)$/.test(error.message) ? error.message : 'Request failed';
+      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters)$/.test(error.message) ? error.message : 'Request failed';
       return send(response, safe === 'Request failed' ? 500 : 400, { error: safe });
     }
   });

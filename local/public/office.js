@@ -5,6 +5,7 @@ const board = document.querySelector('#task-list');
 const count = document.querySelector('#active-count');
 const caption = document.querySelector('#active-caption');
 const sync = document.querySelector('#task-sync');
+let requestPending = null;
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -41,8 +42,9 @@ function render(project) {
   }));
   count.textContent = String(data.activeCount);
   caption.textContent = data.activeCount === 1 ? 'agent has a recorded stage in progress' : 'agents have recorded stages in progress';
-  sync.textContent = project ? `Project ${project.id.slice(0, 8)} · ${project.status}` : 'Waiting for a project';
+  sync.textContent = requestPending ?? (project ? `Project ${project.id.slice(0, 8)} · ${project.status}` : 'Waiting for a project');
 }
 
 window.addEventListener('village-project', event => render(event.detail));
+window.addEventListener('village-request', event => { requestPending = event.detail; render(window.villageProject ?? null); });
 render(window.villageProject ?? null);

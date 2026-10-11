@@ -15,6 +15,37 @@ class Element {
 }
 function response(value) { return { ok: true, json: async () => value }; }
 
+test('waiting for Maya is visible without inventing an active desk or result', async () => {
+  const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#request-state', '#build', '#cancel', '#new-project', '#artifact'];
+  const elements = Object.fromEntries(names.map(name => [name, new Element(name)]));
+  elements['#chat-form'].name = 'form';
+  elements['#chat-form'].button = new Element('button');
+  let complete;
+  const waiting = new Promise(resolve => { complete = resolve; });
+  const notices = [];
+  const context = {
+    window: { dispatchEvent(event) { if (event.type === 'village-request') notices.push(event.detail); } },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+    document: { querySelector: name => elements[name], createElement: name => new Element(name) },
+    sessionStorage: { setItem() {}, getItem: () => null, removeItem() {} },
+    crypto: { randomUUID: () => 'request-12345' },
+    fetch: path => path === '/api/status' ? Promise.resolve(response({ ready: true, provider: 'mock', model: 'fixture' })) : waiting,
+    setInterval: () => {}, Date,
+  };
+  runInNewContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  elements['#message'].value = 'Garden club website';
+  const submit = elements['#chat-form'].handlers.submit({ preventDefault() {} });
+  assert.match(elements['#request-state'].textContent, /Waiting for Maya’s recorded clarification/);
+  assert.equal(elements['#request-state'].hidden, false);
+  assert.equal(elements['#events'].childElementCount, 0);
+  assert.equal(notices.length, 1);
+  complete(response({ id: 'a20d0a90-3476-4dd7-a903-b2b829394828', goal: 'Garden club website', status: 'needs_answer', artifact: null, events: [{ at: '2026-10-11T10:00:00Z', agent: 'Maya', type: 'question', message: 'Who is it for?' }] }));
+  await submit;
+  assert.equal(elements['#request-state'].hidden, true);
+  assert.equal(notices.at(-1), null);
+});
+
 test('late answer response cannot resurrect a project after Start another project', async () => {
   const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#build', '#cancel', '#new-project', '#artifact', '#export', '#export-path', '#publish-status'];
   const elements = Object.fromEntries(names.map(name => [name, new Element(name)]));

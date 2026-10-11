@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProvider } from '../providers.mjs';
@@ -112,7 +112,7 @@ test('reviewed site exports a runnable, receipt-checked project without chat or 
   const output = await exportProject(engine, result.id);
   assert.equal(output.sha256, result.artifact.sha256);
   assert.equal((await exportProject(engine, result.id)).path, output.path);
-  const files = await Promise.all(['index.html', 'styles.css', 'verify.test.mjs', 'package.json', 'README.md'].map(name => readFile(join(output.path, name), 'utf8')));
+  const files = await Promise.all(['index.html', 'styles.css', 'verify.test.mjs', 'package.json', 'README.md', '.vercelignore'].map(name => readFile(join(output.path, name), 'utf8')));
   assert.ok(files.every(value => !value.includes('OPENAI_API_KEY') && !value.includes('ANTHROPIC_API_KEY')));
   const tested = await execFileAsync(process.execPath, ['verify.test.mjs'], { cwd: output.path });
   assert.match(tested.stdout + tested.stderr, /pass 1/);
@@ -120,6 +120,29 @@ test('reviewed site exports a runnable, receipt-checked project without chat or 
   await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
   await writeFile(join(output.path, 'index.html'), await engine.artifact(result.id, 'index.html'));
   await rm(join(output.path, 'verify.test.mjs'));
+  await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
+}));
+test('export rejects extra delivery files and test discovery stays pinned', async () => fixture(async root => {
+  const engine = new VillageEngine({ root, provider: mockProvider() });
+  const result = await completed(engine);
+  const output = await exportProject(engine, result.id);
+  assert.equal(JSON.parse(await readFile(join(output.path, 'package.json'), 'utf8')).scripts.test, 'node --test verify.test.mjs');
+  await writeFile(join(output.path, 'extra.test.mjs'), "throw new Error('extra test executed')\n");
+  await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.NODE_TEST_CONTEXT;
+  const rejected = await execFileAsync(process.execPath, ['--test', 'verify.test.mjs'], { cwd: output.path, env: cleanEnv }).then(() => null, error => error);
+  assert.ok(rejected);
+  assert.match(rejected.stdout, /fail 1/);
+  assert.doesNotMatch(rejected.stdout + rejected.stderr, /extra test executed/);
+  await rm(join(output.path, 'extra.test.mjs'));
+  await mkdir(join(output.path, 'assets'));
+  await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
+  await rm(join(output.path, 'assets'), { recursive: true });
+  await mkdir(join(output.path, '.git'));
+  await mkdir(join(output.path, '.vercel'));
+  assert.equal((await exportProject(engine, result.id)).path, output.path);
+  await writeFile(join(output.path, '.vercelignore'), 'changed');
   await assert.rejects(exportProject(engine, result.id), /Prepared project changed/);
 }));
 test('static site verification rejects executable and remote resources', () => {
@@ -319,6 +342,48 @@ test('local HTTP reports missing configuration and enforces host and origin', as
     assert.equal(config.status, 503);
   } finally { server.close(); }
 });
+test('first-run office name is saved locally without provider credentials', async () => fixture(async root => {
+  const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root, officeName: '' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (name, origin = base) => fetch(`${base}/api/setup`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+  try {
+    assert.equal((await (await fetch(`${base}/api/status`)).json()).officeName, '');
+    assert.equal((await post('Wrong', 'https://example.com')).status, 403);
+    assert.equal((await post('<script>')).status, 400);
+    assert.equal((await post('Maple Village')).status, 200);
+    const status = await (await fetch(`${base}/api/status`)).json();
+    assert.equal(status.officeName, 'Maple Village');
+    assert.equal(status.ready, false);
+    assert.equal(JSON.parse(await readFile(join(root, 'office-setup.json'), 'utf8')).name, 'Maple Village');
+    assert.equal((await readFile(join(root, 'office-setup.json'), 'utf8')).includes('API_KEY'), false);
+  } finally { server.close(); }
+}));
+test('invalid fixed office name does not block local first-run naming', async () => fixture(async root => {
+  const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root, officeName: 'x'.repeat(61) });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const status = await (await fetch(`${base}/api/status`)).json();
+    assert.equal(status.officeName, '');
+    assert.equal(status.officeNameEditable, true);
+    assert.equal((await fetch(`${base}/api/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'My Village' }) })).status, 200);
+  } finally { server.close(); }
+}));
+test('local connection status is read-only and available before a provider key', async () => fixture(async root => {
+  let inspected = 0;
+  const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server', setupRoot: root,
+    connectionInspector: async () => { inspected++; return { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } }; } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const result = await (await fetch(`${base}/api/connections`)).json();
+    assert.deepEqual(result, { github: { state: 'connected', account: 'learner' }, vercel: { state: 'unavailable' } });
+    assert.equal(inspected, 1);
+    assert.equal((await fetch(`${base}/api/connections`, { method: 'POST' })).status, 405);
+    assert.equal(inspected, 1);
+  } finally { server.close(); }
+}));
 test('local HTTP completes the mock project and serves only approved artifact paths', async () => fixture(async root => {
   const engine = new VillageEngine({ root, provider: mockProvider() });
   const server = createLocalServer({ provider: { name: 'mock', model: 'deterministic' }, engine });

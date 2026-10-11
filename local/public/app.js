@@ -10,6 +10,11 @@ const artifact = document.querySelector('#artifact');
 const exportButton = document.querySelector('#export');
 const exportPath = document.querySelector('#export-path');
 const publishStatus = document.querySelector('#publish-status');
+const connectionButton = document.querySelector('#connections');
+const connectionStatus = document.querySelector('#connection-status');
+const firstRun = document.querySelector('#first-run');
+const officeForm = document.querySelector('#office-form');
+const requestState = document.querySelector('#request-state');
 let project = null;
 let busy = false;
 let lastEventCount = 0;
@@ -17,6 +22,24 @@ let pendingMessage = null;
 let pendingBuildId = null;
 let simulated = false;
 let conversationEpoch = 0;
+function pendingRequest(message) {
+  if (requestState) { requestState.hidden = !message; requestState.textContent = message ?? ''; }
+  window.dispatchEvent(new CustomEvent('village-request', { detail: message }));
+}
+
+officeForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const input = document.querySelector('#office-input');
+  const result = document.querySelector('#office-setup-result');
+  const button = officeForm.querySelector('button');
+  button.disabled = true;
+  try {
+    const saved = await api('/api/setup', 'POST', { name: input.value });
+    document.querySelector('#office-name').textContent = saved.name;
+    firstRun.hidden = true;
+  } catch (error) { result.textContent = error.message; }
+  finally { button.disabled = false; }
+});
 
 function bubble(kind, message) { const item = document.createElement('p'); item.className = `bubble ${kind}`; item.textContent = message; conversation.append(item); }
 function id() { return crypto.randomUUID(); }
@@ -70,6 +93,7 @@ form.addEventListener('submit', async event => {
   busy = true; form.querySelector('button').disabled = true;
   const epoch = conversationEpoch;
   const action = project ? 'answer' : 'create';
+  pendingRequest(action === 'create' ? 'Goal sent. Waiting for Maya’s recorded clarification.' : 'Answer sent. Waiting for Maya’s recorded plan.');
   if (!pendingMessage || pendingMessage.message !== message || pendingMessage.action !== action) {
     pendingMessage = { message, action, requestId: id() };
   }
@@ -82,17 +106,28 @@ form.addEventListener('submit', async event => {
     pendingMessage = null;
   }
   catch (error) { if (epoch !== conversationEpoch) return; bubble('system', error.message); if (error.message === 'Do not put an API key in chat') pendingMessage = null; else field.value = message; }
-  finally { if (epoch === conversationEpoch) { busy = false; if (!project) form.querySelector('button').disabled = false; else display(project); } }
+  finally { if (epoch === conversationEpoch) { pendingRequest(null); busy = false; if (!project) form.querySelector('button').disabled = false; else display(project); } }
 });
 build.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { pendingBuildId ??= id(); const result = await api(`/api/projects/${projectId}/build`, 'POST', { requestId: pendingBuildId }); if (epoch !== conversationEpoch) return; display(result); pendingBuildId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
 cancel.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}/cancel`, 'POST'); if (epoch === conversationEpoch) display(result); } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
-exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; publishStatus.textContent = 'Reviewed files prepared locally. Run the project test, then connect your own GitHub and Vercel accounts using the setup guide.'; } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
-newProject.addEventListener('click', () => { conversationEpoch++; sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before preparing a repository. Account connections and deployment are not active in this office.'; newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
+exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Run the project test, then connect your own GitHub and Vercel accounts using the setup guide.'; } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
+connectionButton?.addEventListener('click', async () => {
+  const epoch = conversationEpoch;
+  connectionButton.disabled = true;
+  try {
+    const result = await api('/api/connections');
+    if (epoch !== conversationEpoch) return;
+    connectionStatus.textContent = `GitHub: ${result.github?.state === 'connected' ? `signed in as ${result.github.account}` : 'not verified'} · Vercel: ${result.vercel?.state === 'connected' ? `signed in as ${result.vercel.account}` : 'not verified'}. This does not grant publishing access.`;
+  } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
+  finally { connectionButton.disabled = false; }
+});
+newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before preparing a repository. Publishing has not been requested.'; newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); });
 setInterval(async () => { if (project && (['clarifying', 'planning', 'building', 'reviewing'].includes(project.status) || project.artifact)) { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}`); if (epoch === conversationEpoch && project?.id === projectId) display(result); } catch {} } }, 1000);
 const initialEpoch = conversationEpoch;
 api('/api/status').then(async value => {
   const officeName = document.querySelector('#office-name');
   if (officeName && value.officeName) officeName.textContent = value.officeName;
+  if (firstRun) firstRun.hidden = Boolean(value.officeName) || value.officeNameEditable === false;
   simulated = value.provider === 'mock';
   provider.textContent = simulated ? 'SIMULATED PROVIDER FOR QA · Responses are deterministic fixtures; no live model calls.' : value.ready ? `Server ready · ${value.provider} · ${value.model}. API use may incur provider charges.` : `Setup needed: ${value.error}. Set the key in your shell, then restart this server.`;
   if (!value.ready) form.querySelector('button').disabled = true;

@@ -13,10 +13,22 @@ test('hosted Maya status denies anonymous access and never returns a configured 
   assert.equal(anonymous.statusCode, 401);
   const invited = response(); handler({ method: 'GET', headers: { cookie: 'valid' } }, invited);
   assert.equal(invited.statusCode, 200);
-  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerConfigured: true, officeName: '', runAvailable: false, reason: 'Hosted runs need a private durable project store and isolated executor. The local office can run now.' });
+  assert.deepEqual(JSON.parse(invited.body), { provider: 'openai', providerKeyPresent: true, officeName: '', runAvailable: false, reason: 'Hosted runs need a private durable project store and isolated executor. The local office can run now.', setup: {
+    viewerSignIn: 'connected', provider: 'key_present_unverified', durableProjects: 'not_connected', isolatedExecutor: 'not_connected', githubPublishing: 'not_connected', vercelPublishing: 'not_connected',
+  } });
   assert.ok(!invited.body.includes(secret));
   const head = response(); handler({ method: 'HEAD', headers: { cookie: 'valid' } }, head);
   assert.equal(head.body, undefined);
+});
+test('hosted setup remains blocked when only a provider key and publishing tokens are configured', () => {
+  const handler = createMayaStatusHandler({ env: { VILLAGE_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'fake', GITHUB_AGENT_TOKEN: 'fake', VERCEL_TOKEN: 'fake' }, auth: { authorize: () => ({ status: 200 }) } });
+  const result = response(); handler({ method: 'GET', headers: {} }, result);
+  const status = JSON.parse(result.body);
+  assert.equal(status.runAvailable, false);
+  assert.equal(status.setup.provider, 'key_present_unverified');
+  assert.equal(status.setup.githubPublishing, 'not_connected');
+  assert.equal(status.setup.vercelPublishing, 'not_connected');
+  assert.ok(!result.body.includes('fake'));
 });
 test('cloned hosted office does not inherit the original issue board without its own repository setting', async () => {
   let calls = 0;

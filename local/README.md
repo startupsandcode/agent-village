@@ -29,10 +29,11 @@ The website preview is static and has a restrictive Content Security Policy. Sam
 
 ## Your first office and project
 
-1. Choose your office name in the same shell before starting: `export VILLAGE_OFFICE_NAME='My Village'`. This changes the local office branding; the Maya, Sam, and Quinn roles work without customization. No John account or project record is copied into a fresh clone.
+1. Open the local page and enter a name in **Name your office**. The name is saved to ignored `local/.workspaces/office-setup.json` and stays on this computer. You may instead set `VILLAGE_OFFICE_NAME='My Village'` in the server shell to fix the name there. The Maya, Sam, and Quinn roles work without customization. No John account or project record is copied into a fresh clone.
 2. Choose OpenAI or Anthropic and enter **your own** key using the silent prompt above. A ChatGPT subscription is not an OpenAI API key. Do not add key values to the repository, a `.env.example`, chat, or browser storage.
 3. Open the local office, give Maya a small **static website** goal, answer the question, read the plan, then choose Build. The desks show only recorded current stages. Inspect the event trail, generated files and preview. The build runs structural and non-executable-content checks; Quinn separately reviews the exact HTML and CSS digest. This is a bounded static site path, not a general code executor.
-4. Once Quinn approves, choose **Prepare reviewed files**. The office displays the standalone project directory. It contains `index.html`, `styles.css`, a receipt-checking test, `package.json`, and a README. It contains no chat history or provider key. In a terminal, change to that displayed directory and run `npm test`. Inspect the site before publishing.
+4. Once Quinn approves, choose **Prepare reviewed files**. The office displays the standalone project directory. It contains `index.html`, `styles.css`, a receipt-checking test, `package.json`, `.vercelignore`, and a README. It contains no chat history or provider key. In a terminal, change to that displayed directory and run `npm test`. The test checks the exact delivery file set and both file receipts; `.git` and `.vercel` are permitted local metadata and explicitly excluded from Vercel upload. Added files or directories fail the test and another Prepare request. Inspect the site before publishing.
+5. **Check my local connections** reads the existing `gh` and `vercel` CLI account names with read-only commands. It sends neither the provider key nor chat history to those commands. A reported sign-in does not establish repository write or deployment permission. The office does not publish for you.
 
 ### Put the reviewed site in your own GitHub and Vercel accounts
 
@@ -45,23 +46,23 @@ gh auth login --web             # only if your own GitHub CLI is not already con
 gh auth status
 gh api user --jq .login         # confirm the account that will own the repository
 git init -b main
-git add index.html styles.css verify.test.mjs package.json README.md
+git add index.html styles.css verify.test.mjs package.json README.md .vercelignore
 git commit -m 'Initial reviewed website'
 gh repo create YOUR-USER/YOUR-SITE --private --source=. --remote=origin --push
 vercel login                   # sign in to your own Vercel account if needed
 vercel whoami
 vercel link                    # choose the intended team and project
 vercel project inspect --non-interactive
-vercel deploy                  # preview; verify the returned URL and target
+vercel deploy                  # first deploy of a new project is production; later ones default to preview
 ```
 
-The `gh repo create` command is a **new private repository** path. For an existing repository, inspect its remote and history before choosing your own push commands. Do not run the example with `YOUR-USER/YOUR-SITE` literally. A Vercel preview can still be reachable by anyone with its URL unless you configure deployment protection. Production release is a separate deliberate action. The interface itself never executes these commands or claims their result. [GitHub CLI repository creation](https://cli.github.com/manual/gh_repo_create) and [Vercel deploy](https://vercel.com/docs/cli/deploy) describe the current CLI actions.
+The `gh repo create` command is a **new private repository** path. For an existing repository, inspect its remote and history before choosing your own push commands. Do not run the example with `YOUR-USER/YOUR-SITE` literally. Check Vercel's target carefully: its [CLI documentation](https://vercel.com/docs/cli/deploying-from-cli) says a new project's first deployment is production, even without `--prod`. A later deployment without `--prod` is a preview. A preview can still be reachable by anyone with its URL unless you configure deployment protection. The interface itself never executes these commands or claims their result. [GitHub CLI repository creation](https://cli.github.com/manual/gh_repo_create) and [Vercel deploy](https://vercel.com/docs/cli/deploy) describe the CLI actions.
 
 ### Hosted private office
 
-The existing Vercel office uses application-level Sign in with Vercel and an invited-email list. A clone must configure its **own** confidential Vercel OAuth app, exact `OFFICE_ALLOWED_ORIGINS`, invited emails, session signing secret, and server-only provider key. See `office/.env.example` for variable names and `office/README.md` for the auth flow. Enter values in your own Vercel project's secret environment settings, never in Git. The new `/api/maya-status` route applies the same session authorization and reports whether the provider is configured without returning its key.
+The existing Vercel office uses application-level Sign in with Vercel and an invited-email list. A clone must configure its **own** confidential Vercel OAuth app, exact `OFFICE_ALLOWED_ORIGINS`, invited emails, session signing secret, and server-only provider key. See `office/.env.example` for variable names and `office/README.md` for the auth flow. Enter values in your own Vercel project's secret environment settings, never in Git. The new `/api/maya-status` route applies the same session authorization and reports only whether a provider key is present, without returning or validating it.
 
-Hosted Maya runs are **not available yet**. This local engine persists projects in ignored files, which do not survive Vercel function cold starts or redeploys. An authenticated, owner-scoped durable store and an isolated build executor are required before exposing hosted chat, build, artifact, or deployment routes. The hosted office says so rather than offering a button that cannot work. A signed-in viewer is not authorized to spend API credits, publish to GitHub, or deploy.
+Hosted Maya runs are **not available yet**. This local engine persists projects in ignored files, which do not survive Vercel function cold starts or redeploys. The planned hosted path stores owner-scoped project state, event receipts, idempotency keys and exact artifact bytes in a transactional Postgres store; the existing Vercel OAuth `sub` is the owner key. A separate [Vercel Sandbox](https://vercel.com/docs/sandbox) would execute bounded build jobs, with strict time, file and network limits. The application must enforce authorization before every read/write and verify artifacts on retrieval; prompt instructions alone cannot do this. Neither store nor executor adapter is connected in this PR, so hosted chat/build stays disabled regardless of environment variables. GitHub and Vercel publishing need separate, scoped user authorization and explicit target confirmation; the current Vercel viewer sign-in grants neither. John must choose and provision a database, Sandbox billing/credentials, his own OAuth callback and allowed origin, and enter his own provider key in server-only Vercel secrets before a paid hosted test. No value is entered by this PR.
 
 The existing Astra Lab worker in `village/` and the hosted Village Office have separate purposes and credentials. This local slice does not run them or submit issues, PRs, messages, or deployments. The first artifact type is a small landing page; broader coding work needs a separate bounded design and tool permissions.
 

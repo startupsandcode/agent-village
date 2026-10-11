@@ -176,7 +176,19 @@ fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
   const status = await response.json();
   const officeName = document.querySelector('#office-name');
   if (officeName && status.officeName) officeName.textContent = status.officeName;
-  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} provider ${status.providerConfigured ? 'configured server-side' : 'key not configured'}. ${status.reason}`;
+  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : 'OpenAI'} ${status.providerKeyPresent ? 'key present server-side, not verified with the provider' : 'key missing'}. ${status.reason}`;
+  const list = document.querySelector('#maya-setup-list');
+  if (list && status.setup) {
+    const labels = [
+      ['viewerSignIn', 'Private viewer sign-in'],
+      ['provider', 'Server-side provider key'],
+      ['durableProjects', 'Owner-scoped project and file storage'],
+      ['isolatedExecutor', 'Isolated bounded build executor'],
+      ['githubPublishing', 'GitHub publishing connection'],
+      ['vercelPublishing', 'Vercel publishing connection'],
+    ];
+    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : 'not connected'}`)));
+  }
 }).catch(() => { const readiness = document.querySelector('#maya-readiness'); if (readiness) readiness.textContent = 'Hosted run setup is unavailable.'; });
 renderAgents();
 refresh();
