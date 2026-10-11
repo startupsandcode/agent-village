@@ -12,6 +12,7 @@ let project = null;
 let pending = null;
 let busy = false;
 let epoch = 0;
+let restoringPoll = false;
 
 async function request(body) {
   const response = await fetch('/api/maya-projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -102,6 +103,24 @@ another?.addEventListener('click', () => {
   build.hidden = true; review.hidden = true; cancel.hidden = true; another.hidden = true;
   state.textContent = 'Describe a new small website.'; message.focus();
 });
+// A function may keep working after a tab reload. Read its durable stage until
+// the stored result arrives; a duplicate clarify action must not start a call.
+setInterval(async () => {
+  if (busy || restoringPoll || !project || !['clarifying', 'planning', 'building', 'reviewing'].includes(project.status)) return;
+  restoringPoll = true;
+  const thisEpoch = epoch;
+  const id = project.id;
+  try {
+    const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (thisEpoch === epoch && !busy && project?.id === id && (result.version !== project.version || result.status !== project.status)) {
+      render(result);
+      state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
+    }
+  } catch { /* next interval can retry a status read */ }
+  finally { restoringPoll = false; }
+}, 2000);
 fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
   if (!response.ok) return;
   const status = await response.json();

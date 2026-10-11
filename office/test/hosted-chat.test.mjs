@@ -45,3 +45,34 @@ test('hosted chat exposes Cancel while a clarification request is in flight', as
   await submit;
   assert.equal(get('#hosted-cancel').hidden, true);
 });
+
+test('a reloaded hosted chat observes an existing clarification result', async () => {
+  const elements = new Map();
+  const intervals = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '',
+      addEventListener() {}, querySelector() { return { disabled: false, textContent: '' }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  const clarifying = { id: 'project-1', version: 1, status: 'clarifying', events: [], artifact: null };
+  let current = clarifying;
+  let clarifyPosts = 0;
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (options.method === 'POST') { clarifyPosts++; return reply(clarifying); }
+    return reply(current);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(get('#hosted-cancel').hidden, false);
+  assert.equal(clarifyPosts, 1); // the route reports the existing run
+  current = { ...clarifying, version: 2, status: 'needs_answer', events: [{ agent: 'Maya', type: 'question', message: 'Who is it for?' }] };
+  await intervals.get(2000)();
+  assert.equal(get('#hosted-message').disabled, false);
+  assert.equal(get('#hosted-cancel').hidden, true);
+  assert.match(get('#hosted-request-state').textContent, /needs answer/);
+});
