@@ -148,6 +148,7 @@ export class VillageEngine {
       project.status = 'reviewing';
       this.event(project, 'Quinn', 'start', `Reviewing the generated files at SHA-256 ${artifact.sha256}`);
       await this.save(project);
+      if (controller.signal.aborted) return;
       const review = await this.provider.generate({ system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, html, css, sha256: actualSha }), signal: controller.signal });
       if (controller.signal.aborted) return;
       const currentHtml = await readFile(join(dir, 'index.html'), 'utf8');

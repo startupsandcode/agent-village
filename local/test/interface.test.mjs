@@ -209,6 +209,29 @@ test('cancellation during the initial build save never starts Sam or restores bu
   assert.equal(JSON.parse(await readFile(join(root, first.id, 'state.json'), 'utf8')).status, 'cancelled');
   assert.equal(provider.calls.length, 2);
 }));
+test('cancellation during review-start save never invokes Quinn', async () => fixture(async root => {
+  const provider = mockProvider();
+  const engine = new VillageEngine({ root, provider });
+  const first = await engine.create('Garden website', 'request-12345');
+  await engine.answer(first.id, 'Neighbors', 'answer-12345');
+  let releaseSave, saveStarted;
+  const gate = new Promise(resolve => { releaseSave = resolve; });
+  const entered = new Promise(resolve => { saveStarted = resolve; });
+  const originalSave = engine.save.bind(engine);
+  engine.save = async project => {
+    if (project.status === 'reviewing') { saveStarted(); await gate; }
+    return originalSave(project);
+  };
+  await engine.build(first.id, 'build-12345');
+  await entered;
+  await engine.cancel(first.id);
+  releaseSave();
+  for (let i = 0; i < 100 && engine.running.has(first.id); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const result = await engine.get(first.id);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(provider.calls.length, 3);
+  assert.ok(!result.events.some(event => event.type === 'review'));
+}));
 test('local HTTP reports missing configuration and enforces host and origin', async () => {
   const server = createLocalServer({ providerError: 'Missing OPENAI_API_KEY on the server' });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
