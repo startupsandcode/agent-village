@@ -181,7 +181,7 @@ test('known unsafe Vercel target is recorded for inspection and never marked pub
 });
 
 test('deleted uncertain Vercel attempt can be reconciled once against an inert baseline before retry', async () => {
-  const { access, read } = fixture();
+  const { access, read, change } = fixture();
   const deletedDeploymentId = 'dpl_deleted123';
   const baselineDeploymentId = 'dpl_baseline123';
   let publishes = 0;
@@ -197,6 +197,12 @@ test('deleted uncertain Vercel attempt can be reconciled once against an inert b
   const fingerprint = (await publisher.status('owner', id)).targets.vercel.fingerprint;
   await assert.rejects(publisher.publish('owner', id, 'vercel', site.sha256, fingerprint), /unknown result/);
   assert.equal(read().publishing.vercel.status, 'submitting');
+  // Hosted JSONB storage can reorder object keys when the durable claim is read back.
+  change(project => {
+    project.publishing.vercel.target = Object.fromEntries(
+      Object.entries(project.publishing.vercel.target).sort(([left], [right]) => left.localeCompare(right)));
+    return project;
+  });
   const old = (await publisher.status('owner', id)).receipts.vercel;
   clock += 16 * 60_000;
   const handler = createHostedMayaHandler({ env, auth, publisher, coordinator: {}, enabled: true });

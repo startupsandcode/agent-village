@@ -14,6 +14,11 @@ function sameAttempt(previous, claim) {
   return previous?.status === 'submitting' && previous.attemptId === claim.attemptId && previous.startedAt === claim.startedAt;
 }
 
+function sameTarget(saved, configured) {
+  return saved && Object.keys(saved).length === Object.keys(configured).length &&
+    Object.keys(configured).every(key => Object.hasOwn(saved, key) && saved[key] === configured[key]);
+}
+
 function target(env, service) {
   if (service === 'github') {
     const { VILLAGE_PUBLISH_GITHUB_OWNER: owner, VILLAGE_PUBLISH_GITHUB_REPO: repo,
@@ -65,7 +70,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
       const current = await read(cookie, id);
       reviewed(current, expectedSha);
       const previous = current.snapshot.publishing?.vercel;
-      if (previous?.artifactSha256 !== expectedSha || JSON.stringify(previous?.target) !== JSON.stringify(configured)) {
+      if (previous?.artifactSha256 !== expectedSha || !sameTarget(previous?.target, configured)) {
         throw new Error('Publish target or reviewed receipt changed');
       }
       if (previous.startedAt !== attemptStartedAt || (previous.attemptId ?? null) !== attemptId) {
@@ -113,7 +118,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
         const project = reviewed(current, expectedSha);
         const existing = project.publishing?.[service];
         if (existing) {
-          if (existing.artifactSha256 !== expectedSha || JSON.stringify(existing.target) !== JSON.stringify(configured)) throw new Error('Publish target or reviewed receipt changed');
+          if (existing.artifactSha256 !== expectedSha || !sameTarget(existing.target, configured)) throw new Error('Publish target or reviewed receipt changed');
           if (existing.status !== 'reconciled') return publicReceipt(existing);
           expectedSoleBaselineId = existing.receipt?.baselineDeploymentId;
           if (!/^dpl_[A-Za-z0-9_-]{4,80}$/.test(expectedSoleBaselineId ?? '')) throw new Error('Reconciliation baseline missing');
