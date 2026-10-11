@@ -8,6 +8,12 @@ import { createHostedMayaHandler } from '../api/maya-projects.mjs';
 import { createNeonHostedRuntime } from '../lib/neon-runtime.mjs';
 import { artifactDigest } from '../lib/static-site.mjs';
 import { usageReceipt } from '../lib/usage.mjs';
+import { MAYA } from '../lib/project-roles.mjs';
+
+test('Maya clarification instructions name the required question field', () => {
+  assert.match(MAYA, /exactly one key: question/);
+  assert.match(MAYA, /at most 300 characters/);
+});
 
 const env = { OFFICE_ALLOWED_ORIGINS: 'https://office.example', OFFICE_RUN_ALLOWED_EMAILS: 'owner@example.com' };
 const auth = { authorize: cookie => cookie === 'owner' ? { status: 200, sub: 'owner-sub', email: 'owner@example.com' }
