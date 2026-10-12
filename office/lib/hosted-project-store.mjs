@@ -51,12 +51,12 @@ export function createHostedProjectStore({ query }) {
     },
     async recentStages({ ownerSub, since }) {
       if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) throw new Error('Invalid activity cutoff');
-      const result = await query(`SELECT id, snapshot->>'goal' AS goal,
+      const result = await query(`SELECT DISTINCT ON (snapshot->>'status') id, snapshot->>'goal' AS goal,
         snapshot->>'status' AS status, snapshot->>'stageStartedAt' AS stage_started_at
         FROM village_projects WHERE owner_sub = $1
         AND snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing')
         AND snapshot->>'stageStartedAt' >= $2
-        ORDER BY snapshot->>'stageStartedAt' DESC LIMIT 100`, [owner(ownerSub), since]);
+        ORDER BY snapshot->>'status', snapshot->>'stageStartedAt' DESC`, [owner(ownerSub), since]);
       return result.rows.map(row => ({ id: row.id, goal: row.goal, status: row.status, stageStartedAt: row.stage_started_at }));
     },
     async create({ ownerSub, id, requestId, snapshot }) {
