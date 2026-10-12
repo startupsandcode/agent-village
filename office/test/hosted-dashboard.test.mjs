@@ -9,7 +9,7 @@ const createdId = '6ba7b812-9dad-41d1-80b4-00c04fd430c8';
 const reply = value => ({ ok: true, json: async () => value });
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); };
 
-function page({ hash = '', failList = false, delayedStart = false, failDetail = null } = {}) {
+function page({ hash = '', failList = false, delayedStart = false, failDetail = null, summaryOverrides = null } = {}) {
   const elements = new Map();
   const requests = [];
   const location = { hash };
@@ -27,7 +27,7 @@ function page({ hash = '', failList = false, delayedStart = false, failDetail = 
       focus() { this.focused = true; } };
   }
   const get = name => { if (!elements.has(name)) elements.set(name, element(name)); return elements.get(name); };
-  const summaries = [
+  const summaries = summaryOverrides ?? [
     { id: firstId, goal: 'Build the current garden site', status: 'building', latestAgent: 'Sam',
       latestMessage: 'Creating the site', updatedAt: '2026-10-12T01:00:00Z' },
     { id: secondId, goal: 'Finished welcome site', status: 'reviewed', latestAgent: 'Quinn',
@@ -88,6 +88,45 @@ test('dashboard is the default and orders visible project cards before the Villa
   assert.match(cards[0].attributes['aria-label'], /current garden site/);
   assert.equal(cards[1].href, `#project/${secondId}`);
   assert.deepEqual(ui.requests.map(([type]) => type), ['list']);
+});
+
+test('blocked projects show a clear reason and action; reviewed means review passed', async () => {
+  const ui = page({ summaryOverrides: [
+    { id: firstId, goal: 'Broken garden site', status: 'blocked', latestAgent: 'Maya',
+      latestMessage: 'Project requires intervention', updatedAt: '2026-10-12T01:00:00Z' },
+    { id: secondId, goal: 'Finished welcome site', status: 'reviewed', latestAgent: 'Quinn',
+      latestMessage: 'Reviewed the files', updatedAt: '2026-10-12T02:00:00Z' },
+  ] });
+  await ui.run();
+  const [blocked, reviewed] = ui.get('#project-list').children;
+  assert.match(blocked.className, /is-blocked/);
+  assert.match(blocked.children[0].children[1].textContent, /⚠ Blocked/);
+  assert.match(blocked.children[1].textContent, /Project requires intervention/);
+  assert.match(blocked.children[2].textContent, /inspect and resolve/);
+  assert.match(blocked.attributes['aria-label'], /Blocked/);
+  assert.equal(reviewed.children[0].children[1].textContent, 'Review passed');
+  assert.match(reviewed.children[2].textContent, /check publication status/);
+  const css = await readFile(new URL('../public/office-assets/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.project-card\.is-blocked \{ border: 2px solid/);
+  assert.match(css, /\.project-badge\.is-blocked \{ background:/);
+});
+
+test('question failures and interruptions use warning cards; a requested answer stays distinct', async () => {
+  const ui = page({ summaryOverrides: [
+    { id: firstId, goal: 'Failed question', status: 'question_error', latestAgent: 'Maya',
+      latestMessage: 'Maya could not ask a valid question', updatedAt: '2026-10-12T01:00:00Z' },
+    { id: secondId, goal: 'Interrupted build', status: 'interrupted', latestMessage: '', updatedAt: '2026-10-12T02:00:00Z' },
+    { id: createdId, goal: 'Awaiting answer', status: 'needs_answer', latestAgent: 'Maya',
+      latestMessage: 'Who is it for?', updatedAt: '2026-10-12T03:00:00Z' },
+  ] });
+  await ui.run();
+  const [failed, interrupted, needsAnswer] = ui.get('#project-list').children;
+  assert.match(failed.className, /is-blocked/);
+  assert.match(failed.children[0].children[1].textContent, /Maya question failed/);
+  assert.match(interrupted.className, /is-blocked/);
+  assert.equal(interrupted.children[1].textContent, 'Reason not recorded.');
+  assert.doesNotMatch(needsAnswer.className, /is-blocked/);
+  assert.equal(needsAnswer.children[0].children[1].textContent, 'Maya needs your answer');
 });
 
 test('a project opens its real detail and the back control restores the dashboard', async () => {
