@@ -120,7 +120,8 @@ test('hosted provider error preserves reported tokens without claiming a success
   } };
   const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider, usage });
   const result = await coordinator.create('owner', 'Garden website', 'create-error-1');
-  assert.equal(result.status, 'blocked');
+  assert.equal(result.status, 'question_error');
+  assert.equal(result.retryQuestionAvailable, true);
   assert.equal(result.events.at(-1).type, 'error');
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].state, 'measured');
