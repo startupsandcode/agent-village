@@ -92,7 +92,7 @@ function renderHostedActivity(activity) {
     if (recent) {
       const detail = node('div', 'agent-detail');
       detail.append(node('span', '', `Started ${timeLabel(report.stageStartedAt)}`));
-      if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(report.projectId)) {
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(report.projectId)) {
         const link = node('a', '', 'View project');
         link.href = `#project/${report.projectId}`;
         detail.append(link);
@@ -109,8 +109,8 @@ function renderHostedActivity(activity) {
     : 'hosted project activity unavailable';
 }
 
-function renderAgents(agents = [], checkinsConfigured = true) {
-  if (!checkinsConfigured) { renderHostedActivity(arguments[2]); return; }
+function renderAgents(agents = [], checkinsConfigured = true, activity = null) {
+  if (!checkinsConfigured) { renderHostedActivity(activity); return; }
   const byName = new Map(Array.isArray(agents) ? agents.map((agent) => [agent.name, agent]) : []);
   grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name), checkinsConfigured)));
   if (!checkinsConfigured) {
