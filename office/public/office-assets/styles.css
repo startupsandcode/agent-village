@@ -157,11 +157,17 @@ main { display: flex; flex-direction: column; }
 .project-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 14px; }
 .project-card { display: block; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: white; text-decoration: none; }
 .project-card:hover, .project-card:focus-visible { border-color: var(--teal); background: #f2f9f5; }
+.project-card.is-blocked { border: 2px solid #a83b30; background: #fff0e9; }
+.project-card.is-blocked:hover, .project-card.is-blocked:focus-visible { border-color: #7d241f; background: #ffe5db; }
 .project-card-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; }
 .project-card strong { flex: 1 1 190px; color: var(--ink); font-size: 18px; line-height: 1.35; overflow-wrap: anywhere; }
 .project-badge { display: inline-block; padding: 5px 9px; border-radius: 999px; background: #e9eeee; color: var(--ink); font-size: 12px; font-weight: 800; }
 .project-badge.is-active { background: #d9eee6; color: #175d4e; }
+.project-badge.is-blocked { background: #8d2c25; color: white; }
 .project-card p { margin: 15px 0 12px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+.project-card.is-blocked p { color: #5b2521; }
+.project-card-next { display: block; margin: 0 0 12px; color: var(--ink); font-size: 13px; font-weight: 800; }
+.project-card.is-blocked .project-card-next { color: #7d241f; }
 .project-card small { color: var(--muted); font-weight: 600; }
 #project-load-more { margin-top: 18px; }
 .project-back { margin-bottom: 20px; background: transparent !important; color: var(--teal) !important; border: 1px solid var(--line) !important; }
