@@ -37,8 +37,9 @@ test('hosted chat exposes Cancel while a clarification request is in flight', as
     sessionStorage, crypto: { randomUUID: () => 'request-12345' }, setInterval: () => 1, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(get('#hosted-chat').hidden, false);
-  get('#hosted-message').value = 'Garden website';
-  const submit = listeners.get('#hosted-chat-form:submit')({ preventDefault() {} });
+  listeners.get('#project-create-open:click')();
+  get('#hosted-create-goal').value = 'Garden website';
+  const submit = listeners.get('#hosted-create-form:submit')({ preventDefault() {} });
   await started;
   assert.equal(get('#hosted-cancel').hidden, false);
   await listeners.get('#hosted-cancel:click')();
@@ -82,6 +83,7 @@ test('usage completes in the hosted panel after a cancelled provider call', asyn
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }), createTextNode: text => ({ textContent: text }) },
     fetch, sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
     crypto: { randomUUID: () => 'request-12345' },
     setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
@@ -119,6 +121,7 @@ test('a reloaded hosted chat observes an existing clarification result', async (
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
     sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
     setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(get('#hosted-cancel').hidden, false);
@@ -155,6 +158,7 @@ test('an older status read cannot replace a newer cancellation result', async ()
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
     sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
     setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   const pendingRead = intervals.get(2000)();
@@ -190,6 +194,7 @@ test('an in-flight stage poll cannot restore a stage after Cancel', async () => 
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
     sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
     setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   const pendingRead = intervals.get(500)();
@@ -216,6 +221,7 @@ test('hosted preview links to sibling reviewed artifact files', async () => {
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) },
     fetch: async url => reply(url === '/api/maya-status' ? { runAvailable: true } : url === '/api/maya-domain' ? { audience: '', expertise: '', rules: '' } : url.startsWith('/api/maya-usage') ? {} : reviewed),
     sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
     setInterval: () => 1, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   const [, link, frame] = get('#hosted-artifact').children;
@@ -254,6 +260,7 @@ test('older hosted publish status cannot replace a newer receipt', async () => {
   const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
   runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
     sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
     setInterval: () => 1, clearInterval() {} });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(statusCalls, 1);

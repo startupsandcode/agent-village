@@ -1,4 +1,22 @@
 const chat = document.querySelector('#hosted-chat');
+const dashboard = document.querySelector('#project-dashboard');
+const projectList = document.querySelector('#project-list');
+const projectListStatus = document.querySelector('#project-list-status');
+const loadMore = document.querySelector('#project-load-more');
+const createOpen = document.querySelector('#project-create-open');
+const createView = document.querySelector('#project-create');
+const createBack = document.querySelector('#project-create-back');
+const createForm = document.querySelector('#hosted-create-form');
+const createGoal = document.querySelector('#hosted-create-goal');
+const createState = document.querySelector('#hosted-create-state');
+const detailView = document.querySelector('#project-detail');
+const detailBack = document.querySelector('#project-detail-back');
+const detailTitle = document.querySelector('#project-detail-title');
+const detailMeta = document.querySelector('#project-detail-meta');
+const progress = document.querySelector('#project-progress');
+const planPanel = document.querySelector('#project-plan');
+const team = document.querySelector('#project-team');
+const globalOffice = document.querySelector('#global-office');
 const form = document.querySelector('#hosted-chat-form');
 const message = document.querySelector('#hosted-message');
 const state = document.querySelector('#hosted-request-state');
@@ -36,6 +54,13 @@ let lastUsageSignature = '';
 let usagePending = false;
 let usagePendingSince = 0;
 let domainVersion = 0;
+let savedDomainVersion = 0;
+let view = 'dashboard';
+let selectedProjectId = null;
+let listOffset = 0;
+let listSequence = 0;
+let listLoadError = false;
+let createAttempt = null;
 for (const field of Object.values(domainFields)) field?.addEventListener('input', () => {
   domainVersion++; domainResult.textContent = 'Unsaved changes. Save before starting a new project.';
 });
@@ -49,6 +74,7 @@ async function loadDomain() {
     if (!response.ok) throw new Error(value.error ?? 'Domain answers unavailable');
     if (version !== domainVersion) return;
     for (const [name, field] of Object.entries(domainFields)) field.value = value[name] ?? '';
+    savedDomainVersion = version;
     domainResult.textContent = Object.values(value).some(Boolean) ? 'Saved domain answers loaded.' : 'Optional: add your domain answers before starting a project.';
   } catch { if (version === domainVersion) domainResult.textContent = 'Domain answers could not be loaded. New projects are unavailable until setup is ready.'; }
 }
@@ -64,6 +90,7 @@ domainForm?.addEventListener('submit', async event => {
     if (!response.ok) throw new Error(value.error ?? 'Domain answers unavailable');
     if (version === domainVersion) {
       for (const [name, field] of Object.entries(domainFields)) field.value = value[name];
+      savedDomainVersion = version;
       domainResult.textContent = 'Saved for new projects. Current projects keep their earlier answers.';
     }
   } catch (error) { if (version === domainVersion) domainResult.textContent = error.message; }
@@ -121,6 +148,123 @@ async function request(body) {
   if (!response.ok) throw new Error(value.error ?? 'Project request failed');
   return value;
 }
+const projectHash = /^#project\/([A-Za-z0-9-]{1,80})$/;
+const workingStatuses = new Set(['clarifying', 'needs_answer', 'planning', 'ready', 'building', 'awaiting_review', 'reviewing']);
+function showView(next) {
+  view = next;
+  dashboard.hidden = next !== 'dashboard';
+  createView.hidden = next !== 'create';
+  detailView.hidden = next !== 'detail';
+  if (globalOffice) globalOffice.hidden = next !== 'dashboard';
+}
+function changeHash(value) {
+  if (globalThis.location && globalThis.location.hash !== value) globalThis.location.hash = value;
+}
+function dateLabel(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Time not recorded' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+function statusLabel(value) {
+  return ({ needs_answer: 'Maya needs your answer', ready: 'Ready to build', awaiting_review: 'Ready for Quinn review',
+    reviewed: 'Reviewed', blocked: 'Needs attention', interrupted: 'Interrupted' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
+}
+function projectCard(item) {
+  const link = document.createElement('a');
+  link.className = 'project-card';
+  link.href = `#project/${item.id}`;
+  link.setAttribute('aria-label', `Open project: ${item.goal ?? 'Untitled project'}`);
+  const top = document.createElement('div'); top.className = 'project-card-top';
+  const title = document.createElement('strong'); title.textContent = item.goal || 'Untitled project';
+  const badge = document.createElement('span'); badge.className = `project-badge${workingStatuses.has(item.status) ? ' is-active' : ''}`;
+  badge.textContent = statusLabel(item.status);
+  top.append(title, badge);
+  const activity = document.createElement('p');
+  activity.textContent = item.latestMessage ? `${item.latestAgent ?? 'Team'} · ${item.latestMessage}` : 'No team activity recorded yet.';
+  const time = document.createElement('small'); time.textContent = `Updated ${dateLabel(item.updatedAt ?? item.createdAt)}`;
+  link.append(top, activity, time);
+  link.addEventListener('click', event => { event.preventDefault(); changeHash(`#project/${item.id}`); openProject(item.id); });
+  return link;
+}
+async function loadProjects(reset = false) {
+  const sequence = ++listSequence;
+  if (reset) { listOffset = 0; projectList.replaceChildren(); }
+  projectListStatus.textContent = reset ? 'Loading projects…' : 'Loading more projects…';
+  loadMore.hidden = true;
+  try {
+    const response = await fetch(`/api/maya-projects?offset=${listOffset}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.projects)) throw new Error(data.error ?? 'Project list unavailable');
+    if (sequence !== listSequence || view !== 'dashboard') return;
+    projectList.append(...data.projects.map(projectCard));
+    listOffset += data.projects.length;
+    listLoadError = false;
+    projectListStatus.textContent = listOffset ? `${listOffset} project${listOffset === 1 ? '' : 's'} shown. Current work comes first.`
+      : 'No projects yet. Create one to talk with Maya.';
+    loadMore.hidden = !data.hasMore;
+    loadMore.textContent = 'Show more projects';
+  } catch {
+    if (sequence !== listSequence || view !== 'dashboard') return;
+    listLoadError = true;
+    projectListStatus.textContent = 'Projects could not be loaded. Try again.';
+    loadMore.textContent = 'Try again'; loadMore.hidden = false;
+  }
+}
+function goDashboard(updateHash = true) {
+  epoch++; project = null; selectedProjectId = null; pending = null; busy = false;
+  publishVersion = -1; publishStatusSequence++; targetFingerprints = null; reconcileAttempt = null;
+  usagePending = false; usagePendingSince = 0; lastUsageSignature = '';
+  showView('dashboard');
+  if (updateHash) changeHash('');
+  loadProjects(true);
+}
+function clearDetail() {
+  detailMeta.textContent = ''; progress.textContent = '';
+  planPanel.replaceChildren(); team.replaceChildren(); events.replaceChildren(); artifact.replaceChildren();
+  usageStatus.textContent = 'Usage records unavailable until this project opens.';
+  usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.replaceChildren();
+  publishPanel.hidden = true; publishTargets.textContent = ''; publishResult.textContent = '';
+  publishGithub.hidden = true; publishVercel.hidden = true; publishReconcile.hidden = true;
+  message.disabled = true; form.querySelector('button').disabled = true;
+  build.hidden = true; review.hidden = true; cancel.hidden = true;
+}
+function openCreate(updateHash = true) {
+  epoch++; project = null; selectedProjectId = null; pending = null; busy = false;
+  showView('create');
+  createBack.disabled = false; createForm.querySelector('button').disabled = false;
+  createGoal.value = createAttempt?.promise ? createAttempt.goal : '';
+  createState.textContent = createAttempt?.promise ? 'Your project request is still finishing. Submit this same goal to reopen its result.'
+    : 'Describe a small result for Maya to plan.';
+  if (updateHash) changeHash('#new');
+  createGoal.focus();
+}
+async function openProject(id) {
+  if (selectedProjectId === id && view === 'detail') return;
+  const thisEpoch = ++epoch;
+  project = null; pending = null; busy = false; selectedProjectId = id;
+  publishVersion = -1; publishStatusSequence++; targetFingerprints = null; reconcileAttempt = null;
+  showView('detail');
+  clearDetail();
+  detailTitle.textContent = 'Opening project…'; state.textContent = 'Loading saved work…';
+  try {
+    const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+    const saved = await response.json();
+    if (!response.ok) throw new Error(saved.error ?? 'Project unavailable');
+    if (thisEpoch !== epoch || selectedProjectId !== id) return;
+    if (!render(saved, thisEpoch)) throw new Error('Project receipt could not be read');
+    state.textContent = `${statusLabel(saved.status)} · activity recorded below.`;
+    if (saved.status === 'clarifying' && !saved.clarifyRunId) act('clarify');
+  } catch (error) { if (thisEpoch === epoch) { detailTitle.textContent = 'Project unavailable'; state.textContent = `${error.message}. Return to all projects and try again.`; } }
+}
+createOpen?.addEventListener('click', () => openCreate());
+createBack?.addEventListener('click', () => goDashboard());
+detailBack?.addEventListener('click', () => goDashboard());
+loadMore?.addEventListener('click', () => loadProjects(listLoadError));
+globalThis.addEventListener?.('hashchange', () => {
+  const id = projectHash.exec(globalThis.location?.hash ?? '')?.[1];
+  if (id) { if (selectedProjectId !== id || view !== 'detail') openProject(id); }
+  else if (globalThis.location?.hash === '#new') { if (view !== 'create') openCreate(false); }
+  else if (view !== 'dashboard') goDashboard(false);
+});
 function render(value, expectedEpoch = epoch) {
   if (expectedEpoch !== epoch || !value || (project && (value.id !== project.id ||
       !Number.isSafeInteger(value.version) || !Number.isSafeInteger(project.version) || value.version < project.version))) return false;
@@ -128,14 +272,27 @@ function render(value, expectedEpoch = epoch) {
   const usageSignature = `${value.id}:${value.status}:${value.events.length}`;
   if (usageSignature !== lastUsageSignature) { lastUsageSignature = usageSignature; loadUsage(value.id); }
   sessionStorage.setItem('hostedVillageProjectId', value.id);
+  detailTitle.textContent = value.goal || 'Untitled project';
+  detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · ${statusLabel(value.status)}`;
+  progress.textContent = `${statusLabel(value.status)}. ${value.events.at(-1)?.agent ?? 'Team'} last recorded: ${value.events.at(-1)?.message ?? 'No activity yet.'}`;
+  planPanel.replaceChildren();
+  const planTitle = document.createElement('h4'); planTitle.textContent = 'Maya’s plan';
+  const planText = document.createElement('p'); planText.textContent = value.plan?.summary ?? 'Maya has not recorded a plan yet.';
+  planPanel.append(planTitle, planText);
+  team.replaceChildren(...['Maya', 'Sam', 'Quinn'].map(agent => {
+    const row = document.createElement('li');
+    const latest = value.events.filter(entry => entry.agent === agent).at(-1);
+    row.textContent = `${agent}: ${latest ? `last recorded ${latest.type} — ${latest.message}` : 'no recorded activity yet'}`;
+    return row;
+  }));
   message.disabled = !['needs_answer'].includes(value.status);
-  form.querySelector('label').textContent = value.status === 'needs_answer' ? 'Your answer to Maya' : 'Project goal';
+  form.querySelector('label').textContent = 'Your answer to Maya';
   form.querySelector('button').disabled = busy || message.disabled;
   build.hidden = value.status !== 'ready';
   review.hidden = value.status !== 'awaiting_review' && !value.retryReviewAvailable;
   review.textContent = value.retryReviewAvailable ? 'Retry Quinn review once' : 'Ask Quinn to review';
   cancel.hidden = !['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
-  another.hidden = ['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
+  another.disabled = busy;
   events.replaceChildren(...value.events.map(entry => {
     const row = document.createElement('li');
     row.textContent = `${entry.agent} · ${entry.type}: ${entry.message}`;
@@ -243,11 +400,17 @@ publishRefresh?.addEventListener('click', () => { if (project?.id) loadPublishSt
 async function act(action, values = {}) {
   if (busy) return;
   busy = true;
+  const starting = action === 'start' || action === 'create';
+  const feedback = starting ? createState : state;
+  const submit = starting ? createForm.querySelector('button') : form.querySelector('button');
   const thisEpoch = epoch;
   const key = `${action}:${project?.id ?? 'new'}:${JSON.stringify(values)}`;
   if (pending?.key !== key) pending = { key, requestId: crypto.randomUUID() };
-  state.textContent = `Waiting for a recorded ${action} result…`;
-  form.querySelector('button').disabled = true;
+  if (starting && createAttempt?.goal === values.goal) pending.requestId = createAttempt.requestId;
+  const pendingRequestId = pending.requestId;
+  feedback.textContent = `Waiting for a recorded ${action} result…`;
+  submit.disabled = true;
+  if (starting) createBack.disabled = true;
   build.disabled = true; review.disabled = true;
   let pollActive = true;
   let polling = false;
@@ -265,14 +428,61 @@ async function act(action, values = {}) {
   }, 500);
   try {
     const result = await request({ action, ...(project ? { id: project.id } : {}), ...values,
-      ...(['start', 'create', 'answer', 'build', 'review'].includes(action) ? { requestId: pending.requestId } : {}) });
-    if (thisEpoch !== epoch) return;
-    pending = null; message.value = '';
+      ...(['start', 'create', 'answer', 'build', 'review'].includes(action) ? { requestId: pendingRequestId } : {}) });
+    if (starting && createAttempt?.requestId === pendingRequestId) createAttempt.result = result;
+    if (thisEpoch !== epoch) {
+      if (starting && view === 'create' && createAttempt?.goal === values.goal && createGoal.value.trim() === values.goal) {
+        selectedProjectId = result.id;
+        showView('detail'); changeHash(`#project/${result.id}`);
+        render(result, epoch);
+      } else if (starting && view === 'create') {
+        createState.textContent = 'Previous project was created. Open All projects to see it; your new draft is still here.';
+      } else if (starting && view === 'dashboard') loadProjects(true);
+      return result;
+    }
+    pending = null;
+    if (starting) {
+      if (view !== 'create' || createGoal.value.trim() !== values.goal) {
+        if (view === 'create') createState.textContent = 'Previous project was created. Open All projects to see it; your new draft is still here.';
+        return result;
+      }
+      selectedProjectId = result.id;
+      showView('detail'); changeHash(`#project/${result.id}`);
+      createGoal.value = '';
+    } else message.value = '';
     if (render(result, thisEpoch)) state.textContent = `${result.status.replaceAll('_', ' ')} · activity recorded below.`;
     return result;
-  } catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
-  finally { pollActive = false; clearInterval(timer); if (thisEpoch === epoch) { busy = false; build.disabled = false; review.disabled = false; if (project) render(project, thisEpoch); else form.querySelector('button').disabled = false; } }
+  } catch (error) { if (thisEpoch === epoch) feedback.textContent = error.message; }
+  finally { pollActive = false; clearInterval(timer); if (thisEpoch === epoch) {
+    busy = false; build.disabled = false; review.disabled = false; createBack.disabled = false;
+    if (project) render(project, thisEpoch); else submit.disabled = false;
+  } }
 }
+createForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const goal = createGoal.value.trim();
+  if (!goal) return;
+  if (domainVersion !== savedDomainVersion) { createState.textContent = 'Save your domain answers before starting this project.'; return; }
+  if (createAttempt?.promise && createAttempt.goal !== goal) {
+    createState.textContent = 'Wait for the previous project request to finish before starting another.';
+    return;
+  }
+  if (!createAttempt || createAttempt.goal !== goal) createAttempt = { goal, requestId: crypto.randomUUID(), result: null, promise: null, clarifyStarted: false };
+  const attempt = createAttempt;
+  if (!attempt.promise && !attempt.result) {
+    attempt.promise = act('start', { goal });
+    attempt.promise.finally(() => { attempt.promise = null; });
+  }
+  const started = attempt.result ?? await attempt.promise;
+  if (started && view === 'create' && createGoal.value.trim() === goal) {
+    selectedProjectId = started.id; showView('detail'); changeHash(`#project/${started.id}`); render(started, epoch);
+  }
+  if (started && view === 'detail' && project?.id === started.id && createAttempt === attempt) createAttempt = null;
+  if (started?.status === 'clarifying' && view === 'detail' && project?.id === started.id && !attempt.clarifyStarted) {
+    attempt.clarifyStarted = true;
+    await act('clarify');
+  }
+});
 form?.addEventListener('submit', async event => {
   event.preventDefault();
   const value = message.value.trim();
@@ -292,15 +502,7 @@ cancel?.addEventListener('click', async () => {
   catch (error) { if (thisEpoch === epoch) state.textContent = error.message; }
 });
 another?.addEventListener('click', () => {
-  epoch++; project = null; pending = null; busy = false; publishVersion = -1; publishStatusSequence++; targetFingerprints = null; lastUsageSignature = ''; usagePending = false; usagePendingSince = 0;
-  sessionStorage.removeItem('hostedVillageProjectId');
-  events.replaceChildren(); artifact.replaceChildren(); message.value = ''; message.disabled = false;
-  publishPanel.hidden = true; publishTargets.textContent = ''; publishResult.textContent = '';
-  usageStatus.textContent = 'Loading API usage…'; usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.textContent = '';
-  form.querySelector('label').textContent = 'Project goal'; form.querySelector('button').disabled = false;
-  build.hidden = true; review.hidden = true; cancel.hidden = true; another.hidden = true;
-  state.textContent = 'Describe a new small website.'; message.focus();
-  loadUsage();
+  openCreate();
 });
 // A function may keep working after a tab reload. Read its durable stage until
 // the stored result arrives; a duplicate clarify action must not start a call.
@@ -321,22 +523,16 @@ setInterval(async () => {
   finally { restoringPoll = false; }
 }, 2000);
 fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
-  const restoreEpoch = epoch;
   if (!response.ok) return;
   const status = await response.json();
   if (!status.runAvailable) return;
   chat.hidden = false;
+  const setup = document.querySelector('#maya-setup');
+  if (setup) setup.hidden = true;
   loadDomain();
-  state.textContent = 'Hosted test mode is enabled. Give Maya a small static website goal.';
-  loadUsage();
-  const saved = sessionStorage.getItem('hostedVillageProjectId');
-  if (saved) {
-    const response = await fetch(`/api/maya-projects?id=${encodeURIComponent(saved)}`, { cache: 'no-store' });
-    if (response.ok) {
-      const restored = await response.json();
-      if (!render(restored, restoreEpoch)) return;
-      if (restored.status === 'clarifying') act('clarify');
-    }
-    else sessionStorage.removeItem('hostedVillageProjectId');
-  }
+  const hash = globalThis.location?.hash ?? '';
+  const selected = projectHash.exec(hash)?.[1];
+  if (selected) openProject(selected);
+  else if (hash === '#new') openCreate(false);
+  else { showView('dashboard'); loadProjects(true); }
 }).catch(() => {});

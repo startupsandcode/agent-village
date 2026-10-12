@@ -4,6 +4,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,80}$/;
 // PostgreSQL jsonb::text adds whitespace; leave ample room below the SQL check.
 const MAX_SNAPSHOT_BYTES = 131_072;
+const DASHBOARD_PAGE_SIZE = 25;
 
 function owner(value) {
   if (typeof value !== 'string' || !value || value.length > 200) throw new Error('Verified owner required');
@@ -27,6 +28,27 @@ function record(row) {
 export function createHostedProjectStore({ query }) {
   if (typeof query !== 'function') throw new Error('Parameterized database query required');
   return {
+    async list({ ownerSub, offset = 0 }) {
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) throw new Error('Invalid project offset');
+      const rows = await query(`SELECT id, version, updated_at, snapshot->>'goal' AS goal,
+        snapshot->>'status' AS status, snapshot->>'createdAt' AS created_at,
+        snapshot->'plan'->>'summary' AS plan_summary,
+        snapshot->'events'->-1->>'agent' AS latest_agent,
+        snapshot->'events'->-1->>'message' AS latest_message,
+        snapshot->'events'->-1->>'at' AS latest_at
+        FROM village_projects WHERE owner_sub = $1
+        ORDER BY CASE
+          WHEN snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing', 'needs_answer', 'ready', 'awaiting_review') THEN 0
+          WHEN snapshot->>'status' IN ('blocked', 'interrupted') THEN 1
+          ELSE 2 END, updated_at DESC, id DESC
+        LIMIT $2 OFFSET $3`, [owner(ownerSub), DASHBOARD_PAGE_SIZE + 1, offset]);
+      const hasMore = rows.rows.length > DASHBOARD_PAGE_SIZE;
+      return { projects: rows.rows.slice(0, DASHBOARD_PAGE_SIZE).map(row => ({
+        id: row.id, version: Number(row.version), goal: row.goal, status: row.status,
+        createdAt: row.created_at, updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+        planSummary: row.plan_summary, latestAgent: row.latest_agent, latestMessage: row.latest_message, latestAt: row.latest_at,
+      })), hasMore, nextOffset: hasMore ? offset + DASHBOARD_PAGE_SIZE : null };
+    },
     async create({ ownerSub, id, requestId, snapshot }) {
       const sub = owner(ownerSub);
       projectId(id);

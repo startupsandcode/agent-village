@@ -74,3 +74,25 @@ test('hosted access derives ownership from the authorized session, not request d
   assert.equal((await store.read({ ownerSub: 'verified-sub', id })).snapshot.status, 'clarifying');
   assert.equal(await store.read({ ownerSub: 'attacker', id }), null);
 });
+
+test('project dashboard lists bounded owner-scoped summaries with active work first', async () => {
+  const calls = [];
+  const rows = Array.from({ length: 26 }, (_, index) => ({ id: `project-${index}`, version: index,
+    goal: `Goal ${index}`, status: index === 0 ? 'building' : 'reviewed',
+    created_at: '2026-10-11T10:00:00Z', updated_at: '2026-10-11T11:00:00Z',
+    plan_summary: 'A small site', latest_agent: 'Sam', latest_message: 'Creating the site', latest_at: '2026-10-11T11:00:00Z' }));
+  const store = createHostedProjectStore({ query: async (sql, values) => { calls.push({ sql, values }); return { rows }; } });
+  const access = createHostedProjectAccess({ store, auth: { authorize: () => ({ status: 200, sub: 'verified-owner' }) } });
+  const page = await access.list('session', { offset: 0 });
+  assert.equal(page.projects.length, 25);
+  assert.equal(page.projects[0].status, 'building');
+  assert.equal(page.projects[0].latestMessage, 'Creating the site');
+  assert.equal(page.hasMore, true);
+  assert.equal(page.nextOffset, 25);
+  assert.ok(!JSON.stringify(page).includes('files'));
+  assert.deepEqual(calls[0].values, ['verified-owner', 26, 0]);
+  assert.match(calls[0].sql, /WHERE owner_sub = \$1/);
+  assert.match(calls[0].sql, /ORDER BY CASE/);
+  assert.match(calls[0].sql, /'building'.*'needs_answer'/s);
+  assert.match(calls[0].sql, /LIMIT \$2 OFFSET \$3/);
+});

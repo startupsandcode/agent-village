@@ -60,6 +60,22 @@ const site = { title: 'Garden Club', theme: 'forest', sections: [
   { type: 'text', heading: 'Join us', body: 'Meet your neighbors and learn to grow vegetables.' },
 ] };
 
+test('dashboard route lists only the signed-in operator’s projects without starting a run', async () => {
+  const reads = [];
+  const coordinator = { async list(cookie, offset) { reads.push([cookie, offset]); return {
+    projects: [{ id: 'project-1', goal: 'Garden site', status: 'building', latestAgent: 'Sam' }],
+    hasMore: false, nextOffset: null,
+  }; } };
+  const handler = createHostedMayaHandler({ env, auth, coordinator, enabled: true });
+  assert.equal((await call(handler, 'viewer', null, { method: 'GET', url: '/api/maya-projects' })).status, 403);
+  assert.equal((await call(handler, 'other', null, { method: 'GET', url: '/api/maya-projects', fetchSite: 'cross-site' })).status, 403);
+  assert.equal((await call(handler, 'owner', null, { method: 'GET', url: '/api/maya-projects?offset=-1' })).status, 400);
+  const page = await call(handler, 'owner', null, { method: 'GET', url: '/api/maya-projects?offset=25' });
+  assert.equal(page.status, 200);
+  assert.equal(page.value.projects[0].goal, 'Garden site');
+  assert.deepEqual(reads, [['owner', 25]]);
+});
+
 test('hosted usage records one call per stage even when cancellation wins after provider response', async () => {
   const { store, budget } = memory();
   const calls = new Map();

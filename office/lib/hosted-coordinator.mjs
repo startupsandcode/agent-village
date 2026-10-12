@@ -107,6 +107,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     return { duplicate: false, record: saved };
   }
   return {
+    list(cookie, offset = 0) { return access.list(cookie, { offset }); },
     read,
     async start(cookie, goal, requestId) {
       requireRequestId(requestId);

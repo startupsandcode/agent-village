@@ -48,14 +48,18 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       const url = request.method === 'GET' ? new URL(request.url, origin) : null;
       const id = url?.searchParams.get('id');
       const queryKeys = [...(url?.searchParams.keys() ?? [])];
-      if (url && (!id || queryKeys.some(key => !['id', 'file'].includes(key)) || new Set(queryKeys).size !== queryKeys.length)) throw new Error('Project ID required');
+      if (url && (queryKeys.some(key => !['id', 'file', 'offset'].includes(key)) || new Set(queryKeys).size !== queryKeys.length ||
+          (id ? queryKeys.includes('offset') : queryKeys.includes('file') || queryKeys.includes('id')))) throw new Error('Project ID required');
       const file = url?.searchParams.get('file');
+      const offsetText = url?.searchParams.get('offset') ?? '0';
+      if (url && !id && (!/^(0|[1-9][0-9]{0,6})$/.test(offsetText) || Number(offsetText) > 1_000_000)) throw new Error('Invalid project offset');
       const body = request.method === 'POST' ? strictBody(request) : null;
       runtime = runtimeFactory ? await runtimeFactory({ env, auth }) : null;
       const active = runtime?.coordinator ?? coordinator;
       const publishing = runtime?.publisher ?? publisher;
       const cookie = request.headers?.cookie;
       if (request.method === 'GET') {
+        if (!id) return send(response, 200, await active.list(cookie, Number(offsetText)));
         if (file) {
           const artifact = await active.artifact(cookie, id, file);
           response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'");
@@ -92,7 +96,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (/^(Vercel publish attempt changed; refresh status|Vercel submission may still be active; wait before reconciling|Only an uncertain Vercel submission can be reconciled|Vercel deployment inventory changed; manual inspection required|Old Vercel deployment is not verified deleted; claim remains blocked|Protected Vercel reconciliation target changed|Vercel deletion check failed; claim remains blocked|Exact Vercel reconciliation target and deployment IDs required|Vercel deletion evidence changed)$/.test(error.message)) {
         return send(response, 409, { error: error.message });
       }
-      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
+      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Invalid project offset|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
       return send(response, safe ? 400 : 500, { error: safe ? error.message : 'Project request failed' });
     } finally { try { await runtime?.close(); } catch { /* response contains the operation result */ } }
   };
