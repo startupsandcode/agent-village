@@ -38,9 +38,10 @@ export function createHostedProjectStore({ query }) {
         snapshot->'events'->-1->>'at' AS latest_at
         FROM village_projects WHERE owner_sub = $1
         ORDER BY CASE
-          WHEN snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing', 'needs_answer', 'ready', 'awaiting_review') THEN 0
-          WHEN snapshot->>'status' IN ('question_error', 'blocked', 'interrupted') THEN 1
-          ELSE 2 END, updated_at DESC, id DESC
+          WHEN snapshot->>'status' IN ('question_error', 'blocked', 'interrupted') THEN 0
+          WHEN snapshot->>'status' IN ('needs_answer', 'ready', 'awaiting_review') THEN 1
+          WHEN snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing') THEN 2
+          ELSE 3 END, updated_at DESC, id DESC
         LIMIT $2 OFFSET $3`, [owner(ownerSub), DASHBOARD_PAGE_SIZE + 1, offset]);
       const hasMore = rows.rows.length > DASHBOARD_PAGE_SIZE;
       return { projects: rows.rows.slice(0, DASHBOARD_PAGE_SIZE).map(row => ({
