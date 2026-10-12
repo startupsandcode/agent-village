@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#dcecef" />
-    <meta name="description" content="A clear view of reported agent activity and the Agent Village task queue." />
+    <meta name="description" content="A clear view of recent hosted project stages and the Agent Village task queue." />
     <title>Village Office · Agent Village</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/office-assets/styles.css" />
@@ -85,7 +85,7 @@
         <div class="section-heading room-heading" id="office">
           <div>
             <p class="section-index">The room</p>
-            <h2>Who’s at their desk?</h2>
+            <h2>Recent hosted project stages</h2>
           </div>
           <div class="update-tools">
             <span id="last-updated" class="update-time">Checking for updates…</span>
@@ -96,7 +96,7 @@
           </div>
         </div>
 
-        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>Live desk check-ins are not connected to this hosted office yet. The work board still reads GitHub issues.</p>
+        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>These desks show recent hosted project stages. Local Codex and VS Code check-ins are not connected here.</p>
         <div id="fetch-message" class="fetch-message" role="status" aria-live="polite" hidden></div>
         <div id="change-message" class="sr-only" role="status" aria-live="polite"></div>
 
@@ -120,9 +120,9 @@
             <p id="active-caption" class="active-caption">Checking reported activity</p>
             <div class="sidebar-divider"></div>
             <h3>How this room works</h3>
-            <p>A lit desk means a fresh check-in. Each report carries a time and expires after 90 minutes unless the agent updates it. If reports are unavailable, the desk says so.</p>
+            <p>A lit desk means a hosted project stage started within the last 90 seconds. It does not confirm anyone is currently active in Codex or VS Code. Local check-ins are separate. If project activity is unavailable, the desk says so.</p>
             <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
-            <span class="sidebar-stamp">Reported, not guessed</span>
+            <span class="sidebar-stamp">Stage starts, not live presence</span>
           </aside>
         </section>
 
