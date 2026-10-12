@@ -57,6 +57,29 @@ test('a second invalid retry remains retryable and duplicate request does not ma
   assert.equal(provider.calls, 3);
 });
 
+test('overlapping retry requests claim one provider call', async () => {
+  const { coordinator, provider, claims } = setup([{}]);
+  const created = await coordinator.create('owner', 'Build a garden website', 'create-question-4');
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  provider.generate = async () => {
+    provider.calls++;
+    entered();
+    await gate;
+    return { result: { question: 'Who is it for?' }, usage: {} };
+  };
+  const first = coordinator.retryQuestion('owner', created.id, 'retry-question-7');
+  await started;
+  assert.equal((await coordinator.retryQuestion('owner', created.id, 'retry-question-7')).status, 'clarifying');
+  await assert.rejects(coordinator.retryQuestion('owner', created.id, 'retry-question-8'), /Action not expected/);
+  assert.equal(provider.calls, 2);
+  release();
+  assert.equal((await first).status, 'needs_answer');
+  assert.equal([...claims].filter(value => value.startsWith('clarify:')).length, 2);
+});
+
 test('legacy blocked invalid question can retry; unrelated blocked error cannot', async () => {
   const { coordinator, rows, provider } = setup([{}, { question: 'Who is it for?' }]);
   const created = await coordinator.create('owner', 'Build a garden website', 'create-question-3');
