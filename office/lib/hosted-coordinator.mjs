@@ -18,9 +18,16 @@ function canRetryReview(project) {
     typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
     artifactDigest(project.files.html, project.files.css) === project.artifact.sha256;
 }
+function canRetryQuestion(project) {
+  if (project.status === 'question_error') return true;
+  const latest = project.events?.at(-1);
+  return project.status === 'blocked' && !project.answer && !project.plan &&
+    latest?.agent === 'Maya' && latest.type === 'error' && latest.message === 'Maya returned an invalid question';
+}
 function visible(record) {
   const { files, ...project } = record.snapshot;
-  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)), version: record.version };
+  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)),
+    retryQuestionAvailable: Boolean(canRetryQuestion(record.snapshot)), version: record.version };
 }
 function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
 function requireProject(record) { if (!record) throw new Error('Project not found'); return record; }
@@ -56,7 +63,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     const saved = await access.update(cookie, { id, expectedVersion, snapshot: next });
     return visible(saved || requireProject(await access.read(cookie, id)));
   }
-  async function generate(cookie, id, expectedVersion, system, input, done, agent, callId) {
+  async function generate(cookie, id, expectedVersion, system, input, done, agent, callId, failureStatus = 'blocked') {
     const controller = new AbortController();
     // Cancellation is durable across function instances. Polling aborts an in-flight call best-effort.
     let polling = false;
@@ -85,7 +92,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
         return await finish(cookie, id, expectedVersion, project => done(project, reply));
       } catch (error) {
         return await finish(cookie, id, expectedVersion, project => {
-          project.status = 'blocked';
+          project.status = failureStatus;
           event(project, agent, 'error', provider.redact?.(error.message) ?? 'Provider request failed');
         });
       }
@@ -136,7 +143,22 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       return generate(cookie, id, claimed.version, MAYA, { goal: next.goal, domainProfile: next.domainProfile }, (updated, reply) => {
         if (!validText(reply.result?.question, 300)) throw new Error('Maya returned an invalid question');
         updated.status = 'needs_answer'; event(updated, 'Maya', 'question', reply.result.question, reply.usage);
-      }, 'Maya', `${id}:clarify:${next.clarifyRunId}`);
+      }, 'Maya', `${id}:clarify:${next.clarifyRunId}`, 'question_error');
+    },
+    async retryQuestion(cookie, id, requestId) {
+      requireRequestId(requestId);
+      const record = requireProject(await access.read(cookie, id));
+      if (record.snapshot.clarifyRequestId === requestId) return visible(record);
+      if (!canRetryQuestion(record.snapshot)) throw new Error('Action not expected');
+      const step = await advance(cookie, id, requestId, record.snapshot.status, 'clarifying', 'Maya',
+        'Retrying the question for this saved project', 'clarify',
+        next => { next.clarifyRunId = randomUUID(); }, `${id}-${record.version}`, canRetryQuestion);
+      if (step.duplicate) return visible(step.record);
+      const current = step.record.snapshot;
+      return generate(cookie, id, step.record.version, MAYA, { goal: current.goal, domainProfile: current.domainProfile }, (updated, reply) => {
+        if (!validText(reply.result?.question, 300)) throw new Error('Maya returned an invalid question');
+        updated.status = 'needs_answer'; event(updated, 'Maya', 'question', reply.result.question, reply.usage);
+      }, 'Maya', `${id}:clarify:${current.clarifyRunId}`, 'question_error');
     },
     async create(cookie, goal, requestId) {
       const started = await this.start(cookie, goal, requestId);
