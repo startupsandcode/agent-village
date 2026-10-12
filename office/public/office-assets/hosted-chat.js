@@ -174,13 +174,17 @@ function statusLabel(value, retryQuestionAvailable = false) {
 function projectCard(item) {
   const link = document.createElement('a');
   const blocked = blockedStatuses.has(item.status);
+  const retryQuestion = item.status === 'blocked' && item.latestAgent === 'Maya' && item.latestMessage === 'Maya returned an invalid question';
   link.className = `project-card${blocked ? ' is-blocked' : ''}`;
   link.href = `#project/${item.id}`;
-  link.setAttribute('aria-label', `Open project: ${item.goal ?? 'Untitled project'}, ${statusLabel(item.status)}`);
+  const nextAction = retryQuestion ? 'Open project to retry Maya question.'
+    : blocked ? 'Open project to inspect and resolve.' : 'Open project to check publication status.';
+  link.setAttribute('aria-label', `Open project: ${item.goal ?? 'Untitled project'}, ${statusLabel(item.status)}` +
+    (blocked ? `. Reason: ${item.latestMessage || 'Not recorded'}. ${nextAction}` : ''));
   const top = document.createElement('div'); top.className = 'project-card-top';
   const title = document.createElement('strong'); title.textContent = item.goal || 'Untitled project';
   const badge = document.createElement('span'); badge.className = `project-badge${blocked ? ' is-blocked' : workingStatuses.has(item.status) ? ' is-active' : ''}`;
-  badge.textContent = `${blocked ? '⚠ ' : ''}${statusLabel(item.status, item.status === 'blocked' && item.latestAgent === 'Maya' && item.latestMessage === 'Maya returned an invalid question')}`;
+  badge.textContent = `${blocked ? '⚠ ' : ''}${statusLabel(item.status)}`;
   top.append(title, badge);
   const activity = document.createElement('p');
   activity.textContent = item.latestMessage ? `${item.latestAgent ?? 'Team'} · ${item.latestMessage}`
@@ -189,7 +193,7 @@ function projectCard(item) {
   link.append(top, activity);
   if (blocked || item.status === 'reviewed') {
     const next = document.createElement('span'); next.className = 'project-card-next';
-    next.textContent = blocked ? 'Open project to inspect and resolve.' : 'Open project to check publication status.';
+    next.textContent = nextAction;
     link.append(next);
   }
   link.append(time);
