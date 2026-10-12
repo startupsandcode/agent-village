@@ -5,6 +5,7 @@ const shapes = {
   create: ['action', 'goal', 'requestId'],
   start: ['action', 'goal', 'requestId'],
   clarify: ['action', 'id'],
+  retryQuestion: ['action', 'id', 'requestId'],
   answer: ['action', 'id', 'answer', 'requestId'],
   build: ['action', 'id', 'requestId'],
   review: ['action', 'id', 'requestId'],
@@ -83,6 +84,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       const result = body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
         : body.action === 'start' ? await active.start(cookie, body.goal, body.requestId)
         : body.action === 'clarify' ? await active.clarify(cookie, body.id)
+        : body.action === 'retryQuestion' ? await active.retryQuestion(cookie, body.id, body.requestId)
         : body.action === 'answer' ? await active.answer(cookie, body.id, body.answer, body.requestId)
         : body.action === 'build' ? await active.build(cookie, body.id, body.requestId)
         : body.action === 'review' ? await active.review(cookie, body.id, body.requestId)
