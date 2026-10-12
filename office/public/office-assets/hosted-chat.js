@@ -168,7 +168,7 @@ function dateLabel(value) {
 function statusLabel(value, retryQuestionAvailable = false) {
   if (retryQuestionAvailable) return 'Retry Maya question';
   return ({ needs_answer: 'Maya needs your answer', ready: 'Ready to build', awaiting_review: 'Ready for Quinn review',
-    reviewed: 'Reviewed', blocked: 'Needs attention', interrupted: 'Interrupted', question_error: 'Retry Maya question' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
+    reviewed: 'Reviewed', blocked: 'Needs attention', interrupted: 'Interrupted', question_error: 'Maya question failed' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
 }
 function projectCard(item) {
   const link = document.createElement('a');
