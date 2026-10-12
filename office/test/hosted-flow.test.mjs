@@ -397,3 +397,27 @@ test('clarification claims the execution month and rejects an expired start', as
   await assert.rejects(coordinator.clarify('owner', capped.id), /Monthly project or provider budget reached/);
   assert.equal(providerCalls, 1);
 });
+
+test('hosted retryQuestion action keeps a failed project and deduplicates the provider call', async () => {
+  const { store, budget } = memory();
+  let calls = 0;
+  const provider = { redact: value => value, async generate() {
+    calls++;
+    return { result: calls === 1 ? {} : { question: 'Who should visit this site?' }, usage: {} };
+  } };
+  const coordinator = createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider });
+  const handler = createHostedMayaHandler({ env, auth, coordinator, enabled: true });
+  const failed = await call(handler, 'owner', { action: 'create', goal: 'Neighborhood garden website', requestId: 'create-retry-123' });
+  assert.equal(failed.status, 200);
+  assert.equal(failed.value.status, 'question_error');
+  assert.equal(failed.value.retryQuestionAvailable, true);
+  assert.equal((await call(handler, 'other', { action: 'retryQuestion', id: failed.value.id, requestId: 'retry-other-123' })).status, 404);
+  assert.equal((await call(handler, 'owner', { action: 'retryQuestion', id: failed.value.id })).status, 400);
+  assert.equal(calls, 1);
+  const retried = await call(handler, 'owner', { action: 'retryQuestion', id: failed.value.id, requestId: 'retry-question-123' });
+  assert.equal(retried.status, 200);
+  assert.equal(retried.value.status, 'needs_answer');
+  assert.equal(retried.value.events.at(-1).message, 'Who should visit this site?');
+  assert.equal((await call(handler, 'owner', { action: 'retryQuestion', id: failed.value.id, requestId: 'retry-question-123' })).value.version, retried.value.version);
+  assert.equal(calls, 2);
+});
