@@ -27,9 +27,8 @@ function poolWith(rows, tracker = {}) {
     async end() { tracker.closes = (tracker.closes || 0) + 1; }
   };
 }
-async function run({ rows = [], tracker = {}, cookie = 'valid-a', method = 'GET', env = { VILLAGE_DATABASE_URL: 'test-url' } } = {}) {
-  const handler = createOfficeHandler({ env, auth, now: () => NOW, PoolClass: poolWith(rows, tracker), token: '',
-    fetchImpl: async () => { throw new Error('Issue loader should not fetch without token'); } });
+async function run({ rows = [], tracker = {}, cookie = 'valid-a', method = 'GET', env = { VILLAGE_DATABASE_URL: 'test-url' }, token = '', fetchImpl = async () => { throw new Error('Issue loader should not fetch without token'); } } = {}) {
+  const handler = createOfficeHandler({ env, auth, now: () => NOW, PoolClass: poolWith(rows, tracker), token, fetchImpl });
   const result = response();
   await handler(request(cookie, method), result);
   return result;
@@ -89,9 +88,10 @@ test('empty activity differs from storage failure and neither blocks GitHub issu
   assert.equal(empty.activity.status, 'ok');
   assert.equal(empty.activity.agents.length, 5);
   const tracker = { fail: true };
-  const failure = JSON.parse((await run({ tracker })).body);
+  const failure = JSON.parse((await run({ tracker, token: 'test-token', fetchImpl: async () => ({ ok: true, json: async () => [{ number: 33, title: 'Office activity', html_url: 'https://github.com/startupsandcode/agent-village/issues/33', updated_at: '2026-10-12T11:00:00Z' }] }) })).body);
   assert.equal(failure.activity.status, 'unavailable');
-  assert.equal(failure.tasks.status, 'error');
+  assert.equal(failure.tasks.status, 'ok');
+  assert.deepEqual(failure.tasks.items.map(item => item.number), [33]);
   assert.equal(tracker.closes, 1);
   assert.equal(JSON.stringify(failure).includes('private database failure'), false);
   const absent = JSON.parse((await run({ env: {} })).body);
