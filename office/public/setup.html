@@ -44,6 +44,7 @@ OPENAI_API_KEY=your-own-key-here</code></pre>
           <li>Redeploy that Preview so the new settings reach the server. Open <code>/office</code> again and sign in with an email on the invite list.</li>
         </ol>
         <p>A branch-specific Preview host can change. Check the exact URL in Vercel before setting the allowed origin and callback. A configured sign-in permits viewing the office; it does not turn on Maya’s hosted build.</p>
+        <p>If the private work board says GitHub could not be reached, an invited operator listed in <code>OFFICE_RUN_ALLOWED_EMAILS</code> can open <code>/api/maya-issues-health</code> on the same signed-in Preview once. It returns only a failure category and, when GitHub responded, its HTTP status; a healthy result returns an issue count. Check the repository and a token with Issues read access on the server. Never paste the token or a GitHub response body into chat. If the result says <code>rate_limited</code>, wait the reported <code>retryAfterSeconds</code> before checking again.</p>
       </section>
 
       <section id="runs"><div class="section-title"><span>04</span><h2>Enable a hosted test run only when ready</h2></div>
