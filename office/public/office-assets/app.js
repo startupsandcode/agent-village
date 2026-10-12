@@ -69,7 +69,48 @@ function renderAgent(profile, report, checkinsConfigured = true) {
   return card;
 }
 
-function renderAgents(agents = [], checkinsConfigured = true) {
+function renderHostedActivity(activity) {
+  const available = activity?.status === 'ok' && Array.isArray(activity.agents);
+  const byName = new Map(available ? activity.agents.map(agent => [agent.name, agent]) : []);
+  const cards = roster.map(profile => {
+    const report = byName.get(profile.name);
+    const recent = report?.status === 'recent';
+    const card = node('article', `agent-card tone-${profile.tone} status-${available ? (recent ? 'working' : 'unknown') : 'not-connected'}`);
+    card.setAttribute('aria-label', `${profile.name}, ${profile.role}`);
+    const illustration = node('div', 'desk-illustration');
+    illustration.setAttribute('aria-hidden', 'true');
+    illustration.append(node('span', 'desk-chair'), node('span', 'desk-body'), node('span', `desk-object object-${profile.object}`));
+    const identity = node('div', 'agent-identity');
+    const names = node('div', 'agent-names');
+    names.append(node('h3', '', profile.name), node('p', '', profile.role));
+    identity.append(names, node('span', 'desk-light'));
+    const status = available ? (recent ? 'Hosted stage started recently' : 'No recent hosted stage') : 'Hosted activity unavailable';
+    const description = recent
+      ? `${report.stage === 'building' ? 'Building' : report.stage === 'reviewing' ? 'Reviewing' : report.stage === 'planning' ? 'Planning' : 'Clarifying'}: ${report.goal || 'Untitled project'}`
+      : available ? 'No hosted project stage started for this desk in the last 90 seconds.' : 'Project activity could not be read. Try Refresh.';
+    card.append(illustration, identity, node('span', 'agent-state', status), node('p', 'agent-task', description));
+    if (recent) {
+      const detail = node('div', 'agent-detail');
+      detail.append(node('span', '', `Started ${timeLabel(report.stageStartedAt)}`));
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(report.projectId)) {
+        const link = node('a', '', 'View project');
+        link.href = `#project/${report.projectId}`;
+        detail.append(link);
+      }
+      card.append(detail);
+    }
+    return card;
+  });
+  grid.replaceChildren(...cards);
+  const active = available ? [...byName.values()].filter(report => report.status === 'recent').length : null;
+  document.querySelector('#active-count').textContent = active === null ? '—' : String(active);
+  document.querySelector('#active-caption').textContent = available
+    ? 'hosted project stages started in the last 90 seconds'
+    : 'hosted project activity unavailable';
+}
+
+function renderAgents(agents = [], checkinsConfigured = true, activity = null) {
+  if (!checkinsConfigured) { renderHostedActivity(activity); return; }
   const byName = new Map(Array.isArray(agents) ? agents.map((agent) => [agent.name, agent]) : []);
   grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name), checkinsConfigured)));
   if (!checkinsConfigured) {
@@ -141,15 +182,18 @@ async function refresh() {
     latestData = data;
     lastSuccessfulUpdate = data.generatedAt || new Date().toISOString();
     const checkinsConfigured = data.checkinsConfigured !== false;
-    document.querySelector('#desk-connectivity-note').hidden = checkinsConfigured;
-    renderAgents(data.agents, checkinsConfigured);
+    const deskNote = document.querySelector('#desk-connectivity-note');
+    deskNote.hidden = checkinsConfigured;
+    if (!checkinsConfigured) deskNote.textContent = 'This desk shows recent hosted project stages. Local Codex and VS Code check-ins are not connected here.';
+    renderAgents(data.agents, checkinsConfigured, data.activity);
     renderTasks(data.tasks);
     document.querySelector('#last-updated').textContent = `Checked ${timeLabel(lastSuccessfulUpdate)}`;
     const working = Array.isArray(data.agents) ? data.agents.filter(agent => agent.status === 'working').map(agent => agent.name) : [];
     const issueCount = data.tasks?.status === 'ok' ? data.tasks.items.length : null;
+    const recentStages = data.activity?.status === 'ok' ? data.activity.agents.filter(agent => agent.status === 'recent') : null;
     const deskAnnouncement = checkinsConfigured
       ? `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}.`
-      : 'Live desk check-ins are not connected.';
+      : recentStages ? `${recentStages.length} hosted project stages started recently.` : 'Hosted project activity is unavailable.';
     const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open ${issueCount === 1 ? 'issue' : 'issues'}.`}`;
     if (lastAnnouncement !== announcement) document.querySelector('#change-message').textContent = announcement;
     lastAnnouncement = announcement;

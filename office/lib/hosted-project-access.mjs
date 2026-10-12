@@ -8,7 +8,8 @@ export function createHostedProjectAccess({ auth, store }) {
     return access.sub;
   }
   return {
-    list(cookie, options) { return store.list({ ownerSub: owner(cookie), ...options }); },
+    list(cookie, options) { return store.list({ ...options, ownerSub: owner(cookie) }); },
+    recentStages(cookie, since) { return store.recentStages({ ownerSub: owner(cookie), since }); },
     create(cookie, { id, requestId, snapshot }) { return store.create({ ownerSub: owner(cookie), id, requestId, snapshot }); },
     read(cookie, id) { return store.read({ ownerSub: owner(cookie), id }); },
     update(cookie, { id, expectedVersion, snapshot }) { return store.update({ ownerSub: owner(cookie), id, expectedVersion, snapshot }); },
