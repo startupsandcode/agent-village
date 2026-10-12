@@ -75,7 +75,7 @@ test('hosted access derives ownership from the authorized session, not request d
   assert.equal(await store.read({ ownerSub: 'attacker', id }), null);
 });
 
-test('project dashboard lists bounded owner-scoped summaries with active work first', async () => {
+test('project dashboard lists bounded owner-scoped summaries with blocked work first', async () => {
   const calls = [];
   const rows = Array.from({ length: 26 }, (_, index) => ({ id: `project-${index}`, version: index,
     goal: `Goal ${index}`, status: index === 0 ? 'building' : 'reviewed',
@@ -93,6 +93,9 @@ test('project dashboard lists bounded owner-scoped summaries with active work fi
   assert.deepEqual(calls[0].values, ['verified-owner', 26, 0]);
   assert.match(calls[0].sql, /WHERE owner_sub = \$1/);
   assert.match(calls[0].sql, /ORDER BY CASE/);
-  assert.match(calls[0].sql, /'building'.*'needs_answer'/s);
+  assert.match(calls[0].sql, /'question_error', 'blocked', 'interrupted'\) THEN 0/);
+  assert.match(calls[0].sql, /'needs_answer', 'ready', 'awaiting_review'\) THEN 1/);
+  assert.match(calls[0].sql, /'clarifying', 'planning', 'building', 'reviewing'\) THEN 2/);
+  assert.match(calls[0].sql, /ELSE 3 END, updated_at DESC, id DESC/);
   assert.match(calls[0].sql, /LIMIT \$2 OFFSET \$3/);
 });

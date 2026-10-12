@@ -151,6 +151,7 @@ async function request(body) {
 }
 const projectHash = /^#project\/([A-Za-z0-9-]{1,80})$/;
 const workingStatuses = new Set(['clarifying', 'needs_answer', 'planning', 'ready', 'building', 'awaiting_review', 'reviewing']);
+const blockedStatuses = new Set(['blocked', 'question_error', 'interrupted']);
 function showView(next) {
   view = next;
   dashboard.hidden = next !== 'dashboard';
@@ -168,22 +169,34 @@ function dateLabel(value) {
 function statusLabel(value, retryQuestionAvailable = false) {
   if (retryQuestionAvailable) return 'Retry Maya question';
   return ({ needs_answer: 'Maya needs your answer', ready: 'Ready to build', awaiting_review: 'Ready for Quinn review',
-    reviewed: 'Reviewed', blocked: 'Needs attention', interrupted: 'Interrupted', question_error: 'Maya question failed' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
+    reviewed: 'Review passed', blocked: 'Blocked', interrupted: 'Interrupted', question_error: 'Maya question failed' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
 }
 function projectCard(item) {
   const link = document.createElement('a');
-  link.className = 'project-card';
+  const blocked = blockedStatuses.has(item.status);
+  const retryQuestion = item.status === 'blocked' && item.latestAgent === 'Maya' && item.latestMessage === 'Maya returned an invalid question';
+  link.className = `project-card${blocked ? ' is-blocked' : ''}`;
   link.href = `#project/${item.id}`;
-  link.setAttribute('aria-label', `Open project: ${item.goal ?? 'Untitled project'}`);
+  const nextAction = retryQuestion ? 'Open project to retry Maya question.'
+    : blocked ? 'Open project to inspect and resolve.' : 'Open project to check publication status.';
+  link.setAttribute('aria-label', `Open project: ${item.goal ?? 'Untitled project'}, ${statusLabel(item.status)}` +
+    (blocked ? `. Reason: ${item.latestMessage || 'Not recorded'}. ${nextAction}` : ''));
   const top = document.createElement('div'); top.className = 'project-card-top';
   const title = document.createElement('strong'); title.textContent = item.goal || 'Untitled project';
-  const badge = document.createElement('span'); badge.className = `project-badge${workingStatuses.has(item.status) ? ' is-active' : ''}`;
-  badge.textContent = statusLabel(item.status, item.status === 'blocked' && item.latestAgent === 'Maya' && item.latestMessage === 'Maya returned an invalid question');
+  const badge = document.createElement('span'); badge.className = `project-badge${blocked ? ' is-blocked' : workingStatuses.has(item.status) ? ' is-active' : ''}`;
+  badge.textContent = `${blocked ? '⚠ ' : ''}${statusLabel(item.status)}`;
   top.append(title, badge);
   const activity = document.createElement('p');
-  activity.textContent = item.latestMessage ? `${item.latestAgent ?? 'Team'} · ${item.latestMessage}` : 'No team activity recorded yet.';
+  activity.textContent = item.latestMessage ? `${item.latestAgent ?? 'Team'} · ${item.latestMessage}`
+    : blocked ? 'Reason not recorded.' : 'No team activity recorded yet.';
   const time = document.createElement('small'); time.textContent = `Updated ${dateLabel(item.updatedAt ?? item.createdAt)}`;
-  link.append(top, activity, time);
+  link.append(top, activity);
+  if (blocked || item.status === 'reviewed') {
+    const next = document.createElement('span'); next.className = 'project-card-next';
+    next.textContent = nextAction;
+    link.append(next);
+  }
+  link.append(time);
   link.addEventListener('click', event => { event.preventDefault(); changeHash(`#project/${item.id}`); openProject(item.id); });
   return link;
 }
@@ -200,7 +213,7 @@ async function loadProjects(reset = false) {
     projectList.append(...data.projects.map(projectCard));
     listOffset += data.projects.length;
     listLoadError = false;
-    projectListStatus.textContent = listOffset ? `${listOffset} project${listOffset === 1 ? '' : 's'} shown. Current work comes first.`
+    projectListStatus.textContent = listOffset ? `${listOffset} project${listOffset === 1 ? '' : 's'} shown. Blocked projects come first.`
       : 'No projects yet. Create one to talk with Maya.';
     loadMore.hidden = !data.hasMore;
     loadMore.textContent = 'Show more projects';
