@@ -60,3 +60,14 @@ test('hosted publisher runtime ends before a stale attempt can be reconciled', a
   assert.equal(seconds, 300);
   assert.ok(RECONCILE_MIN_AGE_MS > seconds * 1000);
 });
+
+test('private office opens on the room after project controls and keeps the work board below', async () => {
+  const privatePage = await read('../private/index.html');
+  const project = privatePage.indexOf('id="project-dashboard"');
+  const create = privatePage.indexOf('id="project-create-open"');
+  const room = privatePage.indexOf('id="office"');
+  const scene = privatePage.indexOf('class="office-layout"');
+  const board = privatePage.indexOf('id="work-board"');
+  assert.ok(project >= 0 && create > project && room > create && scene > room && board > scene);
+  assert.doesNotMatch(privatePage, /class="intro"|The work has<br \/><em>a place to sit/);
+});
