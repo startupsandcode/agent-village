@@ -63,6 +63,7 @@ test('hosted publisher runtime ends before a stale attempt can be reconciled', a
 
 test('private office opens on the room after project controls and keeps the work board below', async () => {
   const privatePage = await read('../private/index.html');
+  assert.match(privatePage, /<main id="main">\s*<h1 class="sr-only">Village Office<\/h1>/);
   const project = privatePage.indexOf('id="project-dashboard"');
   const create = privatePage.indexOf('id="project-create-open"');
   const room = privatePage.indexOf('id="office"');
