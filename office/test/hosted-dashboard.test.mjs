@@ -104,6 +104,7 @@ test('blocked projects show a clear reason and action; reviewed means review pas
   assert.match(blocked.children[1].textContent, /Project requires intervention/);
   assert.match(blocked.children[2].textContent, /inspect and resolve/);
   assert.match(blocked.attributes['aria-label'], /Blocked/);
+  assert.match(blocked.attributes['aria-label'], /Project requires intervention/);
   assert.equal(reviewed.children[0].children[1].textContent, 'Review passed');
   assert.match(reviewed.children[2].textContent, /check publication status/);
   const css = await readFile(new URL('../public/office-assets/styles.css', import.meta.url), 'utf8');
@@ -127,6 +128,23 @@ test('question failures and interruptions use warning cards; a requested answer 
   assert.equal(interrupted.children[1].textContent, 'Reason not recorded.');
   assert.doesNotMatch(needsAnswer.className, /is-blocked/);
   assert.equal(needsAnswer.children[0].children[1].textContent, 'Maya needs your answer');
+});
+
+test('legacy invalid Maya question stays visibly blocked with retry as its next action', async () => {
+  const ui = page({ summaryOverrides: [
+    { id: firstId, goal: 'Garden site', status: 'blocked', latestAgent: 'Maya',
+      latestMessage: 'Maya returned an invalid question', updatedAt: '2026-10-12T01:00:00Z' },
+    { id: secondId, goal: 'Reviewed site', status: 'reviewed', latestAgent: 'Quinn',
+      latestMessage: 'Review passed', updatedAt: '2026-10-12T02:00:00Z' },
+  ] });
+  await ui.run();
+  const card = ui.get('#project-list').children[0];
+  assert.match(card.className, /is-blocked/);
+  assert.equal(card.children[0].children[1].textContent, '⚠ Blocked');
+  assert.match(card.children[1].textContent, /invalid question/);
+  assert.equal(card.children[2].textContent, 'Open project to retry Maya question.');
+  assert.match(card.attributes['aria-label'], /Blocked/);
+  assert.match(card.attributes['aria-label'], /Maya returned an invalid question/);
 });
 
 test('a project opens its real detail and the back control restores the dashboard', async () => {
