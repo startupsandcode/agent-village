@@ -5,6 +5,7 @@ import { MAYA, PLAN, SAM, QUINN, validPlan, validReview, validText } from './pro
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const MAX_PROJECTS = 20;
 const MAX_CALLS = 80;
+const MAX_QUESTION_RETRIES = 80;
 const MAX_RESERVED_MICROS = 100_000_000; // $100 per owner/month, deliberately above default-model estimate
 const RESERVED_CALL_MICROS = 1_000_000; // $1 pessimistic allowance per call, not a provider bill
 const STALE_MS = 90_000;
@@ -19,6 +20,7 @@ function canRetryReview(project) {
     artifactDigest(project.files.html, project.files.css) === project.artifact.sha256;
 }
 function canRetryQuestion(project) {
+  if ((project.clarifyRequestIds?.length ?? (project.clarifyRequestId ? 1 : 0)) >= MAX_QUESTION_RETRIES) return false;
   if (project.status === 'question_error') return true;
   const latest = project.events?.at(-1);
   return project.status === 'blocked' && !project.answer && !project.plan &&
@@ -107,7 +109,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     await reserve(cookie, budgetId, kind);
     const next = structuredClone(project);
     next.status = to; next.stageStartedAt = new Date(now()).toISOString(); next[`${kind}RequestId`] = requestId;
-    prepare(next);
+    prepare(next, project);
     event(next, agent, 'start', message);
     const saved = await access.update(cookie, { id, expectedVersion: record.version, snapshot: next });
     if (!saved) return { duplicate: true, record: requireProject(await access.read(cookie, id)) };
@@ -148,11 +150,16 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     async retryQuestion(cookie, id, requestId) {
       requireRequestId(requestId);
       const record = requireProject(await access.read(cookie, id));
-      if (record.snapshot.clarifyRequestId === requestId) return visible(record);
+      if (record.snapshot.clarifyRequestId === requestId || record.snapshot.clarifyRequestIds?.includes(requestId)) return visible(record);
       if (!canRetryQuestion(record.snapshot)) throw new Error('Action not expected');
       const step = await advance(cookie, id, requestId, record.snapshot.status, 'clarifying', 'Maya',
         'Retrying the question for this saved project', 'clarify',
-        next => { next.clarifyRunId = randomUUID(); }, `${id}-${record.version}`, canRetryQuestion);
+        (next, prior) => {
+          const ids = new Set(prior.clarifyRequestIds ?? []);
+          if (prior.clarifyRequestId) ids.add(prior.clarifyRequestId);
+          next.clarifyRunId = randomUUID(); next.clarifyRequestIds = [...ids, requestId];
+        },
+        `${id}-${record.version}`, canRetryQuestion);
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
       return generate(cookie, id, step.record.version, MAYA, { goal: current.goal, domainProfile: current.domainProfile }, (updated, reply) => {
