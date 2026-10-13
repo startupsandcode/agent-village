@@ -24,7 +24,7 @@ cd agent-village</code></pre>
         <p>Make a file named <code>.env.local</code> at the repository root, then run <code>chmod 600 .env.local</code> so only your account can read it. It is ignored by Git. Put only your own provider choice and key there:</p>
         <pre><code>VILLAGE_PROVIDER=openai
 OPENAI_API_KEY=your-own-key-here</code></pre>
-        <p>For Anthropic, use <code>VILLAGE_PROVIDER=anthropic</code> and <code>ANTHROPIC_API_KEY</code>. Keep this file private on your computer. An already exported shell variable takes precedence over the file.</p>
+        <p>For Anthropic, use <code>VILLAGE_PROVIDER=anthropic</code> and <code>ANTHROPIC_API_KEY</code>. Keep this file private on your computer. The server reads the file at the root of the clone you start, not from another checkout or <code>office/</code>. An already exported shell variable takes precedence over the file.</p>
         <pre><code>node local/server.mjs</code></pre>
         <p>Open <a href="http://127.0.0.1:4174/">http://127.0.0.1:4174/</a>. Name your office, answer the short domain interview, and describe a small website to Maya. The status line confirms only that a key is present; the first request verifies live access. If it says <em>Missing OPENAI_API_KEY</em>, check the filename, location, provider choice, and restart the server.</p>
       </section>
