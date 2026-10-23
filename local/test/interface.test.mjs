@@ -641,3 +641,65 @@ test('local HTTP completes the mock project and serves only approved artifact pa
     assert.equal((await fetch(`${base}/artifact/${first.id}/state.json`)).status, 404);
   } finally { server.close(); }
 }));
+
+test('first-user acceptance flow covers office setup, approval, Quinn recovery, and export', async () => fixture(async root => {
+  const revisedSite = { ...validSite, sections: [...validSite.sections, { type: 'text', heading: 'Join us', body: 'Meet neighbors at the next garden gathering.' }] };
+  const provider = mockProvider([...sequence.slice(0, 3),
+    { approved: false, summary: 'Add a clear way to join.', findings: ['The site does not explain how to join.'] },
+    revisedSite,
+    { approved: true, summary: 'The join instructions resolve the finding.', findings: [] }]);
+  const engine = new VillageEngine({ root, provider });
+  const server = createLocalServer({ provider, engine, setupRoot: root });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const get = async path => await fetch(base + path);
+  const post = async (path, data, extraHeaders = {}) => await fetch(base + path, { method: 'POST',
+    headers: { 'content-type': 'application/json', ...extraHeaders }, body: JSON.stringify(data) });
+  const waitFor = async (id, statuses) => {
+    for (let i = 0; i < 100; i++) {
+      const result = await (await get(`/api/projects/${id}`)).json();
+      if (statuses.includes(result.status)) return result;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    throw new Error(`Project did not reach ${statuses.join(' or ')}`);
+  };
+  try {
+    const page = await get('/');
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Name your office/);
+    const status = await (await get('/api/status')).json();
+    assert.equal(status.ready, true);
+    assert.equal(status.officeName, '');
+    assert.equal((await (await post('/api/setup', { name: 'Garden Village' })).json()).name, 'Garden Village');
+    const domain = await post('/api/domain', { audience: 'Local gardeners', expertise: 'Native plants', rules: 'Use plain language' }, { origin: base });
+    assert.equal(domain.status, 200);
+    assert.equal((await (await get('/api/domain')).json()).audience, 'Local gardeners');
+
+    const start = await (await post('/api/projects', { goal: 'A small website for a neighborhood garden club', requestId: 'first-user-start-123' })).json();
+    assert.equal(start.status, 'needs_answer');
+    const planned = await (await post(`/api/projects/${start.id}/answer`, { answer: 'Invite nearby gardeners', requestId: 'first-user-answer-123' })).json();
+    assert.equal(planned.status, 'ready');
+    assert.match(planned.plan.summary, /garden club landing page/i);
+    const build = await post(`/api/projects/${start.id}/build`, { requestId: 'first-user-build-123' });
+    assert.equal(build.status, 202);
+    const rejected = await waitFor(start.id, ['changes_requested']);
+    assert.equal(rejected.revisionAvailable, true);
+    assert.equal(rejected.artifact.sha256.length, 64);
+
+    const revision = await post(`/api/projects/${start.id}/revise`, { requestId: 'first-user-revise-123' });
+    assert.equal(revision.status, 202);
+    const awaitingReview = await waitFor(start.id, ['awaiting_review']);
+    assert.notEqual(awaitingReview.artifact.sha256, rejected.artifact.sha256);
+    const approved = await (await post(`/api/projects/${start.id}/review`, { requestId: 'first-user-review-123' })).json();
+    assert.equal(approved.status, 'reviewed');
+    assert.equal(approved.events.at(-1).reviewedSha256, approved.artifact.sha256);
+
+    const exported = await (await post(`/api/projects/${start.id}/export`, {})).json();
+    assert.equal(exported.sha256, approved.artifact.sha256);
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.NODE_TEST_CONTEXT;
+    const verify = await execFileAsync(process.execPath, ['--test', 'verify.test.mjs'], { cwd: exported.path, env: cleanEnv });
+    assert.match(verify.stdout + verify.stderr, /pass 1/);
+    assert.equal(provider.calls.length, 6);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+}));

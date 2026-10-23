@@ -6,6 +6,8 @@ The workflow runs in VS Code with Codex and GitHub access. The [Village Office](
 
 ## Start here
 
+For the supported local first-user path on Windows, see the [Windows and local setup guide](docs/first-user-setup.md). It distinguishes the local single-user workflow from the separate hosted office.
+
 1. Open this repository in VS Code with the Codex extension.
 2. Connect to GitHub for issue and pull request work. If you use the GitHub CLI, sign in with `gh auth login`.
 3. Start a Codex chat in this repository and talk to Maya directly. Ask her to draft a GitHub Issue from the [work item template](.github/ISSUE_TEMPLATE/work-item.md).
