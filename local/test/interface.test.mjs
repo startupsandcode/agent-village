@@ -467,7 +467,10 @@ test('cancellation during Quinn review never records approval', async () => fixt
   assert.equal((await engine.get(first.id)).status, 'reviewing');
   await engine.cancel(first.id);
   release();
-  await new Promise(resolve => setTimeout(resolve, 20));
+  // The provider response is deliberately released after cancellation. Wait
+  // for the owned review task (including its final state save) before the
+  // fixture removes the project directory; a short timer races on CI.
+  await engine.running.get(first.id)?.promise;
   const result = await engine.get(first.id);
   assert.equal(result.status, 'cancelled');
   assert.ok(!result.events.some(event => event.type === 'review'));
