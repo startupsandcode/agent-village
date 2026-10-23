@@ -1,0 +1,53 @@
+.intro { padding: 50px 0 36px; }
+.intro h1 { font-size: clamp(44px, 6vw, 80px); }
+#provider { margin: 20px 0 0; color: var(--teal); font-size: 14px; font-weight: 700; }
+#request-state { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+.first-run { padding: 22px 25px; margin: 0 0 28px; border: 2px solid var(--line); border-radius: 18px; background: #e5f1ed; }
+.first-run p { max-width: 760px; }
+.first-run form { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.first-run label { flex-basis: 100%; font-weight: 800; }
+.first-run input { min-width: min(100%, 320px); padding: 10px 12px; border: 1px solid #8daaa8; border-radius: 8px; font: inherit; }
+.first-run button { padding: 11px 16px; border: 0; border-radius: 8px; background: var(--teal); color: white; font-weight: 800; }
+.start-steps { margin: 0 0 28px; padding: 20px 25px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
+.start-steps h2 { margin: 0 0 10px; }
+.start-steps ol { margin: 0 0 12px; padding-left: 25px; line-height: 1.6; }
+.start-steps li { margin: 5px 0; }
+.start-steps a { color: var(--teal); font-weight: 800; }
+.domain-interview { margin: 0 0 28px; padding: 25px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
+.domain-interview h2 { margin: 0 0 8px; }
+.domain-interview p { max-width: 760px; line-height: 1.5; }
+.domain-interview form { display: grid; gap: 9px; max-width: 760px; }
+.domain-interview label { margin-top: 8px; font-weight: 800; }
+.domain-interview textarea { width: 100%; padding: 11px 12px; border: 1px solid #8daaa8; border-radius: 8px; font: inherit; resize: vertical; }
+.domain-interview button { justify-self: start; padding: 11px 16px; border: 0; border-radius: 8px; background: var(--teal); color: white; font-weight: 800; cursor: pointer; }
+.chat, .activity { padding: 25px; margin: 0 0 48px; border: 2px solid var(--line); border-radius: 18px; background: #fffef8; }
+.chat h2, .activity h2 { margin-bottom: 14px; }
+.bubble { max-width: 760px; padding: 14px 17px; margin: 12px 0; border-radius: 12px; white-space: pre-wrap; line-height: 1.5; }
+.bubble.maya { background: #e5f1ed; }
+.bubble.user { background: #f1edf8; margin-left: auto; }
+.bubble.system { background: #fff1dc; }
+#chat-form { margin-top: 20px; }
+#chat-form label { display: block; margin-bottom: 8px; font-weight: 800; }
+#chat-form textarea { display: block; width: 100%; padding: 12px; border: 1px solid #8daaa8; border-radius: 8px; font: inherit; resize: vertical; }
+.chat button { padding: 10px 16px; margin-top: 10px; border: 0; border-radius: 8px; background: var(--teal); color: white; font-weight: 800; cursor: pointer; }
+.chat button:disabled { opacity: .55; cursor: wait; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+#events { padding-left: 24px; }
+#events li { padding: 12px 4px; border-bottom: 1px solid #dce6e1; line-height: 1.5; }
+#events li span, #events li small { display: block; }
+#events li small { color: var(--muted); }
+.activity a { color: var(--teal); font-weight: 800; }
+.activity button { padding: 10px 16px; border: 0; border-radius: 8px; background: var(--teal); color: white; font-weight: 800; cursor: pointer; }
+.activity button:disabled { opacity: .55; cursor: wait; }
+.activity pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.publish-form { max-width: 760px; margin: 18px 0; padding: 18px; border: 1px solid #b6ceca; border-radius: 12px; background: #edf4ef; display: grid; gap: 8px; }
+.publish-form h4, .publish-form p { margin: 0 0 4px; }
+.publish-form label { font-weight: 800; }
+.publish-form input { width: 100%; padding: 10px 12px; border: 1px solid #8daaa8; border-radius: 8px; font: inherit; }
+.publish-form button { justify-self: start; margin-top: 8px; }
+.activity iframe { display: block; width: 100%; height: 480px; margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; }
+.task-row { grid-template-columns: 140px minmax(0, 1fr); }
+.task-number { text-transform: capitalize; }
+.task-receipt { grid-column: 2; color: var(--muted); overflow-wrap: anywhere; }
+.office-room { min-height: 700px; }
+@media (max-width: 650px) { .task-row { grid-template-columns: 1fr; } .task-receipt { grid-column: 1; } }

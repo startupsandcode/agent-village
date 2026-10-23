@@ -1,5 +1,6 @@
 .DS_Store
 .env*
+!office/.env.example
 .vercel/
 node_modules/
 .npm-cache/
@@ -11,3 +12,4 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 node_modules
+local/.workspaces/

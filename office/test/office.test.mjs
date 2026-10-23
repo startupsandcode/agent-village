@@ -132,7 +132,7 @@ test('issue loader validates GitHub data and caches for 30 seconds', async () =>
   const loader = createTaskLoader({ now: () => now, runGh: async args => {
     calls++;
     assert.deepEqual(args, ['issue', 'list', '-R', 'startupsandcode/agent-village', '--state', 'open', '--limit', '100', '--json', 'number,title,url,updatedAt']);
-    return JSON.stringify([{ number: 7, title: 'Office', url: 'https://github.com/acme/village/issues/7', updatedAt: '2026-09-18T11:00:00Z' }]);
+    return JSON.stringify([{ number: 7, title: 'Office', url: 'https://github.com/startupsandcode/agent-village/issues/7', updatedAt: '2026-09-18T11:00:00Z' }]);
   } });
   assert.equal((await loader()).items[0].number, 7);
   now += 29_999;
@@ -141,6 +141,13 @@ test('issue loader validates GitHub data and caches for 30 seconds', async () =>
   now++;
   assert.equal((await loader()).status, 'ok');
   assert.equal(calls, 2);
+});
+test('cloned local office reads only its configured GitHub repository', async () => {
+  const loader = createTaskLoader({ repo: 'acme/village', runGh: async args => {
+    assert.equal(args[3], 'acme/village');
+    return JSON.stringify([{ number: 7, title: 'Client task', url: 'https://github.com/acme/village/issues/7', updatedAt: '2026-09-18T11:00:00Z' }]);
+  } });
+  assert.equal((await loader()).items[0].title, 'Client task');
 });
 
 test('concurrent agent check-ins preserve every report', async () => {

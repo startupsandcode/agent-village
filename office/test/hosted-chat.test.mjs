@@ -1,0 +1,275 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+
+test('hosted chat exposes Cancel while a clarification request is in flight', async () => {
+  const listeners = new Map();
+  function element(name) {
+    return { hidden: name === '#hosted-chat', disabled: false, value: '', textContent: '',
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren() {}, append() {}, focus() {} };
+  }
+  const elements = new Map();
+  const get = name => { if (!elements.has(name)) elements.set(name, element(name)); return elements.get(name); };
+  const initial = { id: 'project-1', version: 0, goal: 'Garden website', status: 'clarifying', events: [], artifact: null };
+  let releaseClarification;
+  const clarification = new Promise(resolve => { releaseClarification = resolve; });
+  let clarifyStarted;
+  const started = new Promise(resolve => { clarifyStarted = resolve; });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (_url, options = {}) => {
+    if (_url === '/api/maya-status') return reply({ runAvailable: true });
+    if (_url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (_url.startsWith('/api/maya-usage')) return reply({});
+    if (options.method === 'POST') {
+      const action = JSON.parse(options.body).action;
+      if (action === 'start') return reply(initial);
+      if (action === 'clarify') { clarifyStarted(); await clarification; return reply({ ...initial, version: 1, status: 'cancelled' }); }
+      if (action === 'cancel') return reply({ ...initial, version: 1, status: 'cancelled' });
+    }
+    return reply(initial);
+  };
+  const sessionStorage = { getItem() { return null; }, setItem() {}, removeItem() {} };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => element('new') }, fetch,
+    sessionStorage, crypto: { randomUUID: () => 'request-12345' }, setInterval: () => 1, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(get('#hosted-chat').hidden, false);
+  listeners.get('#project-create-open:click')();
+  get('#hosted-create-goal').value = 'Garden website';
+  const submit = listeners.get('#hosted-create-form:submit')({ preventDefault() {} });
+  await started;
+  assert.equal(get('#hosted-cancel').hidden, false);
+  await listeners.get('#hosted-cancel:click')();
+  assert.equal(get('#hosted-cancel').hidden, true);
+  releaseClarification();
+  await submit;
+  assert.equal(get('#hosted-cancel').hidden, true);
+});
+
+test('usage completes in the hosted panel after a cancelled provider call', async () => {
+  const elements = new Map(); const intervals = new Map(); const listeners = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: name === '#hosted-chat', disabled: false, value: '', textContent: '', children: [],
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren(...items) { this.children = items; }, append(...items) { this.children.push(...items); } });
+    return elements.get(name);
+  };
+  const id = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+  const active = { id, version: 1, goal: 'Garden website', status: 'clarifying', events: [], artifact: null };
+  const cancelled = { ...active, version: 2, status: 'cancelled' };
+  let measured = false;
+  let usageReads = 0;
+  const total = (pending) => ({ calls: 1, inputTokens: pending ? 0 : 15, outputTokens: pending ? 0 : 3,
+    estimatedCostNanoUsd: pending ? 0 : 60000, pendingCalls: pending ? 1 : 0, unreportedCalls: 0, unpricedCalls: 0 });
+  const usage = () => ({ month: '2026-10', pricingDate: '2026-10-11', pricingSources: {},
+    project: { total: total(!measured), agents: {}, truncated: false },
+    monthly: { total: total(!measured), agents: {}, truncated: false },
+    calls: [{ agent: 'Maya', provider: 'anthropic', model: 'claude-sonnet-5-5', state: measured ? 'measured' : 'pending',
+      inputTokens: measured ? 10 : null, cachedInputTokens: measured ? 4 : null,
+      cacheCreationInputTokens: measured ? 1 : null, outputTokens: measured ? 3 : null,
+      estimatedCostNanoUsd: measured ? 60000 : null }] });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) { usageReads++; return reply(usage()); }
+    if (options.method === 'POST') return reply(cancelled);
+    return reply(active);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }), createTextNode: text => ({ textContent: text }) },
+    fetch, sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
+    crypto: { randomUUID: () => 'request-12345' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-usage-status').textContent, /pending/);
+  await listeners.get('#hosted-cancel:click')();
+  const before = usageReads;
+  measured = true;
+  await intervals.get(5000)();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(usageReads > before);
+  assert.match(get('#hosted-usage-status').textContent, /15 input/);
+  assert.match(get('#hosted-usage-calls').children[0].textContent, /15 total input/);
+  assert.doesNotMatch(get('#hosted-usage-status').textContent, /pending/);
+});
+
+test('a reloaded hosted chat observes an existing clarification result', async () => {
+  const elements = new Map();
+  const intervals = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '',
+      addEventListener() {}, querySelector() { return { disabled: false, textContent: '' }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  const clarifying = { id: 'project-1', version: 1, status: 'clarifying', events: [], artifact: null };
+  let current = clarifying;
+  let clarifyPosts = 0;
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
+    if (options.method === 'POST') { clarifyPosts++; return reply(clarifying); }
+    return reply(current);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(get('#hosted-cancel').hidden, false);
+  assert.equal(clarifyPosts, 1); // the route reports the existing run
+  current = { ...clarifying, version: 2, status: 'needs_answer', events: [{ agent: 'Maya', type: 'question', message: 'Who is it for?' }] };
+  await intervals.get(2000)();
+  assert.equal(get('#hosted-message').disabled, false);
+  assert.equal(get('#hosted-cancel').hidden, true);
+  assert.match(get('#hosted-request-state').textContent, /needs answer/);
+});
+
+test('an older status read cannot replace a newer cancellation result', async () => {
+  const elements = new Map();
+  const listeners = new Map();
+  const intervals = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '',
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  const active = { id: 'project-1', version: 2, status: 'clarifying', events: [], artifact: null };
+  let reads = 0;
+  let resolveStaleRead;
+  const staleRead = new Promise(resolve => { resolveStaleRead = resolve; });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
+    if (options.method === 'POST') return reply({ ...active, version: 3, status: 'cancelled' });
+    return ++reads === 1 ? reply(active) : staleRead;
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const pendingRead = intervals.get(2000)();
+  await listeners.get('#hosted-cancel:click')();
+  assert.equal(get('#hosted-cancel').hidden, true);
+  resolveStaleRead(reply(active));
+  await pendingRead;
+  assert.equal(get('#hosted-cancel').hidden, true);
+  assert.match(get('#hosted-request-state').textContent, /Cancellation recorded/);
+});
+
+test('an in-flight stage poll cannot restore a stage after Cancel', async () => {
+  const elements = new Map(); const listeners = new Map(); const intervals = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '',
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; }, replaceChildren() {}, append() {} });
+    return elements.get(name);
+  };
+  const active = { id: 'project-1', version: 2, status: 'clarifying', events: [], artifact: null };
+  const cancelled = { ...active, version: 3, status: 'cancelled' };
+  let resolveStaleRead; let resolveAction; let reads = 0;
+  const staleRead = new Promise(resolve => { resolveStaleRead = resolve; });
+  const heldAction = new Promise(resolve => { resolveAction = resolve; });
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
+    if (options.method === 'POST') return JSON.parse(options.body).action === 'cancel' ? reply(cancelled) : heldAction;
+    return ++reads === 1 ? reply(active) : staleRead;
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => 'project-1', setItem() {}, removeItem() {} }, crypto: { randomUUID: () => 'request-12345' },
+    location: { hash: '#project/project-1' },
+    setInterval(fn, delay) { intervals.set(delay, fn); return delay; }, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const pendingRead = intervals.get(500)();
+  await listeners.get('#hosted-cancel:click')();
+  resolveStaleRead(reply(active));
+  await pendingRead;
+  assert.equal(get('#hosted-cancel').hidden, true);
+  assert.match(get('#hosted-request-state').textContent, /Cancellation recorded/);
+  resolveAction(reply(cancelled));
+});
+
+test('hosted preview links to sibling reviewed artifact files', async () => {
+  const elements = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '', children: [],
+      addEventListener() {}, querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren(...items) { this.children = items; }, append(...items) { this.children.push(...items); } });
+    return elements.get(name);
+  };
+  const id = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+  const reviewed = { id, version: 4, status: 'reviewed', events: [], artifact: { sha256: 'digest' } };
+  const reply = value => ({ ok: true, json: async () => value });
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) },
+    fetch: async url => reply(url === '/api/maya-status' ? { runAvailable: true } : url === '/api/maya-domain' ? { audience: '', expertise: '', rules: '' } : url.startsWith('/api/maya-usage') ? {} : reviewed),
+    sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
+    setInterval: () => 1, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const [, link, frame] = get('#hosted-artifact').children;
+  assert.equal(link.href, `/api/maya-artifacts/${id}/index.html`);
+  assert.equal(frame.src, link.href);
+  assert.equal(new URL('styles.css', `https://office.example${frame.src}`).pathname, `/api/maya-artifacts/${id}/styles.css`);
+});
+
+test('older hosted publish status cannot replace a newer receipt', async () => {
+  const elements = new Map(); const listeners = new Map();
+  const get = name => {
+    if (!elements.has(name)) elements.set(name, { hidden: true, disabled: false, textContent: '', value: '', children: [],
+      addEventListener(type, fn) { listeners.set(`${name}:${type}`, fn); },
+      querySelector() { return { disabled: false, textContent: '' }; },
+      replaceChildren(...items) { this.children = items; }, append(...items) { this.children.push(...items); } });
+    return elements.get(name);
+  };
+  const id = '6ba7b810-9dad-41d1-80b4-00c04fd430c8';
+  const reviewed = { id, version: 4, status: 'reviewed', events: [], artifact: { sha256: 'a'.repeat(64) } };
+  let resolveOld;
+  const old = new Promise(resolve => { resolveOld = resolve; });
+  let statusCalls = 0;
+  const base = { projectId: id, artifactSha256: reviewed.artifact.sha256, reviewed: true,
+    targets: { github: { owner: 'alice', repo: 'site', branch: 'village-publish', available: true },
+      vercel: { team: 'team', project: 'site', available: false } }, receipts: { github: null, vercel: null } };
+  const reply = value => ({ ok: true, json: async () => value });
+  const fetch = async (url, options = {}) => {
+    if (url === '/api/maya-status') return reply({ runAvailable: true });
+    if (url === '/api/maya-domain') return reply({ audience: '', expertise: '', rules: '' });
+    if (url.startsWith('/api/maya-usage')) return reply({});
+    if (options.method === 'POST' && JSON.parse(options.body).action === 'publishStatus') {
+      return ++statusCalls === 1 ? old : reply({ ...base, receipts: { github: { status: 'submitted', receipt: { commitSha: 'b'.repeat(40) } }, vercel: null } });
+    }
+    return reply(reviewed);
+  };
+  const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
+  runInNewContext(source, { document: { querySelector: get, createElement: () => ({ textContent: '' }) }, fetch,
+    sessionStorage: { getItem: () => id, setItem() {}, removeItem() {} },
+    location: { hash: `#project/${id}` },
+    setInterval: () => 1, clearInterval() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(statusCalls, 1);
+  await listeners.get('#hosted-publish-refresh:click')();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-publish-result').textContent, /bbbb/);
+  assert.equal(get('#hosted-publish-github').hidden, true);
+  resolveOld(reply(base));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(get('#hosted-publish-result').textContent, /bbbb/);
+  assert.equal(get('#hosted-publish-github').hidden, true);
+});

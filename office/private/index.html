@@ -4,11 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#dcecef" />
-    <meta name="description" content="A clear view of reported agent activity and the Agent Village task queue." />
+    <meta name="description" content="A clear view of recent hosted project stages and the Agent Village task queue." />
     <title>Village Office · Agent Village</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/office-assets/styles.css" />
     <script src="/office-assets/app.js" defer></script>
+    <script src="/office-assets/hosted-chat.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to office</a>
@@ -16,11 +17,11 @@
       <header class="site-header">
         <a class="brand" href="/" aria-label="Agent Village office home">
           <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
-          <span>Agent Village</span>
+          <span id="office-name">Agent Village</span>
         </a>
         <nav aria-label="Page sections">
-          <a href="#work-board">Work board</a>
           <a href="#office">Office</a>
+          <a href="#work-board">Work board</a>
           <a href="/">Public demo</a>
         </nav>
         <span class="private-badge"><span aria-hidden="true"></span> Private office</span>
@@ -30,37 +31,61 @@
       </header>
 
       <main id="main">
-        <section class="intro" aria-labelledby="page-title">
-          <div class="intro-copy">
-            <p class="intro-kicker">Welcome to the village office</p>
-            <h1 id="page-title">The work has<br /><em>a place to sit.</em></h1>
-            <p class="intro-text">See what Maya and the team have reported, and what is waiting in the issue queue. Each desk tells you when its update was made.</p>
+        <h1 class="sr-only">Village Office</h1>
+        <section class="hosted-maya" aria-labelledby="maya-title">
+          <p class="section-index">Work with Maya</p>
+          <h2 id="maya-title">Your projects</h2>
+          <p id="maya-readiness" role="status">Checking this office’s run setup…</p>
+          <div id="maya-setup">
+            <p>Sign-in only opens the private office. To run Maya here, the office owner must authorize provider spending, connect private project storage, and enable the hosted coordinator after a test. Enter keys only in server-side secret settings.</p>
+            <ul id="maya-setup-list" aria-label="Hosted setup status"></ul>
+            <ol><li>Choose OpenAI or Anthropic and configure your own API key on the server. A ChatGPT subscription is separate from an OpenAI API key.</li><li>For a working project now, clone this branch, run the local server, give Maya a small website goal, answer her clarification, then inspect Sam’s files and Quinn’s review.</li><li>After review, prepare the site and check your own GitHub and Vercel identities. Publishing remains an explicit terminal action.</li></ol>
+            <p>See the <a href="/setup">setup guide</a> for local commands and Preview requirements. This page does not collect credentials or claim a connection that has not been verified.</p>
           </div>
-          <div class="intro-note" aria-label="How activity is shown">
-            <span class="note-sun" aria-hidden="true">✳</span>
-            <p>Presence is reported by an agent and expires. An open ticket alone never means someone is working.</p>
+          <div id="hosted-chat" hidden>
+            <section id="project-dashboard" aria-labelledby="project-dashboard-title">
+              <div class="project-dashboard-heading">
+                <div><h3 id="project-dashboard-title">Current work</h3><p>Projects needing attention appear first. Open one to see Maya’s plan, team activity, files and receipts.</p></div>
+                <button id="project-create-open" type="button">Create new project</button>
+              </div>
+              <p id="project-list-status" role="status" aria-live="polite">Loading projects…</p>
+              <div id="project-list" class="project-list"></div>
+              <button id="project-load-more" type="button" hidden>Show more projects</button>
+            </section>
+            <section id="project-create" aria-labelledby="project-create-title" hidden>
+              <button id="project-create-back" class="project-back" type="button">← All projects</button>
+              <h3 id="project-create-title">Create a new project</h3>
+              <p>Tell Maya the result you want. She will ask a clarifying question before Sam builds and Quinn reviews.</p>
+              <section class="hosted-domain" aria-labelledby="hosted-domain-title">
+                <h4 id="hosted-domain-title">Teach your agents your domain</h4>
+                <p>Optional answers are saved for new projects and shared with Maya, Sam and Quinn. Existing projects keep their earlier context. Do not include keys or private customer data.</p>
+                <form id="hosted-domain-form">
+                  <label for="hosted-domain-audience">Who are you helping?</label><textarea id="hosted-domain-audience" maxlength="500" rows="2"></textarea>
+                  <label for="hosted-domain-expertise">What should the team know about your work?</label><textarea id="hosted-domain-expertise" maxlength="500" rows="2"></textarea>
+                  <label for="hosted-domain-rules">What makes a result useful in your domain?</label><textarea id="hosted-domain-rules" maxlength="500" rows="2"></textarea>
+                  <button type="submit">Save domain answers</button><p id="hosted-domain-result" role="status"></p>
+                </form>
+              </section>
+              <form id="hosted-create-form"><label for="hosted-create-goal">Project goal</label><textarea id="hosted-create-goal" maxlength="1000" rows="3" required placeholder="I want a small website for…"></textarea><button type="submit">Send to Maya</button></form>
+              <p id="hosted-create-state" role="status"></p>
+            </section>
+            <section id="project-detail" aria-labelledby="project-detail-title" hidden>
+              <div class="project-detail-heading"><button id="project-detail-back" class="project-back" type="button">← All projects</button><button id="hosted-new" type="button">Create new project</button></div>
+              <h3 id="project-detail-title">Project</h3><p id="project-detail-meta"></p>
+              <p id="project-progress" class="project-progress" role="status"></p>
+              <div id="project-plan" class="project-plan"></div>
+              <h4>Team activity</h4><ol id="project-team" class="project-team"></ol>
+              <h4>Talk with Maya</h4><form id="hosted-chat-form"><label for="hosted-message">Your answer to Maya</label><textarea id="hosted-message" maxlength="1000" rows="3" required placeholder="Answer Maya’s question…"></textarea><button type="submit">Send answer</button></form><p id="hosted-request-state" role="status"></p><div class="hosted-actions"><button id="hosted-retry-question" type="button" hidden>Retry Maya question</button><button id="hosted-build" type="button" hidden>Build site</button><button id="hosted-revise" type="button" hidden>Revise once using Quinn’s findings</button><button id="hosted-review" type="button" hidden>Ask Quinn to review</button><button id="hosted-cancel" type="button" hidden>Cancel current stage</button></div><h4>Recorded team activity</h4><ol id="hosted-events"></ol><div id="hosted-artifact"></div><section id="hosted-usage" aria-labelledby="hosted-usage-title"><h4 id="hosted-usage-title">API usage in this Village</h4><p>This tracks this Village’s OpenAI or Anthropic API calls, not your ChatGPT or Codex subscription quota. Token counts come from provider responses when available. Costs are estimates, not bills.</p><p id="hosted-usage-status" role="status">Checking usage records…</p><ul id="hosted-usage-agents"></ul><ol id="hosted-usage-calls"></ol><p id="hosted-usage-pricing"></p></section><section id="hosted-publish" hidden><h4>Publish reviewed site</h4><p>The exact destinations below are set by the office owner on the server. Each button makes a separate external write after you press it.</p><p id="hosted-publish-targets"></p><div class="hosted-actions"><button id="hosted-publish-github" type="button" hidden>Publish to private GitHub branch</button><button id="hosted-publish-vercel" type="button" hidden>Deploy Vercel Preview</button><button id="hosted-publish-reconcile" type="button" hidden>Reconcile a deleted Vercel attempt</button><button id="hosted-publish-refresh" type="button">Check publish status</button></div><p id="hosted-publish-result" role="status"></p></section>
+            </section>
           </div>
         </section>
+        <div id="global-office">
 
-        <section id="work-board" class="work-section" aria-labelledby="work-title">
-          <div class="section-heading board-heading">
-            <div>
-              <p class="section-index">The work board</p>
-              <h2 id="work-title">What’s on the list?</h2>
-            </div>
-            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
-          </div>
-          <div class="board-frame">
-            <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
-            <div id="task-list" class="task-list"></div>
-          </div>
-          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
-        </section>
 
         <div class="section-heading room-heading" id="office">
           <div>
             <p class="section-index">The room</p>
-            <h2>Who’s at their desk?</h2>
+            <h2>Recent hosted project stages</h2>
           </div>
           <div class="update-tools">
             <span id="last-updated" class="update-time">Checking for updates…</span>
@@ -71,7 +96,7 @@
           </div>
         </div>
 
-        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>Live desk check-ins are not connected to this hosted office yet. The work board still reads GitHub issues.</p>
+        <p id="desk-connectivity-note" class="desk-connectivity-note" hidden>These desks show recent hosted project stages. Local Codex and VS Code check-ins are not connected here.</p>
         <div id="fetch-message" class="fetch-message" role="status" aria-live="polite" hidden></div>
         <div id="change-message" class="sr-only" role="status" aria-live="polite"></div>
 
@@ -95,11 +120,27 @@
             <p id="active-caption" class="active-caption">Checking reported activity</p>
             <div class="sidebar-divider"></div>
             <h3>How this room works</h3>
-            <p>A lit desk means a fresh check-in. Each report carries a time and expires after 90 minutes unless the agent updates it. If reports are unavailable, the desk says so.</p>
+            <p>A lit desk means a hosted project stage started within the last 90 seconds. It does not confirm anyone is currently active in Codex or VS Code. Local check-ins are separate. If project activity is unavailable, the desk says so.</p>
             <p>The issue queue is a separate list of work to do. It does not set anyone’s status.</p>
-            <span class="sidebar-stamp">Reported, not guessed</span>
+            <span class="sidebar-stamp">Stage starts, not live presence</span>
           </aside>
         </section>
+
+        <section id="work-board" class="work-section" aria-labelledby="work-title">
+          <div class="section-heading board-heading">
+            <div>
+              <p class="section-index">The work board</p>
+              <h2 id="work-title">What’s on the list?</h2>
+            </div>
+            <p id="task-sync" class="board-sync">Reading GitHub issues…</p>
+          </div>
+          <div class="board-frame">
+            <div class="board-header"><span>Open issues</span><span id="task-count">—</span></div>
+            <div id="task-list" class="task-list"></div>
+          </div>
+          <p class="board-footnote">The task board comes from the private Agent Village GitHub repository. Only people with repository access can open its links.</p>
+        </section>
+        </div>
       </main>
 
       <footer class="site-footer"><span>Agent Village</span><span>Made for the humans watching the work.</span></footer>

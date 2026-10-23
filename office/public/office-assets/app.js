@@ -13,6 +13,7 @@ const fetchMessage = document.querySelector('#fetch-message');
 let lastSuccessfulUpdate = null;
 let latestData = null;
 let lastAnnouncement = null;
+let currentRepository = null;
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -31,7 +32,8 @@ function timeLabel(value) {
 function safeIssueLink(number) {
   const issue = Number(number);
   if (!Number.isSafeInteger(issue) || issue < 1) return null;
-  return `https://github.com/startupsandcode/agent-village/issues/${issue}`;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(currentRepository)) return null;
+  return `https://github.com/${currentRepository}/issues/${issue}`;
 }
 
 function renderAgent(profile, report, checkinsConfigured = true) {
@@ -67,7 +69,48 @@ function renderAgent(profile, report, checkinsConfigured = true) {
   return card;
 }
 
-function renderAgents(agents = [], checkinsConfigured = true) {
+function renderHostedActivity(activity) {
+  const available = activity?.status === 'ok' && Array.isArray(activity.agents);
+  const byName = new Map(available ? activity.agents.map(agent => [agent.name, agent]) : []);
+  const cards = roster.map(profile => {
+    const report = byName.get(profile.name);
+    const recent = report?.status === 'recent';
+    const card = node('article', `agent-card tone-${profile.tone} status-${available ? (recent ? 'working' : 'unknown') : 'not-connected'}`);
+    card.setAttribute('aria-label', `${profile.name}, ${profile.role}`);
+    const illustration = node('div', 'desk-illustration');
+    illustration.setAttribute('aria-hidden', 'true');
+    illustration.append(node('span', 'desk-chair'), node('span', 'desk-body'), node('span', `desk-object object-${profile.object}`));
+    const identity = node('div', 'agent-identity');
+    const names = node('div', 'agent-names');
+    names.append(node('h3', '', profile.name), node('p', '', profile.role));
+    identity.append(names, node('span', 'desk-light'));
+    const status = available ? (recent ? 'Hosted stage started recently' : 'No recent hosted stage') : 'Hosted activity unavailable';
+    const description = recent
+      ? `${report.stage === 'building' ? 'Building' : report.stage === 'reviewing' ? 'Reviewing' : report.stage === 'planning' ? 'Planning' : 'Clarifying'}: ${report.goal || 'Untitled project'}`
+      : available ? 'No hosted project stage started for this desk in the last 90 seconds.' : 'Project activity could not be read. Try Refresh.';
+    card.append(illustration, identity, node('span', 'agent-state', status), node('p', 'agent-task', description));
+    if (recent) {
+      const detail = node('div', 'agent-detail');
+      detail.append(node('span', '', `Started ${timeLabel(report.stageStartedAt)}`));
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(report.projectId)) {
+        const link = node('a', '', 'View project');
+        link.href = `#project/${report.projectId}`;
+        detail.append(link);
+      }
+      card.append(detail);
+    }
+    return card;
+  });
+  grid.replaceChildren(...cards);
+  const active = available ? [...byName.values()].filter(report => report.status === 'recent').length : null;
+  document.querySelector('#active-count').textContent = active === null ? '—' : String(active);
+  document.querySelector('#active-caption').textContent = available
+    ? 'hosted project stages started in the last 90 seconds'
+    : 'hosted project activity unavailable';
+}
+
+function renderAgents(agents = [], checkinsConfigured = true, activity = null) {
+  if (!checkinsConfigured) { renderHostedActivity(activity); return; }
   const byName = new Map(Array.isArray(agents) ? agents.map((agent) => [agent.name, agent]) : []);
   grid.replaceChildren(...roster.map((profile) => renderAgent(profile, byName.get(profile.name), checkinsConfigured)));
   if (!checkinsConfigured) {
@@ -135,18 +178,22 @@ async function refresh() {
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    currentRepository = typeof data.repository === 'string' ? data.repository : null;
     latestData = data;
     lastSuccessfulUpdate = data.generatedAt || new Date().toISOString();
     const checkinsConfigured = data.checkinsConfigured !== false;
-    document.querySelector('#desk-connectivity-note').hidden = checkinsConfigured;
-    renderAgents(data.agents, checkinsConfigured);
+    const deskNote = document.querySelector('#desk-connectivity-note');
+    deskNote.hidden = checkinsConfigured;
+    if (!checkinsConfigured) deskNote.textContent = 'This desk shows recent hosted project stages. Local Codex and VS Code check-ins are not connected here.';
+    renderAgents(data.agents, checkinsConfigured, data.activity);
     renderTasks(data.tasks);
     document.querySelector('#last-updated').textContent = `Checked ${timeLabel(lastSuccessfulUpdate)}`;
     const working = Array.isArray(data.agents) ? data.agents.filter(agent => agent.status === 'working').map(agent => agent.name) : [];
     const issueCount = data.tasks?.status === 'ok' ? data.tasks.items.length : null;
+    const recentStages = data.activity?.status === 'ok' ? data.activity.agents.filter(agent => agent.status === 'recent') : null;
     const deskAnnouncement = checkinsConfigured
       ? `${working.length} agents reporting work${working.length ? `: ${working.join(', ')}` : ''}.`
-      : 'Live desk check-ins are not connected.';
+      : recentStages ? `${recentStages.length} hosted project stages started recently.` : 'Hosted project activity is unavailable.';
     const announcement = `${deskAnnouncement} ${issueCount === null ? 'Issue queue unavailable.' : `${issueCount} open ${issueCount === 1 ? 'issue' : 'issues'}.`}`;
     if (lastAnnouncement !== announcement) document.querySelector('#change-message').textContent = announcement;
     lastAnnouncement = announcement;
@@ -166,6 +213,28 @@ async function refresh() {
 }
 
 refreshButton.addEventListener('click', refresh);
+fetch('/api/maya-status', { cache: 'no-store' }).then(async response => {
+  const readiness = document.querySelector('#maya-readiness');
+  if (!readiness) return;
+  if (!response.ok) { readiness.textContent = 'Hosted run setup is unavailable.'; return; }
+  const status = await response.json();
+  const officeName = document.querySelector('#office-name');
+  if (officeName && status.officeName) officeName.textContent = status.officeName;
+  readiness.textContent = `${status.provider === 'anthropic' ? 'Anthropic' : status.provider === 'openai' ? 'OpenAI' : 'Provider configuration'} ${status.providerKeyPresent ? 'key present server-side, not verified with the provider' : 'key missing'}. ${status.reason}`;
+  const list = document.querySelector('#maya-setup-list');
+  if (list && status.setup) {
+    const labels = [
+      ['viewerSignIn', 'Private viewer sign-in'],
+      ['runPermission', 'Provider spending permission'],
+      ['provider', 'Server-side provider key'],
+      ['durableProjects', 'Owner-scoped project and file storage'],
+      ['isolatedExecutor', 'Sandbox for broader code tasks'],
+      ['githubPublishing', 'GitHub publishing connection'],
+      ['vercelPublishing', 'Vercel publishing connection'],
+    ];
+    list.replaceChildren(...labels.map(([key, label]) => node('li', '', `${label}: ${status.setup[key] === 'connected' ? 'connected' : status.setup[key] === 'configured_unverified' ? 'configured, unverified' : status.setup[key] === 'not_authorized' ? 'not authorized' : status.setup[key] === 'key_present_unverified' ? 'key present, unverified' : status.setup[key] === 'not_required_for_static_sites' ? 'needed only for broader code tasks' : 'not connected'}`)));
+  }
+}).catch(() => { const readiness = document.querySelector('#maya-readiness'); if (readiness) readiness.textContent = 'Hosted run setup is unavailable.'; });
 renderAgents();
 refresh();
 setInterval(refresh, 30_000);
