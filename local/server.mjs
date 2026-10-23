@@ -133,7 +133,7 @@ export function createLocalServer({ provider, providerError, engine = provider &
           const value = await body(request);
           return send(response, 200, await engine.create(value.goal, value.requestId));
         }
-        const match = path.match(/^\/api\/projects\/([0-9a-f-]{36})(?:\/(answer|build|cancel|export))?$/);
+        const match = path.match(/^\/api\/projects\/([0-9a-f-]{36})(?:\/(answer|build|cancel|export|revise|review))?$/);
         if (!match) return send(response, 404, { error: 'Not found' });
         const [, id, action] = match;
         if (!action && request.method === 'GET') return send(response, 200, await engine.get(id));
@@ -143,11 +143,13 @@ export function createLocalServer({ provider, providerError, engine = provider &
         const value = await body(request);
         if (action === 'answer') return send(response, 200, await engine.answer(id, value.answer, value.requestId));
         if (action === 'build') return send(response, 202, await engine.build(id, value.requestId));
+        if (action === 'revise') return send(response, 202, await engine.revise(id, value.requestId));
+        if (action === 'review') return send(response, 200, await engine.review(id, value.requestId));
       }
-      const artifact = path.match(/^\/artifact\/([0-9a-f-]{36})\/(index\.html|styles\.css)$/);
+      const artifact = path.match(/^\/artifact\/([0-9a-f-]{36})(?:\/revisions\/([0-9a-f-]{36}))?\/(index\.html|styles\.css)$/);
       if (artifact && request.method === 'GET') {
-        const value = await engine.artifact(artifact[1], artifact[2]);
-        return send(response, 200, value, types[artifact[2]], { 'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'" });
+        const value = await engine.artifact(artifact[1], artifact[3], artifact[2]);
+        return send(response, 200, value, types[artifact[3]], { 'content-security-policy': "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'" });
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, { error: 'Method not allowed' });
       if (path === '/office-assets/styles.css') {
@@ -167,7 +169,7 @@ export function createLocalServer({ provider, providerError, engine = provider &
       const value = await readFile(join(publicDir, name));
       return send(response, 200, request.method === 'HEAD' ? '' : value, types[name], { 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; frame-src 'self'; frame-ancestors 'none'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'" });
     } catch (error) {
-      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Project not found|Artifact not found|Invalid usage query|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Do not put an API key in domain answers|Domain answers must be text under 500 characters each|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2–60 characters without markup or control characters|Only a reviewed project can be published|GitHub publishing credential is missing|Vercel publishing token missing on the server|Exact Vercel team and project names required|Vercel target must be an existing static project at its root with no Git link or custom build settings|A Preview publish already exists; inspect its status before retrying|GitHub target must be the requested writable private repository|GitHub target contains automation configuration; use a dedicated inert repository|Publishing requires a non-default branch|GitHub target branch must exist and be unprotected|GitHub branch already contains delivery files; choose a clean branch|Publishing to this branch is already in progress|Preview submission uncertain; inspect Vercel before retrying|Preview target or reviewed files differ from the saved submission|Publishing cancelled or timed out(?:; check the branch before retrying)?|GitHub request failed \([0-9]{3}\); check repository access, branch, or conflict|Vercel request failed \([0-9]{3}\); no response body was logged|Invalid GitHub (?:owner|repository|branch))$/.test(error.message) ? error.message : 'Publishing or project request failed';
+      const safe = /^(Goal and request ID required|Answer not expected|Build not expected|Action not expected|Artifact receipt invalid|Artifact changed before revision|Artifact changed during review|Revised artifact changed before review|Project not found|Artifact not found|Invalid usage query|JSON required|Request too large|Invalid JSON|Do not put an API key in chat|Do not put an API key in domain answers|Domain answers must be text under 500 characters each|Only a reviewed project can be prepared|Prepared project changed; inspect it before publishing|Office name must be 2[-–]60 characters without markup or control characters|Only a reviewed project can be published|GitHub publishing credential is missing|Vercel publishing token missing on the server|Exact Vercel team and project names required|Vercel target must be an existing static project at its root with no Git link or custom build settings|A Preview publish already exists; inspect its status before retrying|GitHub target must be the requested writable private repository|GitHub target contains automation configuration; use a dedicated inert repository|Publishing requires a non-default branch|GitHub target branch must exist and be unprotected|GitHub branch already contains delivery files; choose a clean branch|Publishing to this branch is already in progress|Preview submission uncertain; inspect Vercel before retrying|Preview target or reviewed files differ from the saved submission|Publishing cancelled or timed out(?:; check the branch before retrying)?|GitHub request failed \([0-9]{3}\); check repository access, branch, or conflict|Vercel request failed \([0-9]{3}\); no response body was logged|Invalid GitHub (?:owner|repository|branch))$/.test(error.message) ? error.message : 'Publishing or project request failed';
       return send(response, safe === 'Publishing or project request failed' ? 500 : 400, { error: safe });
     }
   });

@@ -339,6 +339,95 @@ test('rejected review remains visibly unapproved', async () => fixture(async roo
   assert.equal(result.status, 'changes_requested');
   assert.deepEqual(result.events.at(-1).findings, ['No signup instructions']);
 }));
+test('one Quinn rejection allows one bounded Sam revision and re-review of the replacement receipt', async () => fixture(async root => {
+  const revisedSite = { ...validSite, sections: [...validSite.sections, { type: 'text', heading: 'How to join', body: 'Use the signup form to join.' }] };
+  const provider = mockProvider([...sequence.slice(0, 3), { approved: false, summary: 'Add signup instructions.', findings: ['No signup instructions'] }, revisedSite,
+    { approved: true, summary: 'Signup instructions now address the finding.', findings: [] }]);
+  const engine = new VillageEngine({ root, provider });
+  const rejected = await completed(engine);
+  const oldSha = rejected.artifact.sha256;
+  assert.equal(rejected.status, 'changes_requested');
+  assert.equal(rejected.revisionAvailable, true);
+
+  const revising = await engine.revise(rejected.id, 'revise-review-123');
+  assert.equal(revising.status, 'revising');
+  assert.equal((await engine.revise(rejected.id, 'revise-review-123')).status, 'revising');
+  await engine.running.get(rejected.id).promise;
+  const awaitingReview = await engine.get(rejected.id);
+  assert.equal(awaitingReview.status, 'awaiting_review');
+  assert.notEqual(awaitingReview.artifact.sha256, oldSha);
+  assert.equal(awaitingReview.revisionAvailable, false);
+  assert.equal((await engine.artifact(rejected.id, 'index.html')).toString('utf8'), await readFile(join(root, rejected.id, 'revisions', awaitingReview.artifact.revisionId, 'index.html'), 'utf8'));
+  const revisionInput = JSON.parse(provider.calls[4].input);
+  assert.equal(revisionInput.reviewSummary, 'Add signup instructions.');
+  assert.deepEqual(revisionInput.findings, ['No signup instructions']);
+  assert.match(revisionInput.currentHtml, /Grow together/);
+  assert.equal(provider.calls.length, 5);
+
+  const approved = await engine.review(rejected.id, 'review-revision-123');
+  assert.equal(approved.status, 'reviewed');
+  assert.equal(approved.events.at(-1).reviewedSha256, approved.artifact.sha256);
+  assert.equal(provider.calls.length, 6);
+  assert.equal((await engine.review(rejected.id, 'review-revision-123')).status, 'reviewed');
+  await assert.rejects(engine.revise(rejected.id, 'revise-again-123'), /Action not expected/);
+  assert.equal(provider.calls.length, 6);
+}));
+test('failed Sam revision preserves the rejected receipt and permits one recovery attempt', async () => fixture(async root => {
+  const revisedSite = { ...validSite, sections: [...validSite.sections, { type: 'text', heading: 'Join us', body: 'Sign up today.' }] };
+  const provider = mockProvider([...sequence.slice(0, 3), { approved: false, summary: 'Add signup instructions.', findings: ['No signup instructions'] }, revisedSite,
+    { approved: true, summary: 'The finding is resolved.', findings: [] }]);
+  const originalGenerate = provider.generate.bind(provider);
+  let failNextRevision = true;
+  provider.generate = async args => {
+    if (provider.calls.length === 4) {
+      if (failNextRevision) { failNextRevision = false; throw new Error('Temporary provider failure'); }
+    }
+    return originalGenerate(args);
+  };
+  const engine = new VillageEngine({ root, provider });
+  const rejected = await completed(engine);
+  const originalSha = rejected.artifact.sha256;
+  await engine.revise(rejected.id, 'revise-failed-123');
+  await engine.running.get(rejected.id).promise;
+  const afterFailure = await engine.get(rejected.id);
+  assert.equal(afterFailure.status, 'changes_requested');
+  assert.equal(afterFailure.artifact.sha256, originalSha);
+  assert.equal(afterFailure.revisionAvailable, true);
+  assert.equal((await engine.revise(rejected.id, 'revise-failed-123')).revisionAvailable, true);
+  assert.equal(provider.calls.length, 4);
+  await engine.revise(rejected.id, 'revise-recovery-123');
+  await engine.running.get(rejected.id).promise;
+  assert.equal((await engine.get(rejected.id)).status, 'awaiting_review');
+  assert.equal((await engine.review(rejected.id, 'review-recovery-123')).status, 'reviewed');
+  assert.equal(provider.calls.length, 6);
+}));
+test('cancelling a revision review never records Quinn approval after the request returns', async () => fixture(async root => {
+  const revisedSite = { ...validSite, sections: [...validSite.sections, { type: 'text', heading: 'Join us', body: 'Sign up today.' }] };
+  const provider = mockProvider([...sequence.slice(0, 3), { approved: false, summary: 'Add signup instructions.', findings: ['No signup instructions'] }, revisedSite,
+    { approved: true, summary: 'Finding resolved.', findings: [] }]);
+  const originalGenerate = provider.generate.bind(provider);
+  let startReview; let releaseReview;
+  const reviewStarted = new Promise(resolve => { startReview = resolve; });
+  const reviewGate = new Promise(resolve => { releaseReview = resolve; });
+  provider.generate = async args => {
+    if (provider.calls.length === 5) { startReview(); await reviewGate; }
+    return originalGenerate(args);
+  };
+  const engine = new VillageEngine({ root, provider });
+  const rejected = await completed(engine);
+  await engine.revise(rejected.id, 'revise-cancel-123');
+  await engine.running.get(rejected.id).promise;
+  const sha = (await engine.get(rejected.id)).artifact.sha256;
+  const reviewing = engine.review(rejected.id, 'review-cancel-123');
+  await reviewStarted;
+  assert.equal((await engine.cancel(rejected.id)).status, 'cancelled');
+  releaseReview();
+  assert.equal((await reviewing).status, 'cancelled');
+  const current = await engine.get(rejected.id);
+  assert.equal(current.status, 'cancelled');
+  assert.equal(current.artifact.sha256, sha);
+  assert.equal(current.events.some(event => event.agent === 'Quinn' && event.type === 'review' && event.reviewedSha256 === sha), false);
+}));
 test('generated content is escaped and cannot insert executable markup', async () => fixture(async root => {
   const provider = mockProvider([...sequence.slice(0, 2), { ...validSite, sections: [{ ...validSite.sections[0], heading: '<script>alert(1)</script>' }, ...validSite.sections.slice(1)] }, sequence[3]]);
   const result = await completed(new VillageEngine({ root, provider }));
@@ -378,7 +467,10 @@ test('cancellation during Quinn review never records approval', async () => fixt
   assert.equal((await engine.get(first.id)).status, 'reviewing');
   await engine.cancel(first.id);
   release();
-  await new Promise(resolve => setTimeout(resolve, 20));
+  // The provider response is deliberately released after cancellation. Wait
+  // for the owned review task (including its final state save) before the
+  // fixture removes the project directory; a short timer races on CI.
+  await engine.running.get(first.id)?.promise;
   const result = await engine.get(first.id);
   assert.equal(result.status, 'cancelled');
   assert.ok(!result.events.some(event => event.type === 'review'));
@@ -545,7 +637,7 @@ test('local HTTP completes the mock project and serves only approved artifact pa
     assert.match(await artifact.text(), /Grow together/);
     const prepared = await post(`/api/projects/${first.id}/export`, {});
     assert.equal(prepared.sha256, finished.artifact.sha256);
-    assert.match(prepared.path, /\/site$/);
+    assert.match(prepared.path.replaceAll('\\', '/'), /\/site$/);
     assert.equal((await fetch(`${base}/artifact/${first.id}/state.json`)).status, 404);
   } finally { server.close(); }
 }));

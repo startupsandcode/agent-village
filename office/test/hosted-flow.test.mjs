@@ -162,6 +162,79 @@ test('one failed Quinn response keeps the artifact inspectable and permits one b
   assert.equal(formats.length, 5);
 });
 
+test('a rejected Quinn review permits one budgeted Sam revision and re-review of its new receipt', async () => {
+  const { store, budget } = memory();
+  const revisedSite = { ...site, sections: [...site.sections, { type: 'text', heading: 'Join the club', body: 'Sign up for a garden visit.' }] };
+  const replies = [{ question: 'Which colors?' },
+    { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build static site' },
+    site, { approved: false, summary: 'Add a signup step.', findings: ['No signup instructions'] },
+    revisedSite, { approved: true, summary: 'Signup instructions resolve the finding.', findings: [] }];
+  const inputs = [];
+  const provider = { async generate(args) { inputs.push(args); return { result: replies.shift(), usage: { input: 10, output: 20 } }; } };
+  const handler = createHostedMayaHandler({ env, auth, coordinator: createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider }), enabled: true });
+  const created = await call(handler, 'owner', { action: 'create', goal: 'Garden website', requestId: 'create-revision-123' });
+  const id = created.value.id;
+  await call(handler, 'owner', { action: 'answer', id, answer: 'Forest green', requestId: 'answer-revision-123' });
+  const built = await call(handler, 'owner', { action: 'build', id, requestId: 'build-revision-123' });
+  const rejected = await call(handler, 'owner', { action: 'review', id, requestId: 'review-reject-123' });
+  assert.equal(rejected.value.status, 'changes_requested');
+  assert.equal(rejected.value.revisionAvailable, true);
+  const oldSha = rejected.value.artifact.sha256;
+  const revised = await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-once-123' });
+  assert.equal(revised.status, 200);
+  assert.equal(revised.value.status, 'awaiting_review');
+  assert.notEqual(revised.value.artifact.sha256, oldSha);
+  assert.equal(revised.value.revisionAvailable, false);
+  assert.equal(JSON.parse(inputs[4].input).reviewSummary, 'Add a signup step.');
+  assert.deepEqual(JSON.parse(inputs[4].input).findings, ['No signup instructions']);
+  assert.match(JSON.parse(inputs[4].input).currentHtml, /Grow together/);
+  assert.equal(built.value.artifact.sha256, oldSha);
+  const duplicate = await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-once-123' });
+  assert.equal(duplicate.value.version, revised.value.version);
+  assert.equal(inputs.length, 5);
+  const approved = await call(handler, 'owner', { action: 'review', id, requestId: 'review-revised-123' });
+  assert.equal(approved.value.status, 'reviewed');
+  assert.equal(approved.value.events.at(-1).reviewedSha256, approved.value.artifact.sha256);
+  assert.equal(budget.calls, 7); // project, four initial providers, revision, and re-review
+  assert.equal(inputs.length, 6);
+  assert.equal((await call(handler, 'owner', { action: 'review', id, requestId: 'review-revised-123' })).value.version, approved.value.version);
+  assert.equal((await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-again-123' })).status, 400);
+  assert.equal(inputs.length, 6);
+});
+
+test('failed hosted revision preserves the prior artifact and allows one budgeted recovery attempt', async () => {
+  const { store, budget } = memory();
+  const revisedSite = { ...site, sections: [...site.sections, { type: 'text', heading: 'Join us', body: 'Sign up today.' }] };
+  const replies = [{ question: 'Which colors?' },
+    { summary: 'Garden site', audience: 'Neighbors', acceptance: ['Explain club', 'Invite neighbors'], decision: 'Build static site' },
+    site, { approved: false, summary: 'Add signup instructions.', findings: ['No signup instructions'] },
+    revisedSite, { approved: true, summary: 'Finding resolved.', findings: [] }];
+  let calls = 0;
+  const provider = { async generate() { calls++; if (calls === 5) throw new Error('Temporary provider failure'); return { result: replies.shift(), usage: { input: 10, output: 20 } }; } };
+  const handler = createHostedMayaHandler({ env, auth, coordinator: createHostedCoordinator({ access: createHostedProjectAccess({ auth, store }), budget, provider }), enabled: true });
+  const created = await call(handler, 'owner', { action: 'create', goal: 'Garden website', requestId: 'create-recovery-123' });
+  const id = created.value.id;
+  await call(handler, 'owner', { action: 'answer', id, answer: 'Forest green', requestId: 'answer-recovery-123' });
+  await call(handler, 'owner', { action: 'build', id, requestId: 'build-recovery-123' });
+  const rejected = await call(handler, 'owner', { action: 'review', id, requestId: 'review-recovery-1' });
+  const oldSha = rejected.value.artifact.sha256;
+  const failed = await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-failed-123' });
+  assert.equal(failed.value.status, 'changes_requested');
+  assert.equal(failed.value.artifact.sha256, oldSha);
+  assert.equal(failed.value.revisionAvailable, true);
+  const duplicate = await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-failed-123' });
+  assert.equal(duplicate.value.version, failed.value.version);
+  assert.equal(calls, 5);
+  const recovered = await call(handler, 'owner', { action: 'revise', id, requestId: 'revise-retry-123' });
+  assert.equal(recovered.value.status, 'awaiting_review');
+  assert.equal(recovered.value.revisionAvailable, false);
+  assert.notEqual(recovered.value.artifact.sha256, oldSha);
+  const approved = await call(handler, 'owner', { action: 'review', id, requestId: 'review-recovered-123' });
+  assert.equal(approved.value.status, 'reviewed');
+  assert.equal(calls, 7);
+  assert.equal(budget.calls, 8); // project plus seven budgeted provider attempts
+});
+
 test('a delayed second Quinn retry cannot run after the one allowed retry fails', async () => {
   const { store, budget } = memory();
   const baseAccess = createHostedProjectAccess({ auth, store });

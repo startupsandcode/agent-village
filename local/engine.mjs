@@ -3,11 +3,17 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './artifact.mjs';
-import { MAYA, PLAN, SAM, QUINN, validText, validPlan, validReview } from '../office/lib/project-roles.mjs';
+import { MAYA, PLAN, SAM, REVISION, QUINN, validText, validPlan, validReview } from '../office/lib/project-roles.mjs';
 import { readDomainProfile } from './domain.mjs';
 import { usageReceipt } from '../office/lib/usage.mjs';
 
-function publicProject(project) { const { goal, answer, plan, status, events, id, createdAt, artifact, domainProfile } = project; return { id, goal, answer, plan, status, events, createdAt, artifact, domainProfile }; }
+function publicProject(project) {
+  const { goal, answer, plan, status, events, id, createdAt, artifact, domainProfile } = project;
+  return { id, goal, answer, plan, status, events, createdAt, artifact, domainProfile,
+    revisionAttemptCount: project.revisionAttemptCount ?? 0, reviewAttemptCount: project.reviewAttemptCount ?? 0,
+    revisionAvailable: status === 'changes_requested' && !!artifact && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2,
+    reviewAvailable: status === 'awaiting_review' && (project.reviewAttemptCount ?? 0) < 2 };
+}
 
 export class VillageEngine {
   constructor({ root = new URL('./.workspaces/', import.meta.url), provider, now = () => new Date().toISOString() }) {
@@ -94,7 +100,8 @@ export class VillageEngine {
     }
     const domainProfile = await readDomainProfile(this.root);
     if (Object.values(domainProfile).some(value => this.provider.containsSecret?.(value))) throw new Error('Do not put an API key in domain answers');
-    const project = { id: randomUUID(), requestId, goal: goal.trim(), answer: null, plan: null, status: 'clarifying', events: [], createdAt: this.now(), artifact: null, domainProfile };
+    const project = { id: randomUUID(), requestId, goal: goal.trim(), answer: null, plan: null, status: 'clarifying', events: [], createdAt: this.now(), artifact: null, domainProfile,
+      revisionCount: 0, revisionAttemptCount: 0, reviewAttemptCount: 0 };
     this.projects.set(project.id, project);
     if (Object.values(domainProfile).some(Boolean)) this.event(project, 'System', 'context', 'Saved domain answers attached to Maya, Sam, and Quinn for this project');
     this.event(project, 'Maya', 'start', 'Reading the project goal');
@@ -155,6 +162,111 @@ export class VillageEngine {
     promise.finally(() => { if (this.running.get(id)?.promise === promise) this.running.delete(id); });
     return publicProject(project);
   }
+  async revise(id, requestId) {
+    const project = await this.getInternal(id);
+    if (project.revisionRequestId === requestId && requestId) return publicProject(project);
+    if (project.status !== 'changes_requested' || (project.revisionCount ?? 0) >= 1 || (project.revisionAttemptCount ?? 0) >= 2 ||
+        !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Action not expected');
+    const previous = await this.verifyArtifact(project);
+    if (!previous || !project.artifact) throw new Error('Artifact receipt invalid');
+    const rejectedReview = [...project.events].reverse().find(event => event.agent === 'Quinn' && event.type === 'blocked');
+    const findings = rejectedReview?.findings ?? [];
+    project.revisionRequestId = requestId;
+    project.revisionAttemptCount = (project.revisionAttemptCount ?? 0) + 1;
+    project.status = 'revising';
+    this.event(project, 'Sam', 'start', 'Revising the rejected site against Quinn’s findings');
+    const oldSha = project.artifact.sha256;
+    const oldArtifact = structuredClone(project.artifact);
+    await this.save(project);
+    if (project.status !== 'revising') return publicProject(project);
+    const controller = new AbortController();
+    const promise = this.runRevision(project, controller, { previous, findings, reviewSummary: rejectedReview?.message ?? '', oldSha, oldArtifact }).catch(() => {
+      if (!controller.signal.aborted && project.status === 'revising') {
+        project.status = 'changes_requested';
+        this.event(project, 'Sam', 'error', 'Could not persist the revised site.');
+      }
+    });
+    this.running.set(id, { controller, promise });
+    promise.finally(() => { if (this.running.get(id)?.promise === promise) this.running.delete(id); });
+    return publicProject(project);
+  }
+  async runRevision(project, controller, { previous, findings, reviewSummary, oldSha, oldArtifact }) {
+    let committed = false;
+    try {
+      const { result, usage } = await this.runProvider(project, 'Sam', `revise:${project.revisionRequestId}`, {
+        system: REVISION, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan, domainProfile: project.domainProfile,
+          reviewSummary, findings, currentHtml: previous.html.toString('utf8'), currentCss: previous.css.toString('utf8') }), signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      const artifact = renderArtifact(result);
+      if (controller.signal.aborted) return;
+      const current = await this.verifyArtifact(project);
+      if (controller.signal.aborted) return;
+      if (!current || project.artifact?.sha256 !== oldSha) throw new Error('Artifact changed before revision');
+      const revisionId = randomUUID();
+      const dir = join(this.root, project.id, 'revisions', revisionId);
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await writeFile(join(dir, 'index.html'), artifact.html, { flag: 'wx', mode: 0o600 });
+      if (controller.signal.aborted) return;
+      await writeFile(join(dir, 'styles.css'), artifact.css, { flag: 'wx', mode: 0o600 });
+      if (controller.signal.aborted) return;
+      const html = await readFile(join(dir, 'index.html'), 'utf8');
+      const css = await readFile(join(dir, 'styles.css'), 'utf8');
+      if (artifactDigest(html, css) !== artifact.sha256) throw new Error('Revised artifact changed before review');
+      const checks = verifyStaticSite(html, css);
+      project.artifact = { sha256: artifact.sha256, revisionId, url: `/artifact/${project.id}/revisions/${revisionId}/index.html`, checks };
+      project.revisionCount = 1;
+      project.status = 'awaiting_review';
+      this.event(project, 'Sam', 'result', `Created a revised index.html and styles.css; SHA-256 ${artifact.sha256}`, { usage, checks });
+      await this.save(project);
+      committed = true;
+    } catch (error) {
+      if (!controller.signal.aborted && project.status !== 'cancelled') {
+        if (!committed) { project.artifact = oldArtifact; project.revisionCount = 0; }
+        project.status = 'changes_requested';
+        this.event(project, 'Sam', 'error', error.message);
+      }
+    } finally { await this.save(project); }
+  }
+  async review(id, requestId) {
+    const project = await this.getInternal(id);
+    if (project.reviewRequestId === requestId && requestId) return publicProject(project);
+    if (project.status !== 'awaiting_review' || (project.reviewAttemptCount ?? 0) >= 2 || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Action not expected');
+    const files = await this.verifyArtifact(project);
+    if (!files || !project.artifact) throw new Error('Artifact receipt invalid');
+    const sha = project.artifact.sha256;
+    project.reviewRequestId = requestId;
+    project.reviewAttemptCount = (project.reviewAttemptCount ?? 0) + 1;
+    project.status = 'reviewing';
+    this.event(project, 'Quinn', 'start', `Reviewing the revised files at SHA-256 ${sha}`);
+    await this.save(project);
+    if (project.status !== 'reviewing') return publicProject(project);
+    const controller = new AbortController();
+    const promise = this.runManualReview(project, controller, files, sha, requestId);
+    this.running.set(id, { controller, promise });
+    try { await promise; return publicProject(project); }
+    finally { if (this.running.get(id)?.promise === promise) this.running.delete(id); }
+  }
+  async runManualReview(project, controller, files, sha, requestId) {
+    try {
+      const result = await this.runProvider(project, 'Quinn', `review:${requestId}`, {
+        system: QUINN, input: JSON.stringify({ goal: project.goal, plan: project.plan, domainProfile: project.domainProfile,
+          html: files.html.toString('utf8'), css: files.css.toString('utf8'), sha256: sha }), signal: controller.signal,
+      });
+      if (controller.signal.aborted || project.status !== 'reviewing') return;
+      const current = await this.verifyArtifact(project);
+      if (!current || project.artifact?.sha256 !== sha || artifactDigest(current.html, current.css) !== sha) throw new Error('Artifact changed during review');
+      if (!validReview(result.result)) throw new Error('Quinn returned an invalid review');
+      project.status = result.result.approved ? 'reviewed' : 'changes_requested';
+      this.event(project, 'Quinn', result.result.approved ? 'review' : 'blocked', result.result.summary,
+        { findings: result.result.findings, reviewedSha256: sha, usage: result.usage });
+    } catch (error) {
+      if (!controller.signal.aborted && project.status === 'reviewing') {
+        project.status = 'awaiting_review';
+        this.event(project, 'Quinn', 'error', error.message);
+      }
+    } finally { await this.save(project); }
+  }
   async runBuild(project, controller) {
     try {
       const { result, usage } = await this.runProvider(project, 'Sam', `build:${project.buildRequestId}`, { system: SAM, input: JSON.stringify({ goal: project.goal, answer: project.answer, plan: project.plan, domainProfile: project.domainProfile }), signal: controller.signal });
@@ -198,7 +310,7 @@ export class VillageEngine {
   }
   async cancel(id) {
     const project = await this.getInternal(id);
-    if (!['building', 'reviewing'].includes(project.status)) return publicProject(project);
+    if (!['building', 'reviewing', 'revising'].includes(project.status)) return publicProject(project);
     this.running.get(id)?.controller.abort();
     project.status = 'cancelled';
     this.event(project, 'Maya', 'cancelled', 'Build cancelled by user');
@@ -211,7 +323,7 @@ export class VillageEngine {
     let project;
     try { project = JSON.parse(await readFile(join(await this.checkedWorkspace(id), 'state.json'), 'utf8')); } catch { throw new Error('Project not found'); }
     if (project.id !== id) throw new Error('Project state mismatch');
-    if (['building', 'reviewing', 'planning', 'clarifying'].includes(project.status)) {
+    if (['building', 'reviewing', 'revising', 'planning', 'clarifying'].includes(project.status)) {
       project.status = 'interrupted';
       this.event(project, 'Maya', 'error', 'The server restarted during work. Inspect the project before starting a new run.');
       await this.save(project);
@@ -224,8 +336,10 @@ export class VillageEngine {
     let html, css;
     try {
       const dir = await this.checkedWorkspace(project.id);
+      const artifactDir = project.artifact.revisionId && /^[0-9a-f-]{36}$/.test(project.artifact.revisionId)
+        ? join(dir, 'revisions', project.artifact.revisionId) : dir;
       [html, css] = await Promise.all(['index.html', 'styles.css'].map(async name => {
-        const path = join(dir, name);
+        const path = join(artifactDir, name);
         const details = await lstat(path);
         if (!details.isFile() || details.isSymbolicLink()) throw new Error('Artifact path invalid');
         return readFile(path);
@@ -243,10 +357,11 @@ export class VillageEngine {
     return { html, css };
   }
   async get(id) { const project = await this.getInternal(id); await this.verifyArtifact(project); return publicProject(project); }
-  async artifact(id, name) {
+  async artifact(id, name, revisionId) {
     if (!['index.html', 'styles.css'].includes(name)) throw new Error('Artifact not found');
     const project = await this.getInternal(id);
     if (!project.artifact) throw new Error('Artifact not found');
+    if (revisionId && revisionId !== project.artifact.revisionId) throw new Error('Artifact not found');
     const verified = await this.verifyArtifact(project);
     if (!verified) throw new Error('Artifact not found');
     return verified[name === 'index.html' ? 'html' : 'css'];

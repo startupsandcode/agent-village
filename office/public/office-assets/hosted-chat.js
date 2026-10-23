@@ -23,6 +23,7 @@ const state = document.querySelector('#hosted-request-state');
 const events = document.querySelector('#hosted-events');
 const artifact = document.querySelector('#hosted-artifact');
 const build = document.querySelector('#hosted-build');
+const revise = document.querySelector('#hosted-revise');
 const review = document.querySelector('#hosted-review');
 const retryQuestion = document.querySelector('#hosted-retry-question');
 const cancel = document.querySelector('#hosted-cancel');
@@ -150,7 +151,7 @@ async function request(body) {
   return value;
 }
 const projectHash = /^#project\/([A-Za-z0-9-]{1,80})$/;
-const workingStatuses = new Set(['clarifying', 'needs_answer', 'planning', 'ready', 'building', 'awaiting_review', 'reviewing']);
+const workingStatuses = new Set(['clarifying', 'needs_answer', 'planning', 'ready', 'building', 'revising', 'awaiting_review', 'reviewing']);
 const blockedStatuses = new Set(['blocked', 'question_error', 'interrupted']);
 function showView(next) {
   view = next;
@@ -168,8 +169,8 @@ function dateLabel(value) {
 }
 function statusLabel(value, retryQuestionAvailable = false) {
   if (retryQuestionAvailable) return 'Retry Maya question';
-  return ({ needs_answer: 'Maya needs your answer', ready: 'Ready to build', awaiting_review: 'Ready for Quinn review',
-    reviewed: 'Review passed', blocked: 'Blocked', interrupted: 'Interrupted', question_error: 'Maya question failed' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
+  return ({ needs_answer: 'Maya needs your answer', ready: 'Ready to build', awaiting_review: 'Ready for Quinn review', revising: 'Sam is revising',
+    changes_requested: 'Quinn requested changes', reviewed: 'Review passed', blocked: 'Blocked', interrupted: 'Interrupted', question_error: 'Maya question failed' })[value] ?? String(value ?? 'Unknown').replaceAll('_', ' ');
 }
 function projectCard(item) {
   const link = document.createElement('a');
@@ -240,7 +241,7 @@ function clearDetail() {
   publishPanel.hidden = true; publishTargets.textContent = ''; publishResult.textContent = '';
   publishGithub.hidden = true; publishVercel.hidden = true; publishReconcile.hidden = true;
   message.disabled = true; form.querySelector('button').disabled = true;
-  build.hidden = true; review.hidden = true; retryQuestion.hidden = true; cancel.hidden = true;
+  build.hidden = true; revise.hidden = true; review.hidden = true; retryQuestion.hidden = true; cancel.hidden = true;
 }
 function openCreate(updateHash = true) {
   epoch++; project = null; selectedProjectId = null; pending = null; busy = false;
@@ -291,6 +292,8 @@ function render(value, expectedEpoch = epoch) {
   detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · ${statusLabel(value.status, value.retryQuestionAvailable)}`;
   progress.textContent = value.retryQuestionAvailable
     ? 'Maya could not record a question. Retry Maya on this saved project; there is no question for you to answer yet.'
+    : value.status === 'changes_requested' && value.revisionAvailable
+      ? 'Quinn rejected this exact artifact. Sam can make one bounded revision using the recorded findings; Quinn must review the new artifact before it can be published.'
     : `${statusLabel(value.status)}. ${value.events.at(-1)?.agent ?? 'Team'} last recorded: ${value.events.at(-1)?.message ?? 'No activity yet.'}`;
   planPanel.replaceChildren();
   const planTitle = document.createElement('h4'); planTitle.textContent = 'Maya’s plan';
@@ -306,11 +309,12 @@ function render(value, expectedEpoch = epoch) {
   form.querySelector('label').textContent = 'Your answer to Maya';
   form.querySelector('button').disabled = busy || message.disabled;
   build.hidden = value.status !== 'ready';
+  revise.hidden = !value.revisionAvailable;
   review.hidden = value.status !== 'awaiting_review' && !value.retryReviewAvailable;
   retryQuestion.hidden = !value.retryQuestionAvailable;
   retryQuestion.disabled = busy;
   review.textContent = value.retryReviewAvailable ? 'Retry Quinn review once' : 'Ask Quinn to review';
-  cancel.hidden = !['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
+  cancel.hidden = !['clarifying', 'planning', 'building', 'revising', 'reviewing'].includes(value.status);
   another.disabled = busy;
   events.replaceChildren(...value.events.map(entry => {
     const row = document.createElement('li');
@@ -430,7 +434,7 @@ async function act(action, values = {}) {
   feedback.textContent = `Waiting for a recorded ${action} result…`;
   submit.disabled = true;
   if (starting) createBack.disabled = true;
-  build.disabled = true; review.disabled = true; retryQuestion.disabled = true;
+  build.disabled = true; revise.disabled = true; review.disabled = true; retryQuestion.disabled = true;
   let pollActive = true;
   let polling = false;
   const timer = setInterval(async () => {
@@ -447,7 +451,7 @@ async function act(action, values = {}) {
   }, 500);
   try {
     const result = await request({ action, ...(project ? { id: project.id } : {}), ...values,
-      ...(['start', 'create', 'answer', 'build', 'review', 'retryQuestion'].includes(action) ? { requestId: pendingRequestId } : {}) });
+      ...(['start', 'create', 'answer', 'build', 'revise', 'review', 'retryQuestion'].includes(action) ? { requestId: pendingRequestId } : {}) });
     if (starting && createAttempt?.requestId === pendingRequestId) createAttempt.result = result;
     if (thisEpoch !== epoch) {
       if (starting && view === 'create' && createAttempt?.goal === values.goal && createGoal.value.trim() === values.goal) {
@@ -473,7 +477,7 @@ async function act(action, values = {}) {
     return result;
   } catch (error) { if (thisEpoch === epoch) feedback.textContent = error.message; }
   finally { pollActive = false; clearInterval(timer); if (thisEpoch === epoch) {
-    busy = false; build.disabled = false; review.disabled = false; retryQuestion.disabled = false; createBack.disabled = false;
+    busy = false; build.disabled = false; revise.disabled = false; review.disabled = false; retryQuestion.disabled = false; createBack.disabled = false;
     if (project) render(project, thisEpoch); else submit.disabled = false;
   } }
 }
@@ -513,6 +517,7 @@ form?.addEventListener('submit', async event => {
   }
 });
 build?.addEventListener('click', () => act('build'));
+revise?.addEventListener('click', () => act('revise'));
 review?.addEventListener('click', () => act('review'));
 retryQuestion?.addEventListener('click', () => act('retryQuestion'));
 cancel?.addEventListener('click', async () => {

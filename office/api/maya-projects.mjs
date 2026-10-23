@@ -8,6 +8,7 @@ const shapes = {
   retryQuestion: ['action', 'id', 'requestId'],
   answer: ['action', 'id', 'answer', 'requestId'],
   build: ['action', 'id', 'requestId'],
+  revise: ['action', 'id', 'requestId'],
   review: ['action', 'id', 'requestId'],
   cancel: ['action', 'id'],
   publishStatus: ['action', 'id'],
@@ -87,6 +88,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
         : body.action === 'retryQuestion' ? await active.retryQuestion(cookie, body.id, body.requestId)
         : body.action === 'answer' ? await active.answer(cookie, body.id, body.answer, body.requestId)
         : body.action === 'build' ? await active.build(cookie, body.id, body.requestId)
+        : body.action === 'revise' ? await active.revise(cookie, body.id, body.requestId)
         : body.action === 'review' ? await active.review(cookie, body.id, body.requestId)
         : await active.cancel(cookie, body.id);
       return send(response, 200, result);

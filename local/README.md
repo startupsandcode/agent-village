@@ -4,7 +4,7 @@ This is the first portable Agent Village slice. A visitor gives Maya a plain-lan
 
 ## Start from a fresh clone
 
-You need Node.js 20.12 or newer, existing GitHub access to this private repository, and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. Four calls is the maximum in one completed project (clarification, plan, build, review). Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal.
+You need Node.js 20.12 or newer, existing GitHub access to this private repository, and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. A normal project uses four calls (clarification, plan, build, review). If Quinn rejects the site, you may request one bounded Sam revision followed by Quinn's review; a failed revision or re-review can be retried once. The hard maximum is eight calls per project. Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal or choose a stage action.
 
 ```sh
 git clone --branch village-interface-20261011-01 --single-branch https://github.com/startupsandcode/agent-village.git
