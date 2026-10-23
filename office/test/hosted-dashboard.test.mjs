@@ -89,6 +89,7 @@ function page({ hash = '', failList = false, delayedStart = false, failDetail = 
 test('dashboard is the default and orders visible project cards before the Village room', async () => {
   const ui = page(); await ui.run();
   assert.equal(ui.get('#project-dashboard').hidden, false);
+  assert.equal(ui.get('#project-dashboard-title').textContent, 'Active projects');
   assert.equal(ui.get('#global-office').hidden, false);
   assert.equal(ui.get('#project-detail').hidden, true);
   const cards = ui.get('#project-list').children;
@@ -164,6 +165,9 @@ test('a project opens its real detail and the back control restores the dashboar
   assert.equal(ui.get('#project-detail').hidden, false);
   assert.equal(ui.get('#global-office').hidden, true);
   assert.equal(ui.get('#project-detail-title').textContent, 'Build the current garden site');
+  assert.equal(ui.get('#project-detail-lifecycle').textContent, 'Active project');
+  assert.equal(ui.get('#project-detail-lifecycle').hidden, false);
+  assert.match(ui.get('#project-detail-meta').textContent, /Workflow: building/);
   assert.match(ui.get('#project-team').children[1].textContent, /Sam: last recorded start/);
   ui.get('#project-detail-back').listeners.get('click')();
   await flush();
@@ -274,6 +278,12 @@ test('Archive and Restore views use persistent API actions with the displayed pr
   ui.get('#project-view-archived').listeners.get('click')(); await flush();
   assert.ok(ui.requests.some(([kind, url]) => kind === 'list' && url.includes('archived=true')));
   assert.equal(ui.get('#project-view-archived').attributes['aria-pressed'], 'true');
+  assert.equal(ui.get('#project-view-active').attributes['aria-pressed'], 'false');
+  assert.equal(ui.get('#project-dashboard-title').textContent, 'Archived projects');
+  ui.get('#project-view-active').listeners.get('click')(); await flush();
+  assert.equal(ui.get('#project-view-active').attributes['aria-pressed'], 'true');
+  assert.equal(ui.get('#project-view-archived').attributes['aria-pressed'], 'false');
+  assert.equal(ui.get('#project-dashboard-title').textContent, 'Active projects');
   await ui.get('#project-list').children[1].listeners.get('click')({ preventDefault() {} }); await flush();
   assert.equal(ui.get('#project-archive').disabled, false);
   await ui.get('#project-archive').listeners.get('click')(); await flush();
@@ -302,6 +312,9 @@ test('archived detail offers Restore and disables provider and publishing action
   await ui.get('#project-list').children[1].listeners.get('click')({ preventDefault() {} }); await flush();
   assert.equal(ui.get('#project-archive').hidden, true);
   assert.equal(ui.get('#project-restore').hidden, false);
+  assert.equal(ui.get('#project-detail-lifecycle').textContent, 'Archived project');
+  assert.match(ui.get('#project-detail-lifecycle').className, /is-archived/);
+  assert.match(ui.get('#project-detail-meta').textContent, /Workflow: Review passed/);
   assert.equal(ui.get('#hosted-publish').hidden, true);
   assert.equal(ui.get('#hosted-build').hidden, true);
   assert.equal(ui.get('#hosted-message').disabled, true);

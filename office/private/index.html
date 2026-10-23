@@ -45,10 +45,10 @@
           <div id="hosted-chat" hidden>
             <section id="project-dashboard" aria-labelledby="project-dashboard-title">
               <div class="project-dashboard-heading">
-                <div><h3 id="project-dashboard-title">Current work</h3><p>Projects needing attention appear first. Open one to see Maya’s plan, team activity, files and receipts.</p></div>
+                <div><h3 id="project-dashboard-title">Active projects</h3><p>Open a project to see Maya’s plan, team activity, files and receipts.</p></div>
                 <button id="project-create-open" type="button">Create new project</button>
               </div>
-              <div class="actions" aria-label="Project view"><button id="project-view-active" type="button" aria-pressed="true">Active</button><button id="project-view-archived" type="button" aria-pressed="false">Archived</button></div>
+              <div class="project-view-selector" role="group" aria-label="Project view"><button id="project-view-active" type="button" aria-pressed="true">Active</button><button id="project-view-archived" type="button" aria-pressed="false">Archived</button></div>
               <p id="project-list-status" role="status" aria-live="polite">Loading projects…</p>
               <div id="project-list" class="project-list"></div>
               <button id="project-load-more" type="button" hidden>Show more projects</button>
@@ -71,8 +71,11 @@
               <p id="hosted-create-state" role="status"></p>
             </section>
             <section id="project-detail" aria-labelledby="project-detail-title" hidden>
-              <div class="project-detail-heading"><button id="project-detail-back" class="project-back" type="button">← All projects</button><button id="project-archive" type="button" hidden>Archive project</button><button id="project-restore" type="button" hidden>Restore project</button><button id="hosted-new" type="button">Create new project</button></div>
-              <h3 id="project-detail-title">Project</h3><p id="project-detail-meta"></p>
+              <div class="project-detail-nav"><button id="project-detail-back" class="project-back" type="button">← All projects</button><button id="hosted-new" type="button">Create new project</button></div>
+              <div class="project-detail-heading">
+                <div class="project-detail-identity"><span id="project-detail-lifecycle" class="project-lifecycle-badge" hidden></span><h3 id="project-detail-title">Project</h3><p id="project-detail-meta"></p></div>
+                <div class="project-lifecycle-actions"><button id="project-archive" type="button" hidden>Archive project</button><button id="project-restore" type="button" hidden>Restore project</button></div>
+              </div>
               <p id="project-progress" class="project-progress" role="status"></p>
               <div id="project-plan" class="project-plan"></div>
               <h4>Team activity</h4><ol id="project-team" class="project-team"></ol>

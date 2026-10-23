@@ -1,5 +1,6 @@
 const chat = document.querySelector('#hosted-chat');
 const dashboard = document.querySelector('#project-dashboard');
+const dashboardTitle = document.querySelector('#project-dashboard-title');
 const projectList = document.querySelector('#project-list');
 const projectListStatus = document.querySelector('#project-list-status');
 const loadMore = document.querySelector('#project-load-more');
@@ -18,6 +19,7 @@ const detailView = document.querySelector('#project-detail');
 const detailBack = document.querySelector('#project-detail-back');
 const detailTitle = document.querySelector('#project-detail-title');
 const detailMeta = document.querySelector('#project-detail-meta');
+const detailLifecycle = document.querySelector('#project-detail-lifecycle');
 const progress = document.querySelector('#project-progress');
 const planPanel = document.querySelector('#project-plan');
 const team = document.querySelector('#project-team');
@@ -207,6 +209,7 @@ function projectCard(item) {
   return link;
 }
 async function loadProjects(reset = false) {
+  dashboardTitle.textContent = showArchived ? 'Archived projects' : 'Active projects';
   const sequence = ++listSequence;
   if (reset) { listOffset = 0; projectList.replaceChildren(); }
   projectListStatus.textContent = reset ? 'Loading projects…' : 'Loading more projects…';
@@ -262,6 +265,7 @@ function goDashboard(updateHash = true) {
 }
 function clearDetail() {
   detailMeta.textContent = ''; progress.textContent = '';
+  detailLifecycle.hidden = true;
   planPanel.replaceChildren(); team.replaceChildren(); events.replaceChildren(); artifact.replaceChildren();
   usageStatus.textContent = 'Usage records unavailable until this project opens.';
   usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.replaceChildren();
@@ -320,7 +324,10 @@ function render(value, expectedEpoch = epoch) {
   if (usageSignature !== lastUsageSignature) { lastUsageSignature = usageSignature; loadUsage(value.id); }
   sessionStorage.setItem('hostedVillageProjectId', value.id);
   detailTitle.textContent = value.goal || 'Untitled project';
-  detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · ${archived ? 'Archived' : statusLabel(value.status, value.retryQuestionAvailable)}`;
+  detailLifecycle.hidden = false;
+  detailLifecycle.textContent = archived ? 'Archived project' : 'Active project';
+  detailLifecycle.className = `project-lifecycle-badge${archived ? ' is-archived' : ''}`;
+  detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · Workflow: ${statusLabel(value.status, value.retryQuestionAvailable)}`;
   progress.textContent = value.retryQuestionAvailable
     ? 'Maya could not record a question. Retry Maya on this saved project; there is no question for you to answer yet.'
     : value.status === 'changes_requested' && value.revisionAvailable
