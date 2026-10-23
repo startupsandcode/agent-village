@@ -4,6 +4,8 @@ const conversation = document.querySelector('#conversation');
 const events = document.querySelector('#events');
 const provider = document.querySelector('#provider');
 const build = document.querySelector('#build');
+const revise = document.querySelector('#revise');
+const review = document.querySelector('#review');
 const cancel = document.querySelector('#cancel');
 const newProject = document.querySelector('#new-project');
 const artifact = document.querySelector('#artifact');
@@ -28,6 +30,9 @@ let busy = false;
 let lastEventCount = 0;
 let pendingMessage = null;
 let pendingBuildId = null;
+let pendingRevisionId = null;
+let pendingReviewId = null;
+let artifactSha = null;
 let simulated = false;
 let conversationEpoch = 0;
 let usageSignature = '';
@@ -151,12 +156,17 @@ function display(value) {
     if (['review', 'blocked', 'error', 'cancelled'].includes(event.type)) bubble('system', `${event.agent}: ${event.message}`);
   }
   lastEventCount = value.events.length;
-  build.hidden = value.status !== 'ready'; cancel.hidden = !['building', 'reviewing'].includes(value.status);
+  build.hidden = value.status !== 'ready';
+  if (revise) revise.hidden = value.status !== 'changes_requested' || !value.revisionAvailable;
+  if (review) { review.hidden = value.status !== 'awaiting_review' || !value.reviewAvailable; review.textContent = value.reviewAttemptCount ? 'Retry Quinn review' : 'Ask Quinn to review the revision'; }
+  cancel.hidden = !['building', 'reviewing', 'revising'].includes(value.status);
   if (exportButton) exportButton.hidden = value.status !== 'reviewed';
-  newProject.hidden = ['clarifying', 'planning', 'building', 'reviewing'].includes(value.status);
+  newProject.hidden = ['clarifying', 'planning', 'building', 'revising', 'reviewing'].includes(value.status);
   field.disabled = busy || !['needs_answer'].includes(value.status) && value.events.length > 0;
   form.querySelector('button').disabled = busy || field.disabled;
-  if (value.artifact && !artifact.firstChild) {
+  if (value.artifact && artifactSha !== value.artifact.sha256) {
+    artifactSha = value.artifact.sha256;
+    artifact.replaceChildren();
     const heading = document.createElement('h3'); heading.textContent = value.status === 'reviewed' ? 'Reviewed artifact' : 'Artifact awaiting or requiring review';
     const link = document.createElement('a'); link.href = value.artifact.url; link.textContent = 'Open website'; link.target = '_blank'; link.rel = 'noopener';
     const digest = document.createElement('p'); digest.textContent = `SHA-256: ${value.artifact.sha256}`;
@@ -164,7 +174,7 @@ function display(value) {
     artifact.append(heading, link, digest, frame);
   }
   if (value.artifact) artifact.querySelector('h3').textContent = value.status === 'reviewed' ? 'Reviewed artifact' : 'Artifact awaiting or requiring review';
-  else if (artifact.firstChild) artifact.replaceChildren();
+  else if (!value.artifact && artifact.firstChild) { artifact.replaceChildren(); artifactSha = null; }
 }
 form.addEventListener('submit', async event => {
   event.preventDefault(); if (busy) return;
@@ -188,6 +198,8 @@ form.addEventListener('submit', async event => {
   finally { if (epoch === conversationEpoch) { pendingRequest(null); busy = false; if (!project) form.querySelector('button').disabled = false; else display(project); } }
 });
 build.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { pendingBuildId ??= id(); const result = await api(`/api/projects/${projectId}/build`, 'POST', { requestId: pendingBuildId }); if (epoch !== conversationEpoch) return; display(result); pendingBuildId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
+revise?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; revise.disabled = true; try { pendingRevisionId ??= id(); const result = await api(`/api/projects/${projectId}/revise`, 'POST', { requestId: pendingRevisionId }); if (epoch !== conversationEpoch) return; display(result); pendingRevisionId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } finally { revise.disabled = false; } });
+review?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; review.disabled = true; try { pendingReviewId ??= id(); const result = await api(`/api/projects/${projectId}/review`, 'POST', { requestId: pendingReviewId }); if (epoch !== conversationEpoch) return; display(result); pendingReviewId = null; } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } finally { review.disabled = false; } });
 cancel.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}/cancel`, 'POST'); if (epoch === conversationEpoch) display(result); } catch (error) { if (epoch === conversationEpoch) bubble('system', error.message); } });
 exportButton?.addEventListener('click', async () => { const epoch = conversationEpoch; const projectId = project.id; exportButton.disabled = true; try { const result = await api(`/api/projects/${projectId}/export`, 'POST'); if (epoch !== conversationEpoch) return; exportPath.textContent = result.path; if (connectionButton) connectionButton.hidden = false; if (publishActions) publishActions.hidden = false; publishStatus.textContent = 'Reviewed files prepared locally. Check the project and exact target before choosing either publish action.'; setupState('publish', 'Reviewed files prepared. GitHub and Vercel actions are available below.'); } catch (error) { if (epoch === conversationEpoch) publishStatus.textContent = error.message; } finally { exportButton.disabled = false; } });
 function publishResult(node, message, url) {
@@ -266,7 +278,7 @@ connectionButton?.addEventListener('click', async () => {
   } catch { if (epoch === conversationEpoch) connectionStatus.textContent = 'Connection check unavailable.'; }
   finally { connectionButton.disabled = false; }
 });
-newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; lastEventCount = 0; usageSignature = ''; if (usageStatus) { usageStatus.textContent = 'Loading local usage…'; usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.textContent = ''; } conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishActions) publishActions.hidden = true; if (previewStatusButton) previewStatusButton.hidden = true; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before publishing. No publish action has been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your publishing targets.'); newProject.hidden = true; build.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); loadUsage(); });
+newProject.addEventListener('click', () => { conversationEpoch++; pendingRequest(null); sessionStorage.removeItem('villageProjectId'); project = null; window.villageProject = null; window.dispatchEvent(new CustomEvent('village-project', { detail: null })); busy = false; pendingMessage = null; pendingBuildId = null; pendingRevisionId = null; pendingReviewId = null; artifactSha = null; lastEventCount = 0; usageSignature = ''; if (usageStatus) { usageStatus.textContent = 'Loading local usage…'; usageAgents.replaceChildren(); usageCalls.replaceChildren(); usagePricing.textContent = ''; } conversation.replaceChildren(); events.replaceChildren(); artifact.replaceChildren(); if (exportButton) exportButton.hidden = true; if (exportPath) exportPath.textContent = ''; if (publishActions) publishActions.hidden = true; if (previewStatusButton) previewStatusButton.hidden = true; if (connectionButton) connectionButton.hidden = true; if (connectionStatus) connectionStatus.textContent = ''; if (publishStatus) publishStatus.textContent = 'A reviewed local site is required before publishing. No publish action has been requested.'; setupState('project', 'Describe a small website below.'); setupState('publish', 'After review, prepare the site and inspect your publishing targets.'); newProject.hidden = true; build.hidden = true; if (revise) revise.hidden = true; if (review) review.hidden = true; cancel.hidden = true; field.disabled = false; form.querySelector('button').disabled = false; field.focus(); loadUsage(); });
 setInterval(async () => { if (project && (['clarifying', 'planning', 'building', 'reviewing'].includes(project.status) || project.artifact)) { const epoch = conversationEpoch; const projectId = project.id; try { const result = await api(`/api/projects/${projectId}`); if (epoch === conversationEpoch && project?.id === projectId) display(result); } catch {} } }, 1000);
 const initialEpoch = conversationEpoch;
 api('/api/status').then(async value => {

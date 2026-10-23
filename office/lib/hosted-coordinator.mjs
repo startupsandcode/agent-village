@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './static-site.mjs';
-import { MAYA, PLAN, SAM, QUINN, validPlan, validReview, validText } from './project-roles.mjs';
+import { MAYA, PLAN, SAM, REVISION, QUINN, validPlan, validReview, validText } from './project-roles.mjs';
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const MAX_PROJECTS = 20;
@@ -19,6 +19,13 @@ function canRetryReview(project) {
     typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
     artifactDigest(project.files.html, project.files.css) === project.artifact.sha256;
 }
+function canRevise(project) {
+  const latest = project.events?.at(-1);
+  return project.status === 'changes_requested' && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2 &&
+    typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
+    artifactDigest(project.files.html, project.files.css) === project.artifact.sha256 &&
+    (latest?.agent === 'Quinn' && latest.type === 'blocked' || latest?.agent === 'Sam' && latest.type === 'error');
+}
 function canRetryQuestion(project) {
   if ((project.clarifyRequestIds?.length ?? (project.clarifyRequestId ? 1 : 0)) >= MAX_QUESTION_RETRIES) return false;
   if (project.status === 'question_error') return true;
@@ -28,7 +35,7 @@ function canRetryQuestion(project) {
 }
 function visible(record) {
   const { files, ...project } = record.snapshot;
-  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)),
+  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)), revisionAvailable: Boolean(canRevise(record.snapshot)),
     retryQuestionAvailable: Boolean(canRetryQuestion(record.snapshot)), version: record.version };
 }
 function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
@@ -196,6 +203,30 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
         event(next, 'Sam', 'result', `Created index.html and styles.css; SHA-256 ${artifact.sha256}`, reply.usage);
       }, 'Sam', `${id}:build:${requestId}`);
     },
+    async revise(cookie, id, requestId) {
+      requireRequestId(requestId);
+      const before = requireProject(await access.read(cookie, id));
+      const attempts = before.snapshot.revisionAttemptCount ?? 0;
+      const step = await advance(cookie, id, requestId, 'changes_requested', 'revising', 'Sam',
+        'Correcting the rejected site against Quinn’s findings', 'revise',
+        next => { next.revisionAttemptCount = (next.revisionAttemptCount ?? 0) + 1; },
+        `${id}-revision-attempt-${attempts + 1}`, canRevise);
+      if (step.duplicate) return visible(step.record);
+      const current = step.record.snapshot;
+      const latestReview = [...current.events].reverse().find(entry => entry.agent === 'Quinn' && entry.type === 'blocked');
+      if (!current.files || artifactDigest(current.files.html, current.files.css) !== current.artifact?.sha256) throw new Error('Artifact receipt invalid');
+      return generate(cookie, id, step.record.version, REVISION, { goal: current.goal, answer: current.answer, plan: current.plan,
+        domainProfile: current.domainProfile, reviewSummary: latestReview?.message ?? '', findings: latestReview?.findings ?? [],
+        currentHtml: current.files.html, currentCss: current.files.css }, (next, reply) => {
+        if (!next.files || artifactDigest(next.files.html, next.files.css) !== next.artifact?.sha256) throw new Error('Artifact receipt invalid');
+        const artifact = renderArtifact(reply.result);
+        next.files = { html: artifact.html, css: artifact.css };
+        next.artifact = { sha256: artifact.sha256, checks: artifact.checks };
+        next.revisionCount = 1;
+        next.status = 'awaiting_review';
+        event(next, 'Sam', 'result', `Created a revised static site; SHA-256 ${artifact.sha256}`, reply.usage);
+      }, 'Sam', `${id}:revise:${requestId}`, 'changes_requested');
+    },
     async review(cookie, id, requestId) {
       const before = await read(cookie, id);
       const retry = before.retryReviewAvailable;
@@ -203,7 +234,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
       const step = await advance(cookie, id, requestId, retry ? 'blocked' : 'awaiting_review', 'reviewing', 'Quinn',
         retry ? 'Retrying review of the same generated files' : 'Reviewing the exact generated files', 'review',
         next => { if (retry) next.reviewRetryCount = (next.reviewRetryCount ?? 0) + 1; },
-        retry ? `${id}-review-retry-1` : id, retry ? canRetryReview : () => true);
+        retry ? `${id}-review-retry-1` : before.revisionCount ? `${id}-revision-review-1` : id, retry ? canRetryReview : () => true);
       if (step.duplicate) return visible(step.record);
       const current = step.record.snapshot;
       if (!current.files || artifactDigest(current.files.html, current.files.css) !== current.artifact?.sha256) throw new Error('Artifact receipt invalid');
