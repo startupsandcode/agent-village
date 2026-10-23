@@ -1,4 +1,5 @@
 import { artifactDigest, verifyStaticSite } from './static-site.mjs';
+import { requireActiveProject, isArchived } from './project-lifecycle.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { publishReviewedSite } from './publish-github.mjs';
 import { deployReviewedPreview, inspectPreviewDeployment, verifyDeletedVercelAttempt, UnsafeVercelDeploymentError } from './publish-vercel.mjs';
@@ -37,6 +38,7 @@ function target(env, service) {
 }
 function reviewed(record, expectedSha) {
   const project = record?.snapshot;
+  requireActiveProject(project);
   if (!project || project.status !== 'reviewed' || !project.files || !sha.test(project.artifact?.sha256 ?? '') ||
       project.artifact.sha256 !== expectedSha || artifactDigest(project.files.html, project.files.css) !== expectedSha ||
       !project.events?.some(entry => entry.agent === 'Quinn' && entry.type === 'review' && entry.reviewedSha256 === expectedSha)) {
@@ -105,7 +107,7 @@ export function createHostedPublisher({ access, env, githubPublisher = publishRe
         try { receipts.vercel.receipt = await deploymentInspector({ receipt: receipts.vercel.receipt, token: env.VILLAGE_PUBLISH_VERCEL_TOKEN }); }
         catch { receipts.vercel.receipt = { ...receipts.vercel.receipt, lastObservedState: receipts.vercel.receipt.state, state: 'STATUS_UNAVAILABLE' }; }
       }
-      return { projectId: id, artifactSha256: project.artifact?.sha256 ?? null, reviewed: project.status === 'reviewed', targets, receipts };
+      return { projectId: id, artifactSha256: project.artifact?.sha256 ?? null, reviewed: !isArchived(project) && project.status === 'reviewed', targets, receipts };
     },
     async publish(cookie, id, service, expectedSha, displayedFingerprint) {
       if (!['github', 'vercel'].includes(service)) throw new Error('Invalid publish action');

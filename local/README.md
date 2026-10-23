@@ -67,3 +67,8 @@ node --check local/public/app.js
 ```
 
 Tests use a deterministic fake provider. They do not establish live OpenAI or Anthropic success. A paid live test needs a user-supplied key through the local shell setup above. Inspect `local/.workspaces/<project-id>/state.json` and the generated files for the event trail and artifact. Review messages are marked as model review; browser behavior still deserves a human check before sharing the result.
+
+
+### Archive saved projects
+
+The **Saved projects** list has Active and Archived views. Open an idle project to archive it, or open an archived project and choose **Restore project**. This preserves its files, review history and usage on this computer. Projects running a provider stage or holding an unresolved publishing receipt must finish or be inspected first. Archiving does not remove an external GitHub branch or Vercel deployment.

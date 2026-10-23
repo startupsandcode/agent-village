@@ -11,6 +11,8 @@ const shapes = {
   revise: ['action', 'id', 'requestId'],
   review: ['action', 'id', 'requestId'],
   cancel: ['action', 'id'],
+  archive: ['action', 'id', 'expectedVersion'],
+  restore: ['action', 'id', 'expectedVersion'],
   publishStatus: ['action', 'id'],
   publishGithub: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
   publishVercel: ['action', 'id', 'artifactSha256', 'targetFingerprint'],
@@ -50,10 +52,12 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       const url = request.method === 'GET' ? new URL(request.url, origin) : null;
       const id = url?.searchParams.get('id');
       const queryKeys = [...(url?.searchParams.keys() ?? [])];
-      if (url && (queryKeys.some(key => !['id', 'file', 'offset'].includes(key)) || new Set(queryKeys).size !== queryKeys.length ||
-          (id ? queryKeys.includes('offset') : queryKeys.includes('file') || queryKeys.includes('id')))) throw new Error('Project ID required');
+      if (url && (queryKeys.some(key => !['id', 'file', 'offset', 'archived'].includes(key)) || new Set(queryKeys).size !== queryKeys.length ||
+          (id ? queryKeys.includes('offset') || queryKeys.includes('archived') : queryKeys.includes('file') || queryKeys.includes('id')))) throw new Error('Project ID required');
       const file = url?.searchParams.get('file');
       const offsetText = url?.searchParams.get('offset') ?? '0';
+      const archivedText = url?.searchParams.get('archived') ?? 'false';
+      if (url && !['true', 'false'].includes(archivedText)) throw new Error('Invalid project view');
       if (url && !id && (!/^(0|[1-9][0-9]{0,6})$/.test(offsetText) || Number(offsetText) > 1_000_000)) throw new Error('Invalid project offset');
       const body = request.method === 'POST' ? strictBody(request) : null;
       runtime = runtimeFactory ? await runtimeFactory({ env, auth }) : null;
@@ -61,7 +65,7 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       const publishing = runtime?.publisher ?? publisher;
       const cookie = request.headers?.cookie;
       if (request.method === 'GET') {
-        if (!id) return send(response, 200, await active.list(cookie, Number(offsetText)));
+        if (!id) return send(response, 200, await active.list(cookie, Number(offsetText), archivedText === 'true'));
         if (file) {
           const artifact = await active.artifact(cookie, id, file);
           response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'");
@@ -82,7 +86,9 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
         return send(response, 200, await publishing.reconcileVercel(cookie, body.id, body.artifactSha256,
           body.targetFingerprint, body.deletedDeploymentId, body.baselineDeploymentId, body.attemptStartedAt, body.attemptId));
       }
-      const result = body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
+      const result = body.action === 'archive' ? await active.archive(cookie, body.id, body.expectedVersion)
+        : body.action === 'restore' ? await active.restore(cookie, body.id, body.expectedVersion)
+        : body.action === 'create' ? await active.create(cookie, body.goal, body.requestId)
         : body.action === 'start' ? await active.start(cookie, body.goal, body.requestId)
         : body.action === 'clarify' ? await active.clarify(cookie, body.id)
         : body.action === 'retryQuestion' ? await active.retryQuestion(cookie, body.id, body.requestId)
@@ -96,11 +102,12 @@ export function createHostedMayaHandler({ env = process.env, auth = createAuth({
       if (['Project not found', 'Artifact not found'].includes(error.message)) return send(response, 404, { error: error.message });
       if (error.message === 'Hosted usage migration is not ready') return send(response, 503, { error: 'Hosted usage migration is not ready' });
       if (error.message === 'Hosted domain migration is not ready') return send(response, 503, { error: 'Hosted domain migration is not ready' });
+      if (['Project changed; refresh and try again', 'Project is busy; wait for work or inspect publishing first', 'Project is archived; restore it first'].includes(error.message)) return send(response, 409, { error: error.message });
       if (error.message === 'Publish target changed; refresh status') return send(response, 409, { error: error.message });
       if (/^(Vercel publish attempt changed; refresh status|Vercel submission may still be active; wait before reconciling|Only an uncertain Vercel submission can be reconciled|Vercel deployment inventory changed; manual inspection required|Old Vercel deployment is not verified deleted; claim remains blocked|Protected Vercel reconciliation target changed|Vercel deletion check failed; claim remains blocked|Exact Vercel reconciliation target and deployment IDs required|Vercel deletion evidence changed)$/.test(error.message)) {
         return send(response, 409, { error: error.message });
       }
-      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Invalid project offset|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
+      const safe = /^(Project not found|Action not expected|Cancellation not expected|Artifact not found|Goal invalid or contains a provider key|Answer invalid or contains a provider key|Request ID required|Monthly project or provider budget reached|Invalid action|JSON required|Request too large|Project ID required|Invalid project offset|Invalid project view|Invalid project version|Reviewed artifact receipt required|Invalid publish action|GitHub publishing is not configured|Vercel publishing is not configured|Publish target or reviewed receipt changed|Publish claim changed; inspect status|Publishing stopped before target update; setup can be corrected and retried)$/.test(error.message);
       return send(response, safe ? 400 : 500, { error: safe ? error.message : 'Project request failed' });
     } finally { try { await runtime?.close(); } catch { /* response contains the operation result */ } }
   };

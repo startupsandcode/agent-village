@@ -3,6 +3,11 @@ const dashboard = document.querySelector('#project-dashboard');
 const projectList = document.querySelector('#project-list');
 const projectListStatus = document.querySelector('#project-list-status');
 const loadMore = document.querySelector('#project-load-more');
+const activeView = document.querySelector('#project-view-active');
+const archivedView = document.querySelector('#project-view-archived');
+const archiveButton = document.querySelector('#project-archive');
+const restoreButton = document.querySelector('#project-restore');
+let showArchived = false;
 const createOpen = document.querySelector('#project-create-open');
 const createView = document.querySelector('#project-create');
 const createBack = document.querySelector('#project-create-back');
@@ -185,7 +190,7 @@ function projectCard(item) {
   const top = document.createElement('div'); top.className = 'project-card-top';
   const title = document.createElement('strong'); title.textContent = item.goal || 'Untitled project';
   const badge = document.createElement('span'); badge.className = `project-badge${blocked ? ' is-blocked' : workingStatuses.has(item.status) ? ' is-active' : ''}`;
-  badge.textContent = `${blocked ? '⚠ ' : ''}${statusLabel(item.status)}`;
+  badge.textContent = item.archivedAt ? 'Archived' : `${blocked ? '⚠ ' : ''}${statusLabel(item.status)}`;
   top.append(title, badge);
   const activity = document.createElement('p');
   activity.textContent = item.latestMessage ? `${item.latestAgent ?? 'Team'} · ${item.latestMessage}`
@@ -207,15 +212,15 @@ async function loadProjects(reset = false) {
   projectListStatus.textContent = reset ? 'Loading projects…' : 'Loading more projects…';
   loadMore.hidden = true;
   try {
-    const response = await fetch(`/api/maya-projects?offset=${listOffset}`, { cache: 'no-store' });
+    const response = await fetch(`/api/maya-projects?offset=${listOffset}${showArchived ? '&archived=true' : ''}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || !Array.isArray(data.projects)) throw new Error(data.error ?? 'Project list unavailable');
     if (sequence !== listSequence || view !== 'dashboard') return;
     projectList.append(...data.projects.map(projectCard));
     listOffset += data.projects.length;
     listLoadError = false;
-    projectListStatus.textContent = listOffset ? `${listOffset} project${listOffset === 1 ? '' : 's'} shown. Blocked projects come first.`
-      : 'No projects yet. Create one to talk with Maya.';
+    projectListStatus.textContent = listOffset ? `${listOffset} ${showArchived ? 'archived ' : ''}project${listOffset === 1 ? '' : 's'} shown.${showArchived ? '' : ' Blocked projects come first.'}`
+      : showArchived ? 'No archived projects.' : 'No projects yet. Create one to talk with Maya.';
     loadMore.hidden = !data.hasMore;
     loadMore.textContent = 'Show more projects';
   } catch {
@@ -225,6 +230,28 @@ async function loadProjects(reset = false) {
     loadMore.textContent = 'Try again'; loadMore.hidden = false;
   }
 }
+function selectProjectView(archived) {
+  showArchived = archived;
+  activeView?.setAttribute('aria-pressed', String(!archived));
+  archivedView?.setAttribute('aria-pressed', String(archived));
+  loadProjects(true);
+}
+activeView?.addEventListener('click', () => selectProjectView(false));
+archivedView?.addEventListener('click', () => selectProjectView(true));
+async function setProjectArchived(archived) {
+  if (!project || busy || !Number.isSafeInteger(project.version)) return;
+  const expectedEpoch = epoch, id = project.id;
+  busy = true; archiveButton.disabled = true; restoreButton.disabled = true;
+  state.textContent = archived ? 'Archiving project…' : 'Restoring project…';
+  try {
+    await request({ action: archived ? 'archive' : 'restore', id, expectedVersion: project.version });
+    if (epoch !== expectedEpoch || project?.id !== id) return;
+    goDashboard();
+  } catch (error) { if (epoch === expectedEpoch) state.textContent = `${error.message}. Reopen the project to refresh its state.`; }
+  finally { if (epoch === expectedEpoch && project?.id === id) { busy = false; render(project, expectedEpoch); } }
+}
+archiveButton?.addEventListener('click', () => setProjectArchived(true));
+restoreButton?.addEventListener('click', () => setProjectArchived(false));
 function goDashboard(updateHash = true) {
   epoch++; project = null; selectedProjectId = null; pending = null; busy = false;
   publishVersion = -1; publishStatusSequence++; targetFingerprints = null; reconcileAttempt = null;
@@ -242,6 +269,7 @@ function clearDetail() {
   publishGithub.hidden = true; publishVercel.hidden = true; publishReconcile.hidden = true;
   message.disabled = true; form.querySelector('button').disabled = true;
   build.hidden = true; revise.hidden = true; review.hidden = true; retryQuestion.hidden = true; cancel.hidden = true;
+  archiveButton.hidden = true; restoreButton.hidden = true;
 }
 function openCreate(updateHash = true) {
   epoch++; project = null; selectedProjectId = null; pending = null; busy = false;
@@ -267,8 +295,8 @@ async function openProject(id) {
     if (!response.ok) throw new Error(saved.error ?? 'Project unavailable');
     if (thisEpoch !== epoch || selectedProjectId !== id) return;
     if (!render(saved, thisEpoch)) throw new Error('Project receipt could not be read');
-    state.textContent = `${statusLabel(saved.status, saved.retryQuestionAvailable)} · activity recorded below.`;
-    if (saved.status === 'clarifying' && !saved.clarifyRunId) act('clarify');
+    state.textContent = saved.archivedAt ? 'Archived project. Restore it to continue work.' : `${statusLabel(saved.status, saved.retryQuestionAvailable)} · activity recorded below.`;
+    if (!saved.archivedAt && saved.status === 'clarifying' && !saved.clarifyRunId) act('clarify');
   } catch (error) { if (thisEpoch === epoch) { detailTitle.textContent = 'Project unavailable'; state.textContent = `${error.message}. Return to all projects and try again.`; } }
 }
 createOpen?.addEventListener('click', () => openCreate());
@@ -285,11 +313,14 @@ function render(value, expectedEpoch = epoch) {
   if (expectedEpoch !== epoch || !value || (project && (value.id !== project.id ||
       !Number.isSafeInteger(value.version) || !Number.isSafeInteger(project.version) || value.version < project.version))) return false;
   project = value;
+  const archived = value.archivedAt != null;
+  archiveButton.hidden = archived; archiveButton.disabled = busy || !value.archiveAvailable;
+  restoreButton.hidden = !archived; restoreButton.disabled = busy;
   const usageSignature = `${value.id}:${value.status}:${value.events.length}`;
   if (usageSignature !== lastUsageSignature) { lastUsageSignature = usageSignature; loadUsage(value.id); }
   sessionStorage.setItem('hostedVillageProjectId', value.id);
   detailTitle.textContent = value.goal || 'Untitled project';
-  detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · ${statusLabel(value.status, value.retryQuestionAvailable)}`;
+  detailMeta.textContent = `Created ${dateLabel(value.createdAt)} · ${archived ? 'Archived' : statusLabel(value.status, value.retryQuestionAvailable)}`;
   progress.textContent = value.retryQuestionAvailable
     ? 'Maya could not record a question. Retry Maya on this saved project; there is no question for you to answer yet.'
     : value.status === 'changes_requested' && value.revisionAvailable
@@ -305,16 +336,16 @@ function render(value, expectedEpoch = epoch) {
     row.textContent = `${agent}: ${latest ? `last recorded ${latest.type} — ${latest.message}` : 'no recorded activity yet'}`;
     return row;
   }));
-  message.disabled = !['needs_answer'].includes(value.status);
+  message.disabled = archived || !['needs_answer'].includes(value.status);
   form.querySelector('label').textContent = 'Your answer to Maya';
   form.querySelector('button').disabled = busy || message.disabled;
-  build.hidden = value.status !== 'ready';
-  revise.hidden = !value.revisionAvailable;
-  review.hidden = value.status !== 'awaiting_review' && !value.retryReviewAvailable;
-  retryQuestion.hidden = !value.retryQuestionAvailable;
+  build.hidden = archived || value.status !== 'ready';
+  revise.hidden = archived || !value.revisionAvailable;
+  review.hidden = archived || value.status !== 'awaiting_review' && !value.retryReviewAvailable;
+  retryQuestion.hidden = archived || !value.retryQuestionAvailable;
   retryQuestion.disabled = busy;
   review.textContent = value.retryReviewAvailable ? 'Retry Quinn review once' : 'Ask Quinn to review';
-  cancel.hidden = !['clarifying', 'planning', 'building', 'revising', 'reviewing'].includes(value.status);
+  cancel.hidden = archived || !['clarifying', 'planning', 'building', 'revising', 'reviewing'].includes(value.status);
   another.disabled = busy;
   events.replaceChildren(...value.events.map(entry => {
     const row = document.createElement('li');
@@ -323,8 +354,8 @@ function render(value, expectedEpoch = epoch) {
     return row;
   }));
   artifact.replaceChildren();
-  publishPanel.hidden = value.status !== 'reviewed';
-  if (value.status === 'reviewed' && publishVersion !== value.version) {
+  publishPanel.hidden = archived || value.status !== 'reviewed';
+  if (!archived && value.status === 'reviewed' && publishVersion !== value.version) {
     publishVersion = value.version;
     loadPublishStatus(value.id, expectedEpoch);
   }
@@ -374,7 +405,7 @@ async function loadPublishStatus(id, expectedEpoch = epoch) {
   } catch (error) { if (expectedEpoch === epoch && project?.id === id && sequence === publishStatusSequence) publishResult.textContent = error.message; }
 }
 async function publish(service) {
-  if (!project || project.status !== 'reviewed') return;
+  if (!project || project.archivedAt || project.status !== 'reviewed') return;
   const expectedEpoch = epoch;
   const id = project.id;
   const reviewedSha = project.artifact.sha256;

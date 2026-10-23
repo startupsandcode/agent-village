@@ -90,7 +90,7 @@ test('project dashboard lists bounded owner-scoped summaries with blocked work f
   assert.equal(page.hasMore, true);
   assert.equal(page.nextOffset, 25);
   assert.ok(!JSON.stringify(page).includes('files'));
-  assert.deepEqual(calls[0].values, ['verified-owner', 26, 0]);
+  assert.deepEqual(calls[0].values, ['verified-owner', 26, 0, false]);
   assert.match(calls[0].sql, /WHERE owner_sub = \$1/);
   assert.match(calls[0].sql, /ORDER BY CASE/);
   assert.match(calls[0].sql, /'question_error', 'blocked', 'interrupted'\) THEN 0/);

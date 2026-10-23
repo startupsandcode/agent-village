@@ -9,12 +9,12 @@ const createdId = '6ba7b812-9dad-41d1-80b4-00c04fd430c8';
 const reply = value => ({ ok: true, json: async () => value });
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve)); };
 
-function page({ hash = '', failList = false, delayedStart = false, failDetail = null, summaryOverrides = null } = {}) {
+function page({ hash = '', failList = false, delayedStart = false, failDetail = null, summaryOverrides = null, delayedArchive = false, delayedBuild = false, firstReady = false, archivedSecond = false } = {}) {
   const elements = new Map();
   const requests = [];
   const location = { hash };
   const windowListeners = new Map();
-  let releaseStart;
+  let releaseStart, releaseArchive, releaseBuild;
   let requestNumber = 0;
   function element(name) {
     return { name, hidden: ['#hosted-chat', '#project-create', '#project-detail'].includes(name), disabled: false,
@@ -34,9 +34,9 @@ function page({ hash = '', failList = false, delayedStart = false, failDetail = 
       latestMessage: 'Reviewed the files', updatedAt: '2026-10-12T02:00:00Z' },
   ];
   const details = {
-    [firstId]: { id: firstId, version: 2, goal: summaries[0].goal, status: 'building', createdAt: '2026-10-11T20:00:00Z',
+    [firstId]: { id: firstId, version: 2, archiveAvailable: true, goal: summaries[0].goal, status: firstReady ? 'ready' : 'building', createdAt: '2026-10-11T20:00:00Z',
       plan: { summary: 'A small accessible garden site' }, events: [{ agent: 'Sam', type: 'start', message: 'Creating the site' }], artifact: null },
-    [secondId]: { id: secondId, version: 4, goal: summaries[1].goal, status: 'reviewed', createdAt: '2026-10-11T19:00:00Z',
+    [secondId]: { id: secondId, version: 4, archivedAt: archivedSecond ? '2026-10-23T00:00:00Z' : null, archiveAvailable: true, goal: summaries[1].goal, status: 'reviewed', createdAt: '2026-10-11T19:00:00Z',
       plan: { summary: 'A welcome site' }, events: [{ agent: 'Quinn', type: 'review', message: 'Reviewed the files' }], artifact: null },
   };
   const fetch = async (url, options = {}) => {
@@ -56,6 +56,15 @@ function page({ hash = '', failList = false, delayedStart = false, failDetail = 
     }
     if (url === '/api/maya-projects' && options.method === 'POST') {
       const body = JSON.parse(options.body); requests.push([body.action, body]);
+      if (body.action === 'restore') return reply({ ...details[body.id], version: details[body.id].version + 1, archivedAt: null });
+      if (body.action === 'archive') {
+        if (delayedArchive) await new Promise(resolve => { releaseArchive = resolve; });
+        return reply({ ...details[body.id], version: details[body.id].version + 1, archivedAt: '2026-10-23T00:00:00Z' });
+      }
+      if (body.action === 'build') {
+        if (delayedBuild) await new Promise(resolve => { releaseBuild = resolve; });
+        return reply({ ...details[body.id], version: details[body.id].version + 1, status: 'awaiting_review' });
+      }
       if (body.action === 'start' && delayedStart) await new Promise(resolve => { releaseStart = resolve; });
       if (body.action === 'start') return reply({ id: createdId, version: 0, goal: body.goal, status: 'clarifying',
         createdAt: '2026-10-12T02:00:00Z', events: [{ agent: 'Maya', type: 'start', message: 'Reading the goal' }], artifact: null });
@@ -66,7 +75,7 @@ function page({ hash = '', failList = false, delayedStart = false, failDetail = 
     }
     throw new Error(`Unexpected request ${url}`);
   };
-  return { get, requests, location, fetch, releaseStart: () => releaseStart?.(), hashchange: () => windowListeners.get('hashchange')?.(), async run() {
+  return { get, requests, location, fetch, releaseStart: () => releaseStart?.(), releaseArchive: () => releaseArchive?.(), releaseBuild: () => releaseBuild?.(), hashchange: () => windowListeners.get('hashchange')?.(), async run() {
     const source = await readFile(new URL('../public/office-assets/hosted-chat.js', import.meta.url), 'utf8');
     runInNewContext(source, { document: { querySelector: get, createElement: name => element(name),
       createTextNode: value => ({ textContent: value }) }, fetch, location,
@@ -257,4 +266,47 @@ test('a failed detail lookup clears the previous project and its controls', asyn
 test('dashboard precedes the room in DOM and visual reading order', async () => {
   const html = await readFile(new URL('../private/index.html', import.meta.url), 'utf8');
   assert.ok(html.indexOf('<section class="hosted-maya"') < html.indexOf('<div id="global-office"'));
+});
+
+
+test('Archive and Restore views use persistent API actions with the displayed project version', async () => {
+  const ui = page(); await ui.run();
+  ui.get('#project-view-archived').listeners.get('click')(); await flush();
+  assert.ok(ui.requests.some(([kind, url]) => kind === 'list' && url.includes('archived=true')));
+  assert.equal(ui.get('#project-view-archived').attributes['aria-pressed'], 'true');
+  await ui.get('#project-list').children[1].listeners.get('click')({ preventDefault() {} }); await flush();
+  assert.equal(ui.get('#project-archive').disabled, false);
+  await ui.get('#project-archive').listeners.get('click')(); await flush();
+  const archive = ui.requests.find(([kind]) => kind === 'archive')[1];
+  assert.equal(archive.id, secondId); assert.equal(archive.expectedVersion, 4);
+  assert.equal(ui.get('#project-dashboard').hidden, false);
+});
+
+test('late archive completion cannot clear the busy state of a different project action', async () => {
+  const ui = page({ delayedArchive: true, delayedBuild: true, firstReady: true }); await ui.run();
+  await ui.get('#project-list').children[1].listeners.get('click')({ preventDefault() {} }); await flush();
+  const archive = ui.get('#project-archive').listeners.get('click')(); await flush();
+  ui.get('#project-detail-back').listeners.get('click')(); await flush();
+  await ui.get('#project-list').children[0].listeners.get('click')({ preventDefault() {} }); await flush();
+  const build = ui.get('#hosted-build').listeners.get('click')(); await flush();
+  assert.equal(ui.requests.filter(([kind]) => kind === 'build').length, 1);
+  ui.releaseArchive(); await archive; await flush();
+  await ui.get('#project-archive').listeners.get('click')();
+  assert.equal(ui.requests.filter(([kind]) => kind === 'archive').length, 1);
+  assert.equal(ui.get('#project-detail-title').textContent, 'Build the current garden site');
+  ui.releaseBuild(); await build;
+});
+
+test('archived detail offers Restore and disables provider and publishing actions', async () => {
+  const ui = page({ archivedSecond: true }); await ui.run();
+  await ui.get('#project-list').children[1].listeners.get('click')({ preventDefault() {} }); await flush();
+  assert.equal(ui.get('#project-archive').hidden, true);
+  assert.equal(ui.get('#project-restore').hidden, false);
+  assert.equal(ui.get('#hosted-publish').hidden, true);
+  assert.equal(ui.get('#hosted-build').hidden, true);
+  assert.equal(ui.get('#hosted-message').disabled, true);
+  assert.match(ui.get('#hosted-request-state').textContent, /Archived project/);
+  await ui.get('#project-restore').listeners.get('click')();
+  const restore = ui.requests.find(([kind]) => kind === 'restore')[1];
+  assert.equal(restore.id, secondId); assert.equal(restore.expectedVersion, 4);
 });

@@ -28,24 +28,26 @@ function record(row) {
 export function createHostedProjectStore({ query }) {
   if (typeof query !== 'function') throw new Error('Parameterized database query required');
   return {
-    async list({ ownerSub, offset = 0 }) {
+    async list({ ownerSub, offset = 0, archived = false }) {
+      if (typeof archived !== 'boolean') throw new Error('Invalid project view');
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) throw new Error('Invalid project offset');
       const rows = await query(`SELECT id, version, updated_at, snapshot->>'goal' AS goal,
-        snapshot->>'status' AS status, snapshot->>'createdAt' AS created_at,
+        snapshot->>'status' AS status, snapshot->>'archivedAt' AS archived_at, snapshot->>'createdAt' AS created_at,
         snapshot->'plan'->>'summary' AS plan_summary,
         snapshot->'events'->-1->>'agent' AS latest_agent,
         snapshot->'events'->-1->>'message' AS latest_message,
         snapshot->'events'->-1->>'at' AS latest_at
         FROM village_projects WHERE owner_sub = $1
+        AND (snapshot->>'archivedAt' IS NOT NULL) = $4
         ORDER BY CASE
           WHEN snapshot->>'status' IN ('question_error', 'blocked', 'interrupted') THEN 0
           WHEN snapshot->>'status' IN ('needs_answer', 'ready', 'awaiting_review') THEN 1
           WHEN snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing') THEN 2
           ELSE 3 END, updated_at DESC, id DESC
-        LIMIT $2 OFFSET $3`, [owner(ownerSub), DASHBOARD_PAGE_SIZE + 1, offset]);
+        LIMIT $2 OFFSET $3`, [owner(ownerSub), DASHBOARD_PAGE_SIZE + 1, offset, archived]);
       const hasMore = rows.rows.length > DASHBOARD_PAGE_SIZE;
       return { projects: rows.rows.slice(0, DASHBOARD_PAGE_SIZE).map(row => ({
-        id: row.id, version: Number(row.version), goal: row.goal, status: row.status,
+        id: row.id, version: Number(row.version), goal: row.goal, status: row.status, archivedAt: row.archived_at ?? null,
         createdAt: row.created_at, updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
         planSummary: row.plan_summary, latestAgent: row.latest_agent, latestMessage: row.latest_message, latestAt: row.latest_at,
       })), hasMore, nextOffset: hasMore ? offset + DASHBOARD_PAGE_SIZE : null };
@@ -55,6 +57,7 @@ export function createHostedProjectStore({ query }) {
       const result = await query(`SELECT DISTINCT ON (snapshot->>'status') id, snapshot->>'goal' AS goal,
         snapshot->>'status' AS status, snapshot->>'stageStartedAt' AS stage_started_at
         FROM village_projects WHERE owner_sub = $1
+        AND snapshot->>'archivedAt' IS NULL
         AND snapshot->>'status' IN ('clarifying', 'planning', 'building', 'reviewing')
         AND snapshot->>'stageStartedAt' >= $2
         ORDER BY snapshot->>'status', snapshot->>'stageStartedAt' DESC`, [owner(ownerSub), since]);

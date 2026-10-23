@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { isArchived, requireActiveProject, archiveBlocked } from '../office/lib/project-lifecycle.mjs';
+import { readPreviewPublish } from './publish-state.mjs';
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +12,10 @@ import { usageReceipt } from '../office/lib/usage.mjs';
 function publicProject(project) {
   const { goal, answer, plan, status, events, id, createdAt, artifact, domainProfile } = project;
   return { id, goal, answer, plan, status, events, createdAt, artifact, domainProfile,
+    version: project.version ?? 0, archivedAt: project.archivedAt ?? null, archiveAvailable: !isArchived(project) && !archiveBlocked(project),
     revisionAttemptCount: project.revisionAttemptCount ?? 0, reviewAttemptCount: project.reviewAttemptCount ?? 0,
-    revisionAvailable: status === 'changes_requested' && !!artifact && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2,
-    reviewAvailable: status === 'awaiting_review' && (project.reviewAttemptCount ?? 0) < 2 };
+    revisionAvailable: !isArchived(project) && status === 'changes_requested' && !!artifact && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2,
+    reviewAvailable: !isArchived(project) && status === 'awaiting_review' && (project.reviewAttemptCount ?? 0) < 2 };
 }
 
 export class VillageEngine {
@@ -24,8 +27,11 @@ export class VillageEngine {
     this.running = new Map();
     this.saves = new Map();
     this.creates = new Map();
+    this.lifecycle = new Set();
+    this.publishing = new Set();
   }
   async save(project) {
+    project.version = (project.version ?? 0) + 1;
     const previous = this.saves.get(project.id) ?? Promise.resolve();
     const current = previous.then(async () => {
       const dir = join(this.root, project.id);
@@ -120,6 +126,7 @@ export class VillageEngine {
   }
   async answer(id, answer, requestId) {
     const project = await this.getInternal(id);
+    this.requireWorkAllowed(project);
     if (project.answerRequestId === requestId && requestId) return publicProject(project);
     if (project.status !== 'needs_answer' || !validText(answer) || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Answer not expected');
     if (this.provider.containsSecret?.(answer)) throw new Error('Do not put an API key in chat');
@@ -140,6 +147,7 @@ export class VillageEngine {
   }
   async build(id, requestId) {
     const project = await this.getInternal(id);
+    this.requireWorkAllowed(project);
     if (project.buildRequestId === requestId && requestId) return publicProject(project);
     if (project.status !== 'ready' || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Build not expected');
     project.buildRequestId = requestId; project.status = 'building';
@@ -164,10 +172,12 @@ export class VillageEngine {
   }
   async revise(id, requestId) {
     const project = await this.getInternal(id);
+    this.requireWorkAllowed(project);
     if (project.revisionRequestId === requestId && requestId) return publicProject(project);
     if (project.status !== 'changes_requested' || (project.revisionCount ?? 0) >= 1 || (project.revisionAttemptCount ?? 0) >= 2 ||
         !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Action not expected');
     const previous = await this.verifyArtifact(project);
+    this.requireWorkAllowed(project);
     if (!previous || !project.artifact) throw new Error('Artifact receipt invalid');
     const rejectedReview = [...project.events].reverse().find(event => event.agent === 'Quinn' && event.type === 'blocked');
     const findings = rejectedReview?.findings ?? [];
@@ -230,9 +240,11 @@ export class VillageEngine {
   }
   async review(id, requestId) {
     const project = await this.getInternal(id);
+    this.requireWorkAllowed(project);
     if (project.reviewRequestId === requestId && requestId) return publicProject(project);
     if (project.status !== 'awaiting_review' || (project.reviewAttemptCount ?? 0) >= 2 || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId ?? '')) throw new Error('Action not expected');
     const files = await this.verifyArtifact(project);
+    this.requireWorkAllowed(project);
     if (!files || !project.artifact) throw new Error('Artifact receipt invalid');
     const sha = project.artifact.sha256;
     project.reviewRequestId = requestId;
@@ -310,6 +322,7 @@ export class VillageEngine {
   }
   async cancel(id) {
     const project = await this.getInternal(id);
+    this.requireWorkAllowed(project);
     if (!['building', 'reviewing', 'revising'].includes(project.status)) return publicProject(project);
     this.running.get(id)?.controller.abort();
     project.status = 'cancelled';
@@ -317,12 +330,65 @@ export class VillageEngine {
     await this.save(project);
     return publicProject(project);
   }
+  requireWorkAllowed(project) {
+    requireActiveProject(project);
+    if (this.lifecycle.has(project.id)) throw new Error('Project is busy; wait for work or inspect publishing first');
+  }
+  async withPublishing(id, action) {
+    if (this.lifecycle.has(id) || this.publishing.has(id)) throw new Error('Project is busy; wait for work or inspect publishing first');
+    this.publishing.add(id);
+    try { requireActiveProject(await this.getInternal(id)); return await action(); }
+    finally { this.publishing.delete(id); }
+  }
+  async list({ archived = false, offset = 0 } = {}) {
+    if (typeof archived !== 'boolean') throw new Error('Invalid project view');
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) throw new Error('Invalid project offset');
+    let entries = [];
+    try { entries = await readdir(this.root, { withFileTypes: true }); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const projects = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[0-9a-f-]{36}$/.test(entry.name)) continue;
+      try {
+        const project = await this.getInternal(entry.name);
+        if (isArchived(project) === archived) projects.push(publicProject(project));
+      } catch { /* skip unreadable project directories */ }
+    }
+    projects.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || b.id.localeCompare(a.id));
+    const page = projects.slice(offset, offset + 25);
+    return { projects: page, hasMore: offset + page.length < projects.length, nextOffset: offset + page.length < projects.length ? offset + page.length : null };
+  }
+  async setArchived(id, expectedVersion, archived) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new Error('Invalid project version');
+    if (this.lifecycle.has(id) || this.publishing.has(id)) throw new Error('Project is busy; wait for work or inspect publishing first');
+    this.lifecycle.add(id);
+    try {
+      const project = await this.getInternal(id);
+      if ((project.version ?? 0) !== expectedVersion) throw new Error('Project changed; refresh and try again');
+      if (isArchived(project) === archived) return publicProject(project);
+      const receipt = await readPreviewPublish(this, id);
+      if ((project.version ?? 0) !== expectedVersion) throw new Error('Project changed; refresh and try again');
+      if (archiveBlocked(project) || this.running.has(id) || ['submitting', 'needs_inspection'].includes(receipt?.status)) throw new Error('Project is busy; wait for work or inspect publishing first');
+      const next = structuredClone(project);
+      if (archived) next.archivedAt = this.now();
+      else delete next.archivedAt;
+      await this.save(next);
+      this.projects.set(id, next);
+      return publicProject(next);
+    } finally { this.lifecycle.delete(id); }
+  }
+  async archive(id, expectedVersion) { return this.setArchived(id, expectedVersion, true); }
+  async restore(id, expectedVersion) { return this.setArchived(id, expectedVersion, false); }
   async getInternal(id) {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('Project not found');
     if (this.projects.has(id)) return this.projects.get(id);
     let project;
     try { project = JSON.parse(await readFile(join(await this.checkedWorkspace(id), 'state.json'), 'utf8')); } catch { throw new Error('Project not found'); }
     if (project.id !== id) throw new Error('Project state mismatch');
+    // Concurrent readers must share the cached snapshot, never replace a newer one
+    // after an asynchronous disk read.
+    if (this.projects.has(id)) return this.projects.get(id);
+    this.projects.set(id, project);
     if (['building', 'reviewing', 'revising', 'planning', 'clarifying'].includes(project.status)) {
       project.status = 'interrupted';
       this.event(project, 'Maya', 'error', 'The server restarted during work. Inspect the project before starting a new run.');
@@ -346,6 +412,10 @@ export class VillageEngine {
       }));
     }
     catch { /* missing files invalidate the receipt */ }
+    // The file reads above may have overlapped Archive/Restore. Do not enqueue a
+    // stale integrity snapshot behind the lifecycle write or replace its state.
+    if (this.lifecycle.has(project.id)) throw new Error('Project is busy; wait for work or inspect publishing first');
+    if (this.projects.get(project.id) !== project) throw new Error('Project changed; refresh and try again');
     const digest = html && css ? artifactDigest(html, css) : null;
     if (digest !== project.artifact.sha256) {
       project.status = 'blocked';

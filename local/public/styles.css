@@ -51,3 +51,7 @@
 .task-receipt { grid-column: 2; color: var(--muted); overflow-wrap: anywhere; }
 .office-room { min-height: 700px; }
 @media (max-width: 650px) { .task-row { grid-template-columns: 1fr; } .task-receipt { grid-column: 1; } }
+
+
+#saved-projects { display: grid; gap: .6rem; margin: 1rem 0; }
+#saved-projects button { text-align: left; overflow-wrap: anywhere; }
