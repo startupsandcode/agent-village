@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireActiveProject } from './project-lifecycle.mjs';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { artifactDigest } from './static-site.mjs';
@@ -33,6 +34,7 @@ export function createDeliverySnapshot({ html, css, sha256 }) {
 
 export async function exportProject(engine, id) {
   const project = await engine.get(id);
+  requireActiveProject(project);
   if (project.status !== 'reviewed' || !project.artifact) throw new Error('Only a reviewed project can be prepared');
   const dir = await engine.checkedWorkspace(id);
   const [html, css] = await Promise.all(['index.html', 'styles.css'].map(name => engine.artifact(id, name)));
@@ -73,6 +75,7 @@ export async function exportProject(engine, id) {
 export async function capturePreparedProject(engine, id) {
   const prepared = await exportProject(engine, id);
   const project = await engine.get(id);
+  requireActiveProject(project);
   if (project.status !== 'reviewed' || project.artifact?.sha256 !== prepared.sha256) throw new Error('Reviewed project changed');
   const [html, css] = await Promise.all(['index.html', 'styles.css'].map(name => engine.artifact(id, name)));
   if (digest(html, css) !== prepared.sha256) throw new Error('Reviewed files changed');

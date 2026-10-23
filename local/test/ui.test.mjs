@@ -129,3 +129,72 @@ test('late status poll cannot restore a project after Start another project', as
   assert.equal(elements['#conversation'].childElementCount, 0);
   assert.equal(elements['#events'].childElementCount, 0);
 });
+
+
+test('opening a saved project blocks old-project sends and resets publishing state', async () => {
+  const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#request-state', '#build', '#cancel', '#new-project', '#artifact', '#saved-projects', '#project-view', '#saved-projects-status', '#saved-projects-more', '#publish-actions', '#export-path', '#publish-status'];
+  const elements = Object.fromEntries(names.map(name => [name, new Element(name)]));
+  elements['#chat-form'].name = 'form'; elements['#chat-form'].button = new Element('button');
+  const a = 'a20d0a90-3476-4dd7-a903-b2b829394828', b = 'a20d0a90-3476-4dd7-a903-b2b829394829';
+  const base = id => ({ id, version: 1, goal: `Project ${id}`, status: 'needs_answer', events: [{ agent: 'Maya', type: 'question', message: 'Who?' }], artifact: null });
+  let release; const selected = new Promise(resolve => { release = resolve; }); const posts = [];
+  const context = {
+    window: { dispatchEvent() {} }, CustomEvent: class {},
+    document: { querySelector: name => elements[name], createElement: name => new Element(name) },
+    sessionStorage: { setItem() {}, getItem: () => a, removeItem() {} },
+    crypto: { randomUUID: () => 'request-12345' },
+    fetch: async (path, options = {}) => {
+      if (options.method === 'POST') posts.push(path);
+      if (path === '/api/status') return response({ ready: true, provider: 'mock' });
+      if (path.startsWith('/api/projects?')) return response({ projects: [base(b)], hasMore: false });
+      if (path === `/api/projects/${b}`) return selected;
+      if (path === `/api/projects/${a}`) return response(base(a));
+      return response({});
+    }, setInterval() {}, Date,
+  };
+  runInNewContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+  elements['#export-path'].textContent = 'old prepared path'; elements['#publish-actions'].hidden = false;
+  const selection = elements['#saved-projects'].children[0].handlers.click();
+  elements['#message'].value = 'Wrong project answer';
+  await elements['#chat-form'].handlers.submit({ preventDefault() {} });
+  assert.deepEqual(posts, []); assert.equal(elements['#chat-form'].button.disabled, true);
+  assert.equal(elements['#publish-actions'].hidden, true); assert.equal(elements['#export-path'].textContent, '');
+  release(response(base(b))); await selection;
+  assert.equal(context.window.villageProject.id, b);
+  assert.equal(elements['#chat-form'].button.disabled, false);
+});
+
+test('a pre-archive poll cannot replace the newer archived project or re-enable its actions', async () => {
+  const names = ['#chat-form', '#message', '#conversation', '#events', '#provider', '#build', '#cancel', '#new-project', '#artifact', '#archive-project', '#restore-project', '#export'];
+  const elements = Object.fromEntries(names.map(name => [name, new Element(name)]));
+  elements['#chat-form'].name = 'form'; elements['#chat-form'].button = new Element('button');
+  const id = 'a20d0a90-3476-4dd7-a903-b2b829394828';
+  const base = { id, version: 1, goal: 'Garden site', status: 'reviewed', events: [], archiveAvailable: true, artifact: { sha256: 'a'.repeat(64), url: `/artifact/${id}/index.html` } };
+  const archived = { ...base, version: 2, archivedAt: '2026-10-23T00:00:00Z', archiveAvailable: false };
+  let interval, reads = 0, releasePoll;
+  const deferred = new Promise(resolve => { releasePoll = resolve; });
+  const context = {
+    window: { dispatchEvent() {} }, CustomEvent: class {},
+    document: { querySelector: name => elements[name], createElement: name => new Element(name) },
+    sessionStorage: { setItem() {}, getItem: () => id, removeItem() {} },
+    crypto: { randomUUID: () => 'request-12345' },
+    fetch: async path => {
+      if (path === '/api/status') return response({ ready: true, provider: 'mock' });
+      if (path === `/api/projects/${id}`) return ++reads === 1 ? response(base) : deferred;
+      if (path === `/api/projects/${id}/archive`) return response(archived);
+      return response({});
+    }, setInterval(callback) { interval = callback; }, Date,
+  };
+  runInNewContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  const polling = interval(); await new Promise(resolve => setImmediate(resolve));
+  await elements['#archive-project'].handlers.click();
+  assert.equal(context.window.villageProject.version, 2);
+  releasePoll(response(base)); await polling;
+  assert.equal(context.window.villageProject.version, 2);
+  assert.equal(context.window.villageProject.archivedAt, archived.archivedAt);
+  assert.equal(elements['#archive-project'].hidden, true);
+  assert.equal(elements['#restore-project'].hidden, false);
+  assert.equal(elements['#export'].hidden, true);
+});

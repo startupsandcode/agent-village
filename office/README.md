@@ -52,3 +52,8 @@ The pilot code caps hosted runs at 20 projects and 80 provider calls per month p
 ## Web Analytics
 
 Vercel Web Analytics is enabled in the `agent-village` project. The tracking script is included only on the public synthetic demo at `/`; the private office HTML has no analytics script. View page visits in the project's [Analytics dashboard](https://vercel.com/jmanns-projects/agent-village/analytics). Local development may fail to load the Vercel-only script, but the demo still works.
+
+
+## Archive saved projects
+
+The project dashboard starts with **Active** projects. Open an idle project and choose **Archive project** to remove it from that view. Use **Archived**, open the saved project, and choose **Restore project** to continue its original workflow. Artifacts, review results, provider usage and budget claims remain stored; archiving does not reclaim quota or remove published sites. Active provider stages and publishing attempts that are running or need inspection cannot be archived. The change uses the existing project snapshot and requires no SQL migration.

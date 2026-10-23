@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isArchived, requireActiveProject, archiveBlocked } from './project-lifecycle.mjs';
 import { artifactDigest, renderArtifact, verifyStaticSite } from './static-site.mjs';
 import { MAYA, PLAN, SAM, REVISION, QUINN, validPlan, validReview, validText } from './project-roles.mjs';
 
@@ -14,19 +15,20 @@ function event(project, agent, type, message, usage) {
   project.events.push({ at: new Date().toISOString(), agent, type, message: String(message).slice(0, 1200), ...(usage ? { usage } : {}) });
 }
 function canRetryReview(project) {
-  return project.status === 'blocked' && (project.reviewRetryCount ?? 0) < 1 &&
+  return !isArchived(project) && project.status === 'blocked' && (project.reviewRetryCount ?? 0) < 1 &&
     project.events?.at(-1)?.agent === 'Quinn' && project.events.at(-1).type === 'error' &&
     typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
     artifactDigest(project.files.html, project.files.css) === project.artifact.sha256;
 }
 function canRevise(project) {
   const latest = project.events?.at(-1);
-  return project.status === 'changes_requested' && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2 &&
+  return !isArchived(project) && project.status === 'changes_requested' && (project.revisionCount ?? 0) < 1 && (project.revisionAttemptCount ?? 0) < 2 &&
     typeof project.files?.html === 'string' && typeof project.files?.css === 'string' && project.artifact?.sha256 &&
     artifactDigest(project.files.html, project.files.css) === project.artifact.sha256 &&
     (latest?.agent === 'Quinn' && latest.type === 'blocked' || latest?.agent === 'Sam' && latest.type === 'error');
 }
 function canRetryQuestion(project) {
+  if (isArchived(project)) return false;
   if ((project.clarifyRequestIds?.length ?? (project.clarifyRequestId ? 1 : 0)) >= MAX_QUESTION_RETRIES) return false;
   if (project.status === 'question_error') return true;
   const latest = project.events?.at(-1);
@@ -35,7 +37,7 @@ function canRetryQuestion(project) {
 }
 function visible(record) {
   const { files, ...project } = record.snapshot;
-  return { ...project, retryReviewAvailable: Boolean(canRetryReview(record.snapshot)), revisionAvailable: Boolean(canRevise(record.snapshot)),
+  return { ...project, archiveAvailable: !isArchived(project) && !archiveBlocked(project), retryReviewAvailable: Boolean(canRetryReview(record.snapshot)), revisionAvailable: Boolean(canRevise(record.snapshot)),
     retryQuestionAvailable: Boolean(canRetryQuestion(record.snapshot)), version: record.version };
 }
 function requireRequestId(value) { if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw new Error('Request ID required'); }
@@ -111,6 +113,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     requireRequestId(requestId);
     const record = requireProject(await access.read(cookie, id));
     const project = record.snapshot;
+    requireActiveProject(project);
     if (project[`${kind}RequestId`] === requestId) return { duplicate: true, record };
     if (project.status !== from || !eligible(project)) throw new Error('Action not expected');
     await reserve(cookie, budgetId, kind);
@@ -122,8 +125,23 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     if (!saved) return { duplicate: true, record: requireProject(await access.read(cookie, id)) };
     return { duplicate: false, record: saved };
   }
+  async function setArchived(cookie, id, expectedVersion, archived) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new Error('Invalid project version');
+    const record = requireProject(await access.read(cookie, id));
+    if (record.version !== expectedVersion) throw new Error('Project changed; refresh and try again');
+    if (isArchived(record.snapshot) === archived) return visible(record);
+    if (archiveBlocked(record.snapshot)) throw new Error('Project is busy; wait for work or inspect publishing first');
+    const next = structuredClone(record.snapshot);
+    if (archived) next.archivedAt = new Date(now()).toISOString();
+    else delete next.archivedAt;
+    const saved = await access.update(cookie, { id, expectedVersion, snapshot: next });
+    if (!saved) throw new Error('Project changed; refresh and try again');
+    return visible(saved);
+  }
   return {
-    list(cookie, offset = 0) { return access.list(cookie, { offset }); },
+    list(cookie, offset = 0, archived = false) { return access.list(cookie, { offset, archived }); },
+    async archive(cookie, id, expectedVersion) { return setArchived(cookie, id, expectedVersion, true); },
+    async restore(cookie, id, expectedVersion) { return setArchived(cookie, id, expectedVersion, false); },
     read,
     async start(cookie, goal, requestId) {
       requireRequestId(requestId);
@@ -139,11 +157,13 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     },
     async clarify(cookie, id) {
       const current = await read(cookie, id);
+      requireActiveProject(current);
       if (current.status !== 'clarifying' || current.clarifyRunId) return current;
       // Charge the month in which a provider call actually starts, not the
       // month in which a user created a project that might wait overnight.
       await reserve(cookie, id, 'clarify');
       const record = requireProject(await access.read(cookie, id));
+      requireActiveProject(record.snapshot);
       if (record.snapshot.status !== 'clarifying' || record.snapshot.clarifyRunId) return visible(record);
       const next = structuredClone(record.snapshot);
       next.clarifyRunId = randomUUID(); next.stageStartedAt = new Date(now()).toISOString();
@@ -157,6 +177,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     async retryQuestion(cookie, id, requestId) {
       requireRequestId(requestId);
       const record = requireProject(await access.read(cookie, id));
+      requireActiveProject(record.snapshot);
       if (record.snapshot.clarifyRequestId === requestId || record.snapshot.clarifyRequestIds?.includes(requestId)) return visible(record);
       if (!canRetryQuestion(record.snapshot)) throw new Error('Action not expected');
       const step = await advance(cookie, id, requestId, record.snapshot.status, 'clarifying', 'Maya',
@@ -250,6 +271,7 @@ export function createHostedCoordinator({ access, budget, provider, usage = null
     async cancel(cookie, id) {
       for (let attempt = 0; attempt < 3; attempt++) {
         const record = requireProject(await access.read(cookie, id));
+        requireActiveProject(record.snapshot);
         if (record.snapshot.status === 'cancelled') return visible(record);
         if (!['clarifying', 'planning', 'building', 'reviewing'].includes(record.snapshot.status)) throw new Error('Cancellation not expected');
         const next = structuredClone(record.snapshot); next.status = 'cancelled';
