@@ -12,7 +12,7 @@ import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
 import { configuredVercelPreviewTargets, validateVercelPreviewTarget,
-  vercelPreviewDestination } from './vercel-preview-deployer.mjs';
+  isKnownRootDirectoryPreflightFailure, vercelPreviewDestination } from './vercel-preview-deployer.mjs';
 import { reserveMissionIntakeCall } from './mission-budget.mjs';
 import { verifyCodexSchemaRejection } from './mission-preexecution-recovery.mjs';
 import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
@@ -44,7 +44,7 @@ async function git(cwd, ...args) {
   return output.trim();
 }
 
-export async function inspectMissionWorkspace(workspacePath, { requireClean = false } = {}) {
+export async function inspectMissionWorkspace(workspacePath, { requireClean = false, allowedUntrackedRoot = null } = {}) {
   const root = await realpath(workspacePath);
   const actualRoot = await git(root, 'rev-parse', '--show-toplevel');
   requireValue((await realpath(actualRoot)).toLowerCase() === root.toLowerCase(), 'mission workspace must be its repository root');
@@ -53,7 +53,18 @@ export async function inspectMissionWorkspace(workspacePath, { requireClean = fa
     'mission workspace must belong to startupsandcode/agent-village');
   const branch = await git(root, 'branch', '--show-current');
   requireValue(branch && !['main', 'master'].includes(branch), 'mission workspace must use a named feature branch');
-  if (requireClean) requireValue(!(await git(root, 'status', '--porcelain')), 'mission workspace must be clean before it starts or resumes work');
+  if (requireClean) {
+    const status = await git(root, 'status', '--porcelain', '--untracked-files=all');
+    requireValue(!status, 'mission workspace must be clean before it starts or resumes work');
+  }
+  if (allowedUntrackedRoot) {
+    const status = await git(root, 'status', '--porcelain', '--untracked-files=all');
+    const allowed = allowedUntrackedRoot.replaceAll('\\', '/').replace(/\/$/, '');
+    const rows = status ? status.split(/\r?\n/) : [];
+    requireValue(rows.length > 0 && rows.every(row => row.startsWith('?? ') &&
+      (row.slice(3).replaceAll('\\', '/').startsWith(`${allowed}/`))),
+    `only untracked ${allowed}/ mission output is allowed during preview recovery`);
+  }
   return { root, branch, remote };
 }
 
@@ -117,7 +128,7 @@ async function askForAgreement(proposalId, summary, criteria) {
 
 export async function main(argv = process.argv.slice(2), { env = process.env, codex = new CodexRunner(),
   confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker, processCheck,
-  inspectBackgroundStatus = readMissionBackgroundStatus } = {}) {
+  inspectBackgroundStatus = readMissionBackgroundStatus, previewDeployer = null } = {}) {
   const [command, ...args] = argv;
   const paths = missionPaths(env);
   const store = new MissionStore(paths.root);
@@ -171,6 +182,42 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     return { id, status: recovered.status, retryStage: recovered.currentStage,
       priorFailureRetained: recovered.events.at(-1)?.status === 'failed',
       roleCallsReserved: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((total, attempt) => total + attempt, 0) };
+  }
+  if (command === 'recover-preview') {
+    requireValue(args.length === 1, 'recover-preview <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; preview recovery requires its original branch');
+    requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
+      state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
+      !state.previewDeploymentRecovery && !(await store.isCancelled(id)),
+    'mission is not eligible for this bounded preview recovery');
+    const journalPath = join(paths.root, '.preview-deployments', `${id}.json`);
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+    requireValue(journal.status === 'uncertain' && journal.missionId === id && journal.artifactId === state.artifactId &&
+      journal.projectId === state.previewTarget.projectId && journal.teamId === state.previewTarget.teamId &&
+      journal.target === 'preview' && journal.deploymentId === null && journal.url === null &&
+      isKnownRootDirectoryPreflightFailure(journal.error),
+    'preview journal does not contain the known pre-submission app-root failure');
+    const runtime = previewDeployer ? { previewDeployer } : createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
+      workspacePath: workspace.root, codex, env });
+    requireValue(runtime.previewDeployer, 'approved Vercel preview adapter is unavailable');
+    const deployed = await runtime.previewDeployer.deploy({ mission: state,
+      artifactRoot: join(workspace.root, outputRoot, 'dist') });
+    const recovered = await store.recordPreviewDeploymentRecovery(id, {
+      status: deployed.status, reconciliation: deployed.reconciliation, missionId: deployed.missionId,
+      artifactId: deployed.artifactId, projectId: deployed.projectId, teamId: deployed.teamId,
+      target: deployed.target, deploymentId: deployed.deploymentId, url: deployed.url,
+      artifactFingerprint: deployed.artifactFingerprint,
+    });
+    return { id, status: recovered.status, nextStage: recovered.currentStage,
+      previewUrl: deployed.url, deploymentId: deployed.deploymentId,
+      roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0) };
   }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
@@ -231,7 +278,9 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
   if (command === 'resume' || command === 'worker') {
     const state = await store.get(id);
     requireValue(['ready', 'failed'].includes(state.status), 'mission is not at a resumable stage; uncertain in-flight work needs manual reconciliation');
-    const resumeWorkspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+    const resumeWorkspace = state.previewDeploymentRecovery?.status === 'consumed' ?
+      await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: `validation/${id}` }) :
+      await inspectMissionWorkspace(paths.workspace, { requireClean: true });
     requireValue(typeof state.workspaceBranch === 'string' && resumeWorkspace.branch === state.workspaceBranch,
       'mission branch changed; return to the original branch and reconcile before resuming');
     if (command === 'worker') {
@@ -260,8 +309,10 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const durableWorkerError = backgroundStatus.workerError || backgroundStatus.notifications.some(event => event.kind === 'worker_error');
     const provenPreExecutionRecovery = state.preExecutionRecovery?.status === 'authorized' &&
       state.preExecutionRecovery.stage === 'susie_design' && state.currentStage === 'susie_design';
+    const provenPreviewRecovery = state.previewDeploymentRecovery?.status === 'consumed' &&
+      state.currentStage === 'quinn_functional';
     if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' &&
-        !durableWorkerError && !provenPreExecutionRecovery) {
+        !durableWorkerError && !provenPreExecutionRecovery && !provenPreviewRecovery) {
       throw new Error('a queued mission reservation has no live worker; inspect status and reconcile before relaunching');
     }
     const lease = activeReservation ?? await reserveWorkspaceMission({ root: lockRoot, missionId: id,
@@ -276,7 +327,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, retry-preflight, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, recover-preview, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

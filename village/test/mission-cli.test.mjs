@@ -92,6 +92,76 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
   assert.equal(checkpoint.preExecutionRecovery.status, 'authorized');
 });
 
+test('recover-preview deploys only the accepted mission output after the exact preflight checkpoint', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-mission-preview-recovery-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await execFileAsync('git', ['init', '-b', 'mission-preview-recovery'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'remote.origin.url', 'https://github.com/startupsandcode/agent-village.git'], { cwd: workspace });
+  const missionId = 'preview-recovery-cli';
+  const artifactDir = join(workspace, 'validation', missionId, 'dist');
+  await mkdir(artifactDir, { recursive: true });
+  await writeFile(join(artifactDir, 'index.html'), `<meta name="village-artifact-id" content="${artifactId}">`);
+  const home = join(root, 'mission-home');
+  const storeRoot = join(home, 'missions');
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+  const missionGoal = 'Build a bounded design-led preview demo.';
+  const criteria = ['Keep output inside the mission folder.', 'Use a clear responsive hierarchy.', 'Verify the rendered preview.'];
+  const roleTeam = { id: 'design-led-single-team', roles: { design: 'susie', build: 'sam', functional_review: 'quinn', visual_review: 'susie' } };
+  const constraints = ['No paid services'];
+  const store = new MissionStore(storeRoot);
+  const state = await store.create({ id: missionId, repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preview-recovery',
+    goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId,
+    constraints, team: roleTeam, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 1,
+    mayaAgreement: { proposalId: 'maya-preview-recovery', summary: 'One bounded preview.', acceptedByUser: true,
+      acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preview-recovery',
+      goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId, constraints, team: roleTeam } });
+  const guideOutput = { kind: 'design_guide', guide: guide };
+  let running = { ...state, status: 'running', attempts: { '0:susie_design': 1 }, inFlight: { stage: 'susie_design', attempt: 1 } };
+  await store.save(running);
+  running = { ...running, status: 'ready', currentStage: 'sam_implementation', inFlight: null, error: null,
+    events: [{ stage: 'susie_design', revision: 0, attempt: 1, status: 'done', evidence: ['Susie supplied a structured guide.'],
+      artifactId, output: guideOutput }] };
+  await store.save(running);
+  running = { ...running, status: 'running', attempts: { ...running.attempts, '0:sam_implementation': 1 },
+    inFlight: { stage: 'sam_implementation', attempt: 1 } };
+  await store.save(running);
+  running = { ...running, status: 'blocked', inFlight: { stage: 'sam_implementation', attempt: 1 }, error: 'Codex stage failed',
+    events: [...running.events, { stage: 'sam_implementation', revision: 0, attempt: 1, status: 'failed', evidence: [],
+      error: 'Codex stage failed', retryable: false }] };
+  await store.save(running);
+  const journalRoot = join(storeRoot, '.preview-deployments');
+  await mkdir(journalRoot, { recursive: true });
+  await writeFile(join(journalRoot, `${missionId}.json`), JSON.stringify({ version: 2, revision: 0, missionId,
+    artifactId, artifactFingerprint: 'a'.repeat(64), projectId: target.projectId, teamId: target.teamId,
+    projectSlug: target.projectSlug, teamSlug: target.teamSlug, target: 'preview', status: 'uncertain',
+    createdAt: new Date().toISOString(), deploymentId: null, url: null, attempts: 1,
+    error: 'Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.' }));
+  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace };
+  let deployments = 0;
+  const result = await main(['recover-preview', missionId], { env,
+    previewDeployer: { async deploy({ mission, artifactRoot }) {
+      deployments++;
+      assert.equal(mission.id, missionId);
+      assert.equal(artifactRoot, join(workspace, 'validation', missionId, 'dist'));
+      return { status: 'ready', missionId, artifactId, projectId: target.projectId, teamId: target.teamId,
+        target: 'preview', deploymentId: 'dpl_1234567890', url: previewUrl, artifactFingerprint: 'a'.repeat(64),
+        reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } };
+    } },
+  });
+  assert.equal(result.status, 'ready');
+  assert.equal(result.nextStage, 'quinn_functional');
+  assert.equal(result.roleCallsUsed, 3);
+  assert.equal(deployments, 1);
+  const recovered = await store.get(missionId);
+  assert.deepEqual(recovered.events.filter(event => event.stage === 'sam_implementation').map(event => event.status), ['failed', 'done']);
+  assert.equal(recovered.events.at(-1).output.previewUrl, previewUrl);
+});
+
 test('mission process probe recognizes the current process', async () => {
   assert.equal(await isMissionProcessAlive(process.pid), true);
 });

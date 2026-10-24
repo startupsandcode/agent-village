@@ -147,11 +147,49 @@ test('operator recovery permits one proven pre-execution Susie schema retry and 
   assert.equal(recovered.events.length, 1);
   assert.equal(recovered.events[0].retryable, false, 'original rejection remains in the audit trail');
   const completed = await f.runner.run(f.mission.id, successfulHandlers());
-  assert.equal(completed.status, 'accepted_preview');
+  assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
   assert.equal(completed.attempts['0:susie_design'], 2);
   assert.deepEqual(completed.events.filter(event => event.stage === 'susie_design').map(event => event.status), ['failed', 'done']);
   assert.equal(completed.preExecutionRecovery.status, 'consumed');
   assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, value) => sum + value, 0), 6);
+});
+
+test('verified empty-list Vercel preflight recovery records Sam output and resumes at Quinn without another role call', async t => {
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+  const input = { ...missionInput, maxAttempts: 1, previewTarget: target, destination,
+    mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
+  const f = await fixture(t, input);
+  const paused = await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
+    throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+  } }));
+  assert.equal(paused.status, 'blocked');
+  const deployment = { status: 'ready', missionId: f.mission.id, artifactId: f.mission.artifactId,
+    projectId: target.projectId, teamId: target.teamId, target: 'preview', deploymentId: 'dpl_1234567890',
+    url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app', artifactFingerprint: 'a'.repeat(64),
+    reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } };
+  const recovered = await f.store.recordPreviewDeploymentRecovery(f.mission.id, deployment);
+  assert.equal(recovered.status, 'ready');
+  assert.equal(recovered.version, 7);
+  assert.equal(recovered.currentStage, 'quinn_functional');
+  assert.equal(recovered.attempts['0:sam_implementation'], 1);
+  assert.deepEqual(recovered.events.filter(event => event.stage === 'sam_implementation').map(event => event.status), ['failed', 'done']);
+  assert.equal(recovered.previewDeploymentRecovery.status, 'consumed');
+  f.runner = new MissionRunner(f.store, { verifyRenderedEvidence: async ({ mission, rendered: evidence }) => ({
+    verified: true, artifactId: mission.artifactId, destination: evidence.destination,
+    previewUrl: evidence.previewUrl, screenshotRef: evidence.screenshotRef,
+  }) });
+  const recoveredRendering = { ...rendered, destination: deployment.url, previewUrl: deployment.url };
+  const completed = await f.runner.run(f.mission.id, successfulHandlers({
+    susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed actual screenshots at the recovered preview.'],
+      artifactId: f.mission.artifactId, rendered: recoveredRendering,
+      output: { kind: 'visual_review', decision: 'approved', findings: [] } }),
+  }));
+  assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
+  assert.equal(completed.attempts['0:sam_implementation'], 1);
+  assert.equal(completed.events.find(event => event.stage === 'sam_implementation' && event.status === 'done').output.deploymentId,
+    deployment.deploymentId);
 });
 
 test('visual review loops through implementation and functional checks within revision cap', async t => {

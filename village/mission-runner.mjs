@@ -80,14 +80,32 @@ function validateTransition(previous, next) {
     previous.events.at(-1)?.stage === 'susie_design' && previous.events.at(-1)?.status === 'failed' &&
     previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.attempt === previous.inFlight.attempt &&
     previous.events.at(-1)?.error === 'Codex stage failed';
+  const previewRecoveryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 6 && next.version === 7 && previous.currentStage === 'sam_implementation' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'sam_implementation' &&
+    previous.inFlight.attempt === 1 && previous.attempts['0:sam_implementation'] === 1 &&
+    previous.events.at(-1)?.stage === 'sam_implementation' && previous.events.at(-1)?.attempt === 1 &&
+    previous.events.at(-1)?.status === 'failed' && next.currentStage === 'quinn_functional' &&
+    next.revisions === previous.revisions && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && next.events.length === previous.events.length + 1 &&
+    same(next.events.slice(0, -1), previous.events) &&
+    next.events.at(-1)?.stage === 'sam_implementation' && next.events.at(-1)?.revision === 0 &&
+    next.events.at(-1)?.attempt === 1 && next.events.at(-1)?.status === 'done' &&
+    next.previewDeploymentRecovery?.status === 'consumed' &&
+    next.previewDeploymentRecovery.stage === 'sam_implementation' &&
+    next.previewDeploymentRecovery.revision === 0 && next.previewDeploymentRecovery.failedAttempt === 1 &&
+    next.previewDeploymentRecovery.matchingDeployments === 0 &&
+    next.previewDeploymentRecovery.deploymentId === next.events.at(-1)?.output?.deploymentId &&
+    next.previewDeploymentRecovery.artifactFingerprint === next.events.at(-1)?.output?.artifactFingerprint &&
+    next.previewDeploymentRecovery.url === next.events.at(-1)?.output?.previewUrl;
   const immutable = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
   if (previous.version === next.version) immutable.push('version');
-  else assert(recoveryGranted, 'invalid mission checkpoint transition');
+  else assert(recoveryGranted || previewRecoveryGranted, 'invalid mission checkpoint transition');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
-  if (recoveryGranted) return;
-  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
+  if (recoveryGranted || previewRecoveryGranted) return;
+  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error', 'previewDeploymentRecovery'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
   const prevAttempt = previous.attempts[stageKey] ?? 0;
   const nextAttempt = next.attempts[stageKey] ?? 0;
@@ -213,9 +231,10 @@ function validateState(value, id) {
   if (value?.version >= 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
   if (value?.version >= 5) stateKeys.push('previewTarget');
   if (value?.version >= 6) stateKeys.push('preExecutionRecovery');
+  if (value?.version >= 7) stateKeys.push('previewDeploymentRecovery');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4, 5, 6].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5, 6, 7].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -287,6 +306,20 @@ function validateState(value, id) {
       value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] === value.preExecutionRecovery.failedAttempt :
       value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] >=
         value.preExecutionRecovery.retryAttempt), 'invalid pre-execution recovery record');
+  assert(value.version < 7 || value.previewDeploymentRecovery === null || value.previewDeploymentRecovery &&
+    Object.keys(value.previewDeploymentRecovery).length === 8 &&
+    ['stage', 'revision', 'failedAttempt', 'matchingDeployments', 'deploymentId', 'url', 'artifactFingerprint', 'status']
+      .every(key => Object.hasOwn(value.previewDeploymentRecovery, key)) &&
+    value.previewDeploymentRecovery.stage === 'sam_implementation' && value.previewDeploymentRecovery.revision === 0 &&
+    value.previewDeploymentRecovery.failedAttempt === 1 && value.previewDeploymentRecovery.matchingDeployments === 0 &&
+    /^dpl_[A-Za-z0-9]{8,}$/.test(value.previewDeploymentRecovery.deploymentId) &&
+    /^https:\/\//.test(value.previewDeploymentRecovery.url) && /^[a-f0-9]{64}$/.test(value.previewDeploymentRecovery.artifactFingerprint) &&
+    value.previewDeploymentRecovery.status === 'consumed' && value.events.some(event => event.stage === 'sam_implementation' &&
+      event.revision === 0 && event.attempt === 1 && event.status === 'done' &&
+      event.output?.deploymentId === value.previewDeploymentRecovery.deploymentId &&
+      event.output?.previewUrl === value.previewDeploymentRecovery.url &&
+      event.output?.artifactFingerprint === value.previewDeploymentRecovery.artifactFingerprint),
+  'invalid preview deployment recovery record');
   assert(value.events.every(event => {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
@@ -419,7 +452,7 @@ export class MissionStore {
       if (previous) {
         const immutableKeys = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
-        if (!(previous.version === 5 && value.version === 6)) immutableKeys.push('version');
+        if (!((previous.version === 5 && value.version === 6) || (previous.version === 6 && value.version === 7))) immutableKeys.push('version');
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
         if (previous.version >= 5) immutableKeys.push('previewTarget');
         for (const key of immutableKeys) {
@@ -499,6 +532,39 @@ export class MissionStore {
     state.version = 6;
     state.preExecutionRecovery = { stage: 'susie_design', revision: 0, failedAttempt: 1, retryAttempt: 2,
       sessionId: proof.sessionId, evidenceSha256: proof.evidenceSha256, status: 'authorized' };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async recordPreviewDeploymentRecovery(id, deployment) {
+    const state = await this.get(id);
+    assert(state.version === 6 && state.status === 'blocked' && state.currentStage === 'sam_implementation' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'sam_implementation' &&
+      state.inFlight.attempt === 1 && state.attempts['0:sam_implementation'] === 1 &&
+      state.events.at(-1)?.stage === 'sam_implementation' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.status === 'failed' &&
+      !state.previewDeploymentRecovery && !(await this.isCancelled(id)),
+    'mission is not eligible for bounded Sam preview deployment recovery');
+    assert(deployment?.status === 'ready' && deployment.reconciliation?.method === 'vercel-list-mission-metadata' &&
+      deployment.reconciliation.matchingDeployments === 0 && deployment.missionId === id &&
+      deployment.artifactId === state.artifactId && deployment.projectId === state.previewTarget?.projectId &&
+      deployment.teamId === state.previewTarget?.teamId && deployment.target === 'preview' &&
+      /^dpl_[A-Za-z0-9]{8,}$/.test(deployment.deploymentId ?? '') &&
+      vercelPreviewOrigin(deployment.url, state.previewTarget) === deployment.url &&
+      /^[a-f0-9]{64}$/.test(deployment.artifactFingerprint ?? ''),
+    'verified same-mission preview recovery evidence required');
+    assert(roleCallsUsed(state) <= MAX_MISSION_ROLE_CALLS, 'mission exceeded the eight-call Codex CLI limit');
+    state.version = 7;
+    state.previewDeploymentRecovery = { stage: 'sam_implementation', revision: 0, failedAttempt: 1,
+      matchingDeployments: 0, deploymentId: deployment.deploymentId, url: deployment.url,
+      artifactFingerprint: deployment.artifactFingerprint, status: 'consumed' };
+    state.events.push({ stage: 'sam_implementation', revision: 0, attempt: 1, status: 'done',
+      evidence: ['Existing Sam static output was deployed after exact preflight reconciliation; Vercel verified the approved preview target, artifact identity, and READY state.'],
+      artifactId: state.artifactId, output: { kind: 'implementation', previewUrl: deployment.url,
+        deploymentId: deployment.deploymentId, artifactFingerprint: deployment.artifactFingerprint } });
+    state.currentStage = 'quinn_functional';
     state.status = 'ready';
     state.inFlight = null;
     state.error = null;
