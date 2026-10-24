@@ -80,7 +80,7 @@ function validateTransition(previous, next) {
     previous.events.at(-1)?.stage === 'susie_design' && previous.events.at(-1)?.status === 'failed' &&
     previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.attempt === previous.inFlight.attempt &&
     previous.events.at(-1)?.error === 'Codex stage failed';
-  const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
+  const immutable = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
   if (previous.version === next.version) immutable.push('version');
