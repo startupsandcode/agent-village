@@ -110,7 +110,7 @@ async function askForAgreement(proposalId, summary, criteria) {
 }
 
 export async function main(argv = process.argv.slice(2), { env = process.env, codex = new CodexRunner(),
-  confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker } = {}) {
+  confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker, processCheck } = {}) {
   const [command, ...args] = argv;
   const paths = missionPaths(env);
   const store = new MissionStore(paths.root);
@@ -128,7 +128,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const mission = await store.get(args[0]);
     const workspace = paths.workspace ? await inspectMissionWorkspace(paths.workspace) : null;
     const lockRoot = workspace ? workspaceStateRoot(paths.home, workspace.root) : paths.root;
-    return { mission, ...await readMissionBackgroundStatus({ root: lockRoot, missionId: args[0], feed }) };
+    return { mission, ...await readMissionBackgroundStatus({ root: lockRoot, missionId: args[0], feed, processCheck }) };
   }
   if (command === 'show') {
     requireValue(args.length === 1, 'show <mission-id> required');
@@ -149,7 +149,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const proof = await verifyCodexSchemaRejection({ sessionPath, mission: state, workspacePath: workspace.root, codexHome: env.CODEX_HOME });
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
     const feed = new MissionNotificationFeed(paths.notifications);
-    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id, feed });
+    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
     const lease = await readWorkspaceLease(lockRoot);
     requireValue(!backgroundStatus.worker &&
       lease && lease.missionId === id && lease.storeRoot === paths.root && lease.branch === workspace.branch &&
@@ -234,7 +234,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     }
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
     const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id,
-      feed: new MissionNotificationFeed(paths.notifications) });
+      feed: new MissionNotificationFeed(paths.notifications), processCheck });
     const activeReservation = await readWorkspaceLease(lockRoot);
     if (activeReservation && (activeReservation.missionId !== id || activeReservation.storeRoot !== paths.root)) {
       return { id, status: 'workspace_busy', activeMissionId: activeReservation.missionId };

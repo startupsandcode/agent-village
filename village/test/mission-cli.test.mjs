@@ -9,7 +9,7 @@ import test from 'node:test';
 import { main } from '../mission-cli.mjs';
 import { MissionRunner, MissionStore } from '../mission-runner.mjs';
 import { MissionNotificationFeed, recordMissionWorkerError, reserveWorkspaceMission, updateWorkspaceMission,
-  workspaceStateRoot } from '../mission-background.mjs';
+  isMissionProcessAlive, workspaceStateRoot } from '../mission-background.mjs';
 
 const execFileAsync = promisify(execFile);
 const artifactId = 'local-preview-artifact-46';
@@ -72,18 +72,24 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
   const deadPid = deadWorker.pid;
   deadWorker.kill();
   await new Promise(resolve => deadWorker.once('exit', resolve));
+  await new Promise(resolve => setTimeout(resolve, 250));
   await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: deadPid });
   const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace, CODEX_HOME: codexHome };
-  const recovered = await main(['retry-preflight', missionId, sessionPath], { env });
+  const recovered = await main(['retry-preflight', missionId, sessionPath], { env, processCheck: async () => false });
   assert.equal(recovered.status, 'ready');
   assert.equal(recovered.priorFailureRetained, true);
   assert.equal(recovered.roleCallsReserved, 2);
-  const resumed = await main(['resume', missionId], { env, spawnWorker: async () => ({ pid: 2147483646 }) });
+  const resumed = await main(['resume', missionId], { env, processCheck: async () => false,
+    spawnWorker: async () => ({ pid: process.pid }) });
   assert.equal(resumed.status, 'queued');
   const checkpoint = await store.get(missionId);
   assert.equal(checkpoint.events.length, 1);
   assert.equal(checkpoint.events[0].retryable, false);
   assert.equal(checkpoint.preExecutionRecovery.status, 'authorized');
+});
+
+test('mission process probe recognizes the current process', async () => {
+  assert.equal(await isMissionProcessAlive(process.pid), true);
 });
 
 test('start runs mocked roles in order and accepts only a real rendered local preview', async t => {
