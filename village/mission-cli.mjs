@@ -159,7 +159,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
     const lease = await readWorkspaceLease(lockRoot);
     requireValue(!backgroundStatus.worker, 'mission worker is still active; pre-execution recovery is blocked');
-    requireValue(lease && lease.missionId === id, 'workspace reservation mission ID does not match this recovery');
+    requireValue(lease && lease.missionId === id,
+      `workspace reservation mission ID ${lease?.missionId ?? '(missing)'} does not match ${id}`);
     requireValue(sameLocalPath(lease.storeRoot, paths.root), 'workspace reservation store path does not match this recovery');
     requireValue(lease.branch === workspace.branch, 'workspace reservation branch does not match this recovery');
     requireValue(Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid,
