@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -62,7 +62,7 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
     { type: 'event_msg', payload: { type: 'task_complete', error: { message: JSON.stringify(providerError) } } },
   ];
   await writeFile(sessionPath, `${session.map(record => JSON.stringify(record)).join('\n')}\n`);
-  const lockRoot = workspaceStateRoot(home, workspace);
+  const lockRoot = workspaceStateRoot(home, await realpath(workspace));
   const lease = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-preflight-retry' });
   const deadWorker = await import('node:child_process').then(({ spawn }) => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }));
   await new Promise((resolve, reject) => {
