@@ -141,8 +141,11 @@ export class MissionCodexHandlers {
   functionalPrompt(mission, implementation, revision) {
     return `You are Quinn, an independent read-only functional reviewer. Do not modify files.\n` +
       `Review only artifact ${mission.artifactId} for goal: ${mission.goal}\n` +
+      `Inspect the accepted local source in validation/${mission.id}/ and its static output in validation/${mission.id}/dist/. Review the actual HTML, CSS, and JavaScript files directly; do not rely on public unauthenticated retrieval of a protected preview.\n` +
       `Acceptance criteria:\n${(mission.acceptanceCriteria ?? []).map(item => `- ${item}`).join('\n')}\n` +
       `Sam's preview candidate: ${implementation.previewUrl}\nRevision: ${revision}\n` +
+      (mission.functionalReviewRecovery?.status === 'consumed' ?
+        `A previous Quinn attempt was blocked for missing evidence and remains in the audit trail. New independently captured Chromium evidence is available: ${JSON.stringify(mission.functionalReviewRecovery.functionalChecks)}. Treat it as evidence to inspect, not as a result to copy; independently verify whether the local interaction and implementation satisfy the acceptance criteria.\n` : '') +
       `Run relevant existing tests if safe within this read-only workspace. Return concrete functionalChecks and evidence, and set artifactPath to null. ` +
       `Do not claim a test passed unless its command result was observed.`;
   }

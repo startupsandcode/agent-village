@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, realpath } from 'node:fs/promises';
@@ -10,6 +11,7 @@ import { stdin, stdout } from 'node:process';
 import { CodexRunner } from './codex-runner.mjs';
 import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
+import { BrowserPreviewVerifier } from './browser-verifier.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
 import { configuredVercelPreviewTargets, validateVercelPreviewTarget,
   isKnownRootDirectoryPreflightFailure, vercelPreviewDestination } from './vercel-preview-deployer.mjs';
@@ -37,6 +39,18 @@ function sameLocalPath(left, right) {
   const first = resolve(left);
   const second = resolve(right);
   return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
+}
+
+export function samePreviewUrl(left, right) {
+  try {
+    const first = new URL(left);
+    const second = new URL(right);
+    const path = url => url.pathname.replace(/\/+$/, '') || '/';
+    return ['http:', 'https:'].includes(first.protocol) && first.origin === second.origin &&
+      first.username === '' && first.password === '' && first.search === '' && first.hash === '' &&
+      second.username === '' && second.password === '' && second.search === '' && second.hash === '' &&
+      path(first) === path(second);
+  } catch { return false; }
 }
 
 async function git(cwd, ...args) {
@@ -283,6 +297,57 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0),
       matchingDeployments: reconciled.reconciliation.matchingDeployments };
   }
+  if (command === 'retry-functional') {
+    requireValue(args.length === 1, 'retry-functional <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; functional retry requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for functional retry');
+    requireValue(state.version === 7 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 1 && state.attempts['0:quinn_functional'] === 1 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error === 'Quinn must record functional checks' &&
+      state.previewDeploymentRecovery?.status === 'consumed' && !(await store.isCancelled(id)),
+    'mission is not eligible for a one-time evidence-backed Quinn retry');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+      functionalChecks: functional.checks,
+      screenshotRefs: { desktop: renderEvidence.rendered.desktop.evidenceRef, narrow: renderEvidence.rendered.narrow.evidenceRef },
+    });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailureRetained: true,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.functionalReviewRecovery.retryAttempt };
+  }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
@@ -391,7 +456,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, retry-functional, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

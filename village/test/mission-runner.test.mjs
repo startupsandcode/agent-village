@@ -29,7 +29,7 @@ async function fixture(t, input = missionInput) {
   const store = new MissionStore(root);
   const mission = await store.create(input);
   const runner = new MissionRunner(store, { verifyRenderedEvidence: async ({ mission, rendered: evidence }) => ({
-    verified: true, artifactId: mission.artifactId, destination: mission.destination,
+    verified: true, artifactId: mission.artifactId, destination: evidence.destination,
     previewUrl: evidence.previewUrl, screenshotRef: evidence.screenshotRef,
   }) });
   return { root, store, mission, runner };
@@ -100,6 +100,49 @@ test('stage failure is checkpointed and retries only up to the configured attemp
   assert.equal(attempts, 2);
   assert.equal(result.events.filter(event => event.stage === 'susie_design').length, 2);
   assert.equal(result.events.at(-1).error, 'designer runtime failed');
+});
+
+test('one evidence-backed Quinn retry preserves the blocked review and stays inside the mission call cap', async t => {
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+  const input = { ...missionInput, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+    mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
+  const f = await fixture(t, input);
+  const samFailed = await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
+    throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+  } }));
+  assert.equal(samFailed.status, 'blocked');
+  await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
+    artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
+    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
+  const failed = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  assert.equal(failed.status, 'blocked');
+  assert.equal(failed.attempts['0:quinn_functional'], 1);
+  const evidence = { evidenceSha256: 'a'.repeat(64),
+    functionalChecks: ['HTTP 200', 'artifact identity matches', 'retry state one', 'retry state two',
+      'retry limit disables control', 'cancel disables attempts', 'reset restores initial state'],
+    screenshotRefs: { desktop: `sha256:${'b'.repeat(64)}`, narrow: `sha256:${'c'.repeat(64)}` } };
+  const authorized = await f.store.authorizeFunctionalReviewRetry(f.mission.id, evidence);
+  assert.equal(authorized.status, 'ready');
+  assert.equal(authorized.version, 8);
+  assert.equal(authorized.events.at(-1).error, 'Quinn must record functional checks');
+  assert.equal(authorized.functionalReviewRecovery.status, 'authorized');
+  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const completed = await f.runner.run(f.mission.id, successfulHandlers({
+    susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed verified desktop and narrow captures.'],
+      artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
+      output: { kind: 'visual_review', decision: 'approved', findings: [] } }),
+  }));
+  assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
+  assert.deepEqual(completed.events.filter(event => event.stage === 'quinn_functional').map(event => event.status), ['failed', 'done']);
+  assert.equal(completed.attempts['0:quinn_functional'], 2);
+  assert.equal(completed.functionalReviewRecovery.status, 'consumed');
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 6);
+  await assert.rejects(f.store.authorizeFunctionalReviewRetry(f.mission.id, evidence), /not eligible/);
 });
 
 test('confirmed retryable failure can resume from its durable checkpoint without replaying uncertain outcomes', async t => {

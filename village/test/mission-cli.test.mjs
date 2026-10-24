@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { inspectMissionWorkerWorkspace, main } from '../mission-cli.mjs';
+import { inspectMissionWorkerWorkspace, main, samePreviewUrl } from '../mission-cli.mjs';
 import { MissionRunner, MissionStore } from '../mission-runner.mjs';
 import { MissionNotificationFeed, recordMissionWorkerError, reserveWorkspaceMission, updateWorkspaceMission,
   isMissionProcessAlive, workspaceStateRoot } from '../mission-background.mjs';
@@ -23,6 +23,13 @@ const guide = { concept: 'An editorial volunteer invitation with a people-first 
     altStrategy: 'Describe informative images; leave decorative images with empty alt.' },
   interactions: ['Every field has a persistent label and visible error state.', 'Keyboard focus remains visible and confirmation is announced.'],
   references: ['Editorial service design'] };
+
+test('preview evidence URL comparison accepts only equivalent clean HTTP(S) locations', () => {
+  assert.equal(samePreviewUrl('https://astra.example.test', 'https://astra.example.test/'), true);
+  assert.equal(samePreviewUrl('https://astra.example.test/path/', 'https://astra.example.test/path'), true);
+  assert.equal(samePreviewUrl('https://astra.example.test/path?x=1', 'https://astra.example.test/path'), false);
+  assert.equal(samePreviewUrl('https://other.example.test', 'https://astra.example.test'), false);
+});
 
 test('mission worker permits only the reconciled mission output folder to remain untracked', async t => {
   const root = await mkdtemp(join(tmpdir(), 'village-worker-workspace-'));
