@@ -147,7 +147,7 @@ test('recover-preview deploys only the accepted mission output after the exact p
     previewDeployer: { async deploy({ mission, artifactRoot }) {
       deployments++;
       assert.equal(mission.id, missionId);
-      assert.equal(artifactRoot, join(workspace, 'validation', missionId, 'dist'));
+      assert.equal(artifactRoot, await realpath(join(workspace, 'validation', missionId, 'dist')));
       return { status: 'ready', missionId, artifactId, projectId: target.projectId, teamId: target.teamId,
         target: 'preview', deploymentId: 'dpl_1234567890', url: previewUrl, artifactFingerprint: 'a'.repeat(64),
         reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } };
