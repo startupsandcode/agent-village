@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -59,8 +59,8 @@ test('background launch detaches, hides the process, pins workspace and removes 
   assert.equal(launched.options.env.CODEX_HOME, 'C:\\Users\\JMann\\.codex');
   assert.equal(launched.options.env.PLAYWRIGHT_BROWSERS_PATH, 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright');
   assert.equal(launched.options.env.VILLAGE_MISSION_EXPECTED_BRANCH, 'issue-46');
-  assert.equal(launched.options.env.VILLAGE_MISSION_NOTIFICATIONS_ROOT, 'C:\\notifications');
-  assert.equal(launched.options.env.VILLAGE_MISSION_WORKSPACE_STATE_ROOT, 'C:\\locks');
+  assert.equal(launched.options.env.VILLAGE_MISSION_NOTIFICATIONS_ROOT, resolve('C:/notifications'));
+  assert.equal(launched.options.env.VILLAGE_MISSION_WORKSPACE_STATE_ROOT, resolve('C:/locks'));
   assert.equal(launched.options.env.VILLAGE_MISSION_LEASE_TOKEN, 'lease-token');
   assert.equal(spawned.detached, true);
   assert.equal(result.pid, 1234);

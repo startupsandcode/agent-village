@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { main } from '../mission-cli.mjs';
 import { MissionStore } from '../mission-runner.mjs';
+import { MissionNotificationFeed, recordMissionWorkerError, workspaceStateRoot } from '../mission-background.mjs';
 
 const execFileAsync = promisify(execFile);
 const artifactId = 'local-preview-artifact-46';
@@ -124,7 +125,7 @@ test('start persists a queued mission, detaches one worker and refuses a duplica
   let acceptAgreement;
   const agreement = new Promise(resolve => { acceptAgreement = resolve; });
   const options = { env: { VILLAGE_MISSION_WORKSPACE: workspace, VILLAGE_MISSION_ROOT: missions,
-    VILLAGE_MISSION_EVIDENCE_ROOT: join(root, 'evidence') }, codex,
+    VILLAGE_MISSION_EVIDENCE_ROOT: join(root, 'evidence'), VILLAGE_MISSION_HOME: join(root, 'home') }, codex,
     confirm: async () => { await agreement; return 'YES'; }, spawnWorker: async ({ missionId, expectedBranch }) => {
       launched += 1;
       assert.equal(missionId, 'queued-first-46');
@@ -147,6 +148,9 @@ test('start persists a queued mission, detaches one worker and refuses a duplica
   await writeFile(dirtyPath, 'preserve me');
   await assert.rejects(() => main(['resume', 'queued-first-46'], options), /clean before it starts or resumes/);
   await (await import('node:fs/promises')).unlink(dirtyPath);
+  await recordMissionWorkerError({ root: workspaceStateRoot(join(root, 'home'), workspace),
+    feed: new MissionNotificationFeed(join(missions, '.notifications')), missionId: 'queued-first-46',
+    message: 'simulated worker exit before completing the mission' });
   const resumed = await main(['resume', 'queued-first-46'], options);
   assert.equal(resumed.status, 'queued');
   assert.equal(resumed.statusCommand, 'node village/mission-cli.mjs status queued-first-46');
