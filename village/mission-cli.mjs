@@ -152,11 +152,13 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const feed = new MissionNotificationFeed(paths.notifications);
     const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
     const lease = await readWorkspaceLease(lockRoot);
-    requireValue(!backgroundStatus.worker &&
-      lease && lease.missionId === id && lease.storeRoot === paths.root && lease.branch === workspace.branch &&
-      Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid &&
-      !backgroundStatus.reservation.processAlive,
-    'mission worker or workspace reservation is not safely stopped for pre-execution recovery');
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; pre-execution recovery is blocked');
+    requireValue(lease && lease.missionId === id && lease.storeRoot === paths.root && lease.branch === workspace.branch,
+      'workspace reservation identity does not match this mission recovery');
+    requireValue(Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid,
+      'workspace reservation process identity is incomplete for recovery');
+    requireValue(!backgroundStatus.reservation.processAlive,
+      'workspace reservation process is still active; pre-execution recovery is blocked');
     const recovered = await store.authorizePreExecutionSchemaRetry(id, proof);
     return { id, status: recovered.status, retryStage: recovered.currentStage,
       priorFailureRetained: recovered.events.at(-1)?.status === 'failed',
