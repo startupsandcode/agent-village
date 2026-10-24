@@ -10,7 +10,7 @@ const finalStatuses = new Set([...terminalStatuses, 'failed']);
 const safeEnvironmentNames = new Set([
   'PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'TEMP', 'TMP',
   'HOME', 'USER', 'LOGNAME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
-  'LANG', 'LC_ALL', 'CODEX_HOME', 'PLAYWRIGHT_BROWSERS_PATH',
+  'LANG', 'LC_ALL', 'CODEX_HOME', 'PLAYWRIGHT_BROWSERS_PATH', 'VILLAGE_VERCEL_PREVIEW_TARGETS',
 ]);
 
 function hash(value) {
