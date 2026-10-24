@@ -286,11 +286,14 @@ export class VercelCliClient {
   }
 
   async inspect(deploymentId, { teamId }) {
-    requireValue(/^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) && /^team_[A-Za-z0-9]{8,}$/.test(teamId),
-      'deployment and team IDs are required for read-only inspection');
+    requireValue((/^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) ||
+      (typeof deploymentId === 'string' && /^https:\/\/[a-z0-9.-]+\.vercel\.app\/?$/i.test(deploymentId))) &&
+      /^team_[A-Za-z0-9]{8,}$/.test(teamId), 'deployment reference and team IDs are required for read-only inspection');
     const cliDetails = parseCliJson(await this.run(['inspect', deploymentId, '--scope', teamId, '--json', '--no-color', '--non-interactive'],
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment inspection');
-    const apiDetails = parseCliJson(await this.run(['api', `/v13/deployments/${deploymentId}`, '--scope', teamId, '--raw'],
+    const resolvedId = cliDetails.id ?? cliDetails.uid;
+    requireValue(/^dpl_[A-Za-z0-9]{8,}$/.test(resolvedId ?? ''), 'Vercel CLI did not resolve a deployment ID');
+    const apiDetails = parseCliJson(await this.run(['api', `/v13/deployments/${resolvedId}`, '--scope', teamId, '--raw'],
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment API inspection');
     return { ...cliDetails, ...apiDetails,
       target: apiDetails.target ?? cliDetails.target ?? (apiDetails.oidcTokenClaims?.environment === 'preview' ? 'preview' : null),
