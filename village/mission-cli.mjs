@@ -228,6 +228,53 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       previewUrl: deployed.url, deploymentId: deployed.deploymentId,
       roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0) };
   }
+  if (command === 'reconcile-preview') {
+    requireValue(args.length === 1, 'reconcile-preview <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; preview reconciliation requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; preview reconciliation is blocked');
+    requireValue(lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped workspace reservation must match the mission before preview reconciliation');
+    requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
+      state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
+      !state.previewDeploymentRecovery && !(await store.isCancelled(id)),
+    'mission is not eligible for existing-submission preview reconciliation');
+    const journalPath = join(paths.root, '.preview-deployments', `${id}.json`);
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+    requireValue(journal.status === 'uncertain' && journal.missionId === id && journal.artifactId === state.artifactId &&
+      journal.projectId === state.previewTarget.projectId && journal.teamId === state.previewTarget.teamId &&
+      journal.target === 'preview' && journal.deploymentId === null && journal.url === null &&
+      journal.attempts === 2 && journal.error === 'Vercel response did not include a deployment ID',
+    'preview journal does not contain the exact missing-ID response checkpoint');
+    const runtime = previewDeployer ? { previewDeployer } : createMissionRuntime({ storeRoot: paths.root,
+      evidenceRoot: paths.evidence, workspacePath: workspace.root, codex, env });
+    requireValue(runtime.previewDeployer && typeof runtime.previewDeployer.reconcileExistingSubmission === 'function',
+      'existing-submission reconciliation adapter is unavailable');
+    const reconciled = await runtime.previewDeployer.reconcileExistingSubmission({ mission: state,
+      artifactRoot: join(workspace.root, outputRoot, 'dist') });
+    const recovered = await store.recordPreviewDeploymentRecovery(id, {
+      status: reconciled.status, reconciliation: reconciled.reconciliation, missionId: reconciled.missionId,
+      artifactId: reconciled.artifactId, projectId: reconciled.projectId, teamId: reconciled.teamId,
+      target: reconciled.target, deploymentId: reconciled.deploymentId, url: reconciled.url,
+      artifactFingerprint: reconciled.artifactFingerprint,
+    });
+    return { id, status: recovered.status, nextStage: recovered.currentStage,
+      previewUrl: reconciled.url, deploymentId: reconciled.deploymentId,
+      roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      matchingDeployments: reconciled.reconciliation.matchingDeployments };
+  }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
@@ -336,7 +383,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, retry-preflight, recover-preview, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

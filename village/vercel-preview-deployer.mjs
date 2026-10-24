@@ -65,7 +65,8 @@ function metadataFor(mission, fingerprint) {
 
 export function vercelPreviewOrigin(value, target) {
   let url;
-  try { url = new URL(value); } catch { throw new Error('Vercel did not return a valid preview URL'); }
+  const candidate = typeof value === 'string' && /^https?:\/\//i.test(value) ? value : `https://${value ?? ''}`;
+  try { url = new URL(candidate); } catch { throw new Error('Vercel did not return a valid preview URL'); }
   requireValue(url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash &&
     (url.pathname === '' || url.pathname === '/'),
     'Vercel preview URL must be an HTTPS origin without credentials, port, query, or fragment');
@@ -118,7 +119,7 @@ async function collectArtifact(root) {
   return files;
 }
 
-async function stageArtifact(files, artifactId, target) {
+function fingerprintArtifact(files, artifactId) {
   const html = files.find(file => file.relativePath === 'index.html');
   requireValue(html, 'preview artifact must have a root index.html');
   const marker = `<meta name="village-artifact-id" content="${artifactId}">`;
@@ -132,7 +133,11 @@ async function stageArtifact(files, artifactId, target) {
     hash.update(file.bytes);
     hash.update('\0');
   }
-  const fingerprint = hash.digest('hex');
+  return hash.digest('hex');
+}
+
+async function stageArtifact(files, artifactId, target) {
+  const fingerprint = fingerprintArtifact(files, artifactId);
   const stageRoot = await mkdtemp(join(tmpdir(), 'village-preview-artifact-'));
   try {
     // The approved Astra Lab project has rootDirectory="app". Keep a root-level
@@ -454,6 +459,83 @@ export class VercelPreviewDeployer {
       await lock.close();
       await rm(lockPath, { force: true });
       await rm(staged.stageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }
+
+  async reconcileExistingSubmission({ mission, artifactRoot }) {
+    requireValue(mission && mission.repo === REPO && idPattern.test(mission.id) &&
+      typeof mission.artifactId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(mission.artifactId) &&
+      mission.mayaAgreement?.acceptedByUser === true &&
+      sameVercelPreviewTarget(mission.previewTarget, mission.mayaAgreement.previewTarget),
+    'user-accepted Agent Village mission identity required');
+    const target = validateVercelPreviewTarget(mission.previewTarget, this.targets);
+    const [workspacePath, artifactPath] = await Promise.all([realpath(this.workspaceRoot), realpath(artifactRoot)]);
+    requireValue(inside(workspacePath, artifactPath), 'artifact must be inside the approved workspace');
+    const fingerprint = fingerprintArtifact(await collectArtifact(artifactPath), mission.artifactId);
+    const revision = mission.revisions ?? 0;
+    const journalPath = this.journalPath(mission.id, revision);
+    await mkdir(this.stateRoot, { recursive: true });
+    const lockPath = `${journalPath}.lock`;
+    let lock;
+    try { lock = await open(lockPath, 'wx'); }
+    catch (error) {
+      if (error.code === 'EEXIST') throw new Error('preview reconciliation is already running; inspect its journal before retrying');
+      throw error;
+    }
+    try {
+      const journal = await readJournal(journalPath);
+      requireValue(journal.version === 2 && journal.revision === revision && journal.missionId === mission.id &&
+        journal.artifactId === mission.artifactId && journal.artifactFingerprint === fingerprint &&
+        journal.projectId === target.projectId && journal.teamId === target.teamId &&
+        journal.projectSlug === target.projectSlug && journal.teamSlug === target.teamSlug && journal.target === 'preview' &&
+        journal.status === 'uncertain' && journal.deploymentId === null && journal.url === null &&
+        journal.attempts === 2 && journal.error === 'Vercel response did not include a deployment ID',
+      'preview journal is not eligible for existing-submission reconciliation');
+      requireValue(typeof this.cli.listMissionDeployments === 'function', 'read-only Vercel deployment reconciliation is unavailable');
+      const deployments = await this.cli.listMissionDeployments({ missionId: mission.id, target, cwd: this.workspaceRoot });
+      requireValue(Array.isArray(deployments) && deployments.length === 1,
+        'mission-tagged Vercel deployment is not unique; inspect it manually before proceeding');
+      const [candidate] = deployments;
+      const meta = candidate?.meta ?? candidate?.metadata ?? {};
+      requireValue(meta.villageMissionId === mission.id && meta.villageArtifactId === mission.artifactId &&
+        meta.villageArtifactSha256 === fingerprint && typeof candidate.url === 'string',
+      'listed Vercel deployment metadata does not match this mission artifact');
+      const candidateUrl = vercelPreviewOrigin(/^https:\/\//i.test(candidate.url) ? candidate.url : `https://${candidate.url}`, target);
+      const deadline = Date.now() + this.maxWaitMs;
+      let details;
+      let deploymentId;
+      for (;;) {
+        details = await this.cli.inspect(candidate.url, { teamId: target.teamId });
+        deploymentId = details?.id ?? details?.uid;
+        const inspectedUrl = vercelPreviewOrigin(details?.url, target);
+        const detailsMeta = details?.meta ?? details?.metadata ?? {};
+        requireValue(typeof deploymentId === 'string' && /^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) &&
+          details.projectId === target.projectId && details.target !== 'production' &&
+          ['preview', null, undefined].includes(details.target) && inspectedUrl === candidateUrl &&
+          detailsMeta.villageMissionId === mission.id && detailsMeta.villageArtifactId === mission.artifactId &&
+          detailsMeta.villageArtifactSha256 === fingerprint,
+        'Vercel deployment inspection does not match the approved mission artifact');
+        if (details.readyState === 'READY') break;
+        if (['ERROR', 'CANCELED', 'CANCELLED', 'BLOCKED'].includes(details.readyState)) {
+          throw new Error(`Vercel preview ended in ${details.readyState}`);
+        }
+        if (Date.now() >= deadline) throw new Error('Vercel preview did not reach READY within the bounded wait');
+        await this.sleep(Math.min(this.pollIntervalMs, Math.max(0, deadline - Date.now())));
+      }
+      journal.deploymentId = deploymentId;
+      journal.url = candidateUrl;
+      journal.status = 'ready';
+      journal.readyAt = new Date().toISOString();
+      journal.error = null;
+      journal.reconciliation = { method: 'vercel-list-mission-metadata', checkedAt: new Date().toISOString(),
+        matchingDeployments: 1, deploymentId };
+      journal.verified = { id: deploymentId, projectId: target.projectId, target: details.target,
+        readyState: details.readyState, url: candidateUrl, artifactFingerprint: fingerprint };
+      await writeJournal(journalPath, journal);
+      return journal;
+    } finally {
+      await lock.close();
+      await rm(lockPath, { force: true });
     }
   }
 }

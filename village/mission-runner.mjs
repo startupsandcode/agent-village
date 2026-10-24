@@ -94,7 +94,7 @@ function validateTransition(previous, next) {
     next.previewDeploymentRecovery?.status === 'consumed' &&
     next.previewDeploymentRecovery.stage === 'sam_implementation' &&
     next.previewDeploymentRecovery.revision === 0 && next.previewDeploymentRecovery.failedAttempt === 1 &&
-    next.previewDeploymentRecovery.matchingDeployments === 0 &&
+    [0, 1].includes(next.previewDeploymentRecovery.matchingDeployments) &&
     next.previewDeploymentRecovery.deploymentId === next.events.at(-1)?.output?.deploymentId &&
     next.previewDeploymentRecovery.artifactFingerprint === next.events.at(-1)?.output?.artifactFingerprint &&
     next.previewDeploymentRecovery.url === next.events.at(-1)?.output?.previewUrl;
@@ -311,7 +311,7 @@ function validateState(value, id) {
     ['stage', 'revision', 'failedAttempt', 'matchingDeployments', 'deploymentId', 'url', 'artifactFingerprint', 'status']
       .every(key => Object.hasOwn(value.previewDeploymentRecovery, key)) &&
     value.previewDeploymentRecovery.stage === 'sam_implementation' && value.previewDeploymentRecovery.revision === 0 &&
-    value.previewDeploymentRecovery.failedAttempt === 1 && value.previewDeploymentRecovery.matchingDeployments === 0 &&
+    value.previewDeploymentRecovery.failedAttempt === 1 && [0, 1].includes(value.previewDeploymentRecovery.matchingDeployments) &&
     /^dpl_[A-Za-z0-9]{8,}$/.test(value.previewDeploymentRecovery.deploymentId) &&
     /^https:\/\//.test(value.previewDeploymentRecovery.url) && /^[a-f0-9]{64}$/.test(value.previewDeploymentRecovery.artifactFingerprint) &&
     value.previewDeploymentRecovery.status === 'consumed' && value.events.some(event => event.stage === 'sam_implementation' &&
@@ -548,7 +548,7 @@ export class MissionStore {
       !state.previewDeploymentRecovery && !(await this.isCancelled(id)),
     'mission is not eligible for bounded Sam preview deployment recovery');
     assert(deployment?.status === 'ready' && deployment.reconciliation?.method === 'vercel-list-mission-metadata' &&
-      deployment.reconciliation.matchingDeployments === 0 && deployment.missionId === id &&
+      [0, 1].includes(deployment.reconciliation.matchingDeployments) && deployment.missionId === id &&
       deployment.artifactId === state.artifactId && deployment.projectId === state.previewTarget?.projectId &&
       deployment.teamId === state.previewTarget?.teamId && deployment.target === 'preview' &&
       /^dpl_[A-Za-z0-9]{8,}$/.test(deployment.deploymentId ?? '') &&
@@ -558,7 +558,7 @@ export class MissionStore {
     assert(roleCallsUsed(state) <= MAX_MISSION_ROLE_CALLS, 'mission exceeded the eight-call Codex CLI limit');
     state.version = 7;
     state.previewDeploymentRecovery = { stage: 'sam_implementation', revision: 0, failedAttempt: 1,
-      matchingDeployments: 0, deploymentId: deployment.deploymentId, url: deployment.url,
+      matchingDeployments: deployment.reconciliation.matchingDeployments, deploymentId: deployment.deploymentId, url: deployment.url,
       artifactFingerprint: deployment.artifactFingerprint, status: 'consumed' };
     state.events.push({ stage: 'sam_implementation', revision: 0, attempt: 1, status: 'done',
       evidence: ['Existing Sam static output was deployed after exact preflight reconciliation; Vercel verified the approved preview target, artifact identity, and READY state.'],

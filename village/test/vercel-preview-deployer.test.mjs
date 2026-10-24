@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { isKnownRootDirectoryPreflightFailure, VercelCliClient, VercelPreviewDeployer } from '../vercel-preview-deployer.mjs';
+import { isKnownRootDirectoryPreflightFailure, vercelPreviewOrigin, VercelCliClient, VercelPreviewDeployer } from '../vercel-preview-deployer.mjs';
 
 const projectId = 'prj_1234567890abcdef';
 const teamId = 'team_1234567890abcdef';
@@ -74,6 +74,11 @@ test('classifies only the exact missing app root as a definite pre-submission CL
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Upload failed…\nError: The provided path “C:\\Temp\\stage\\app” does not exist.'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: connection closed after upload'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\web" does not exist.'), false);
+});
+
+test('normalizes bare Vercel CLI hostnames while enforcing the approved deployment host', () => {
+  assert.equal(vercelPreviewOrigin('astra-lab-preview-abc-jmanns-projects.vercel.app', baseMission.previewTarget), previewUrl);
+  assert.throws(() => vercelPreviewOrigin('evil.example.org', baseMission.previewTarget), /not allowlisted/);
 });
 
 test('rejects production and any project/team/hostname outside the explicit allowlist before submission', async t => {
@@ -269,6 +274,47 @@ test('a matching Vercel mission deployment blocks reconciliation and retry', asy
   await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /uncertain.*reconcile/i);
   await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /matching Vercel deployment exists/);
   assert.equal(submissions, 1);
+});
+
+test('reconciles an existing READY mission deployment when Vercel omitted the ID, without a second submission', async t => {
+  let submissions = 0;
+  let listCalls = 0;
+  const bareUrl = 'astra-lab-preview-abc-jmanns-projects.vercel.app';
+  let fingerprint;
+  const f = await fixture(t, { cliOverride: {
+    async whoami() { return 'test-user'; },
+    async deploy(options) {
+      submissions++;
+      if (submissions === 1) { const error = new Error('CLI failed before submission'); error.submitted = false; throw error; }
+      fingerprint = options.meta.villageArtifactSha256;
+      return { url: bareUrl };
+    },
+    async listMissionDeployments({ missionId }) {
+      listCalls++;
+      assert.equal(missionId, f.mission.id);
+      if (listCalls === 1) return [];
+      return [{ url: bareUrl, meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
+        villageArtifactSha256: fingerprint } }];
+    },
+    async inspect(value) {
+      assert.equal(value, bareUrl);
+      return { id: 'dpl_1234567890abcdef', url: bareUrl, projectId, target: 'preview', readyState: 'READY',
+        meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
+          villageArtifactSha256: fingerprint } };
+    },
+  } });
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /CLI failed before submission/);
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /uncertain.*reconcile/i);
+  await assert.rejects(f.deployer.reconcileExistingSubmission({ mission: f.mission, artifactRoot: f.artifactRoot }),
+    /not unique/);
+  const recovered = await f.deployer.reconcileExistingSubmission({ mission: f.mission, artifactRoot: f.artifactRoot });
+  assert.equal(recovered.status, 'ready');
+  assert.equal(recovered.deploymentId, 'dpl_1234567890abcdef');
+  assert.equal(recovered.url, previewUrl);
+  assert.equal(recovered.attempts, 2);
+  assert.equal(recovered.reconciliation.matchingDeployments, 1);
+  assert.equal(submissions, 2, 'reconciliation did not submit another deployment');
+  assert.equal(listCalls, 2);
 });
 
 test('rejects successful submission if Vercel reports production, a different project, or an unapproved host', async t => {
