@@ -153,7 +153,7 @@ async function stageArtifact(files, artifactId, target) {
     }
     return { stageRoot, fingerprint };
   } catch (error) {
-    await rm(stageRoot, { recursive: true, force: true });
+    await rm(stageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     throw error;
   }
 }
@@ -244,7 +244,7 @@ async function runCli(args, { cwd, timeoutMs = CLI_TIMEOUT_MS }) {
 }
 
 export function isKnownRootDirectoryPreflightFailure(message) {
-  return typeof message === 'string' && /Vercel CLI failed:\s*Retrieving project\.\s*Error: The provided path ".+\\app" does not exist\./s.test(message);
+  return typeof message === 'string' && /^Vercel CLI failed:\s*Retrieving project(?:\.|\u2026)\s*Error: The provided path ["“].*[\\/]app["”] does not exist\./is.test(message);
 }
 
 export class VercelCliClient {
@@ -337,7 +337,7 @@ export class VercelPreviewDeployer {
     let lock;
     try { lock = await open(lockPath, 'wx'); }
     catch (error) {
-      await rm(staged.stageRoot, { recursive: true, force: true });
+      await rm(staged.stageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       if (error.code !== 'EEXIST') throw error;
       throw new Error('preview deployment is already running; reconcile the existing operation before retrying');
     }
@@ -453,7 +453,7 @@ export class VercelPreviewDeployer {
     } finally {
       await lock.close();
       await rm(lockPath, { force: true });
-      await rm(staged.stageRoot, { recursive: true, force: true });
+      await rm(staged.stageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
 }

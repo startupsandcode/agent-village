@@ -70,6 +70,8 @@ test('submits only an accepted preview deployment to the exact allowlisted proje
 
 test('classifies only the exact missing app root as a definite pre-submission CLI failure', () => {
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist. To change your Project Settings, open Vercel.'), true);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project…\nError: The provided path “~\\AppData\\Local\\Temp\\stage\\app” does not exist. To change your Project Settings, open Vercel.'), true);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Upload failed…\nError: The provided path “C:\\Temp\\stage\\app” does not exist.'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: connection closed after upload'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\web" does not exist.'), false);
 });
