@@ -190,7 +190,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       return await worker.run(id);
     }
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
-    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id });
+    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id,
+      feed: new MissionNotificationFeed(paths.notifications) });
     const activeReservation = await readWorkspaceLease(lockRoot);
     if (activeReservation && (activeReservation.missionId !== id || activeReservation.storeRoot !== paths.root)) {
       return { id, status: 'workspace_busy', activeMissionId: activeReservation.missionId };
@@ -202,7 +203,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
         workerPid: backgroundStatus.worker.pid };
     }
     requireValue(!backgroundStatus.worker, 'a stale background worker lock remains; inspect and reconcile before resuming');
-    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' && !backgroundStatus.workerError) {
+    const durableWorkerError = backgroundStatus.workerError || backgroundStatus.notifications.some(event => event.kind === 'worker_error');
+    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' && !durableWorkerError) {
       throw new Error('a queued mission reservation has no live worker; inspect status and reconcile before relaunching');
     }
     const lease = activeReservation ?? await reserveWorkspaceMission({ root: lockRoot, missionId: id,
