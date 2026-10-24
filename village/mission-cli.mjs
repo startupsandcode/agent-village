@@ -11,6 +11,8 @@ import { CodexRunner } from './codex-runner.mjs';
 import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
+import { configuredVercelPreviewTargets, validateVercelPreviewTarget,
+  vercelPreviewDestination } from './vercel-preview-deployer.mjs';
 import { reserveMissionIntakeCall } from './mission-budget.mjs';
 import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
   readWorkspaceLease, reserveWorkspaceMission, updateWorkspaceMission, workspaceStateRoot,
@@ -57,11 +59,11 @@ export function missionPaths(env = process.env) {
     workspace: env.VILLAGE_MISSION_WORKSPACE };
 }
 
-async function readMissionInput(path, workspaceBranch) {
+export async function readMissionInput(path, workspaceBranch, env = process.env) {
   const source = await readFile(path, 'utf8');
   requireValue(Buffer.byteLength(source, 'utf8') <= 64000, 'mission input exceeds 64 KiB');
   const input = JSON.parse(source);
-  const allowed = new Set(['id', 'goal', 'destination', 'artifactId', 'constraints', 'maxAttempts', 'maxRevisions']);
+  const allowed = new Set(['id', 'goal', 'destination', 'previewTarget', 'artifactId', 'constraints', 'maxAttempts', 'maxRevisions']);
   requireValue(Object.keys(input).every(key => allowed.has(key)), 'mission input contains unsupported fields');
   requireValue(input.constraints === undefined || Array.isArray(input.constraints) &&
     input.constraints.every(item => typeof item === 'string'), 'mission constraints must be a list of text');
@@ -71,11 +73,26 @@ async function readMissionInput(path, workspaceBranch) {
     'CLI attempt limit must be 1-2');
   requireValue(Number.isSafeInteger(maxRevisions) && maxRevisions >= 0 && maxRevisions <= 1,
     'CLI revision limit must be 0-1');
-  const destination = new URL(input.destination);
-  requireValue(['http:', 'https:'].includes(destination.protocol) && !destination.username && !destination.password &&
-    !destination.search && !destination.hash,
-  'mission destination must be an HTTP(S) URL without credentials, query, or fragment');
-  return { ...input, repo: REPO, destination: destination.href.replace(/\/$/, ''),
+  let destination;
+  let previewTarget;
+  if (input.previewTarget !== undefined) {
+    requireValue(typeof env.VILLAGE_VERCEL_PREVIEW_TARGETS === 'string' && env.VILLAGE_VERCEL_PREVIEW_TARGETS.trim(),
+      'VILLAGE_VERCEL_PREVIEW_TARGETS must explicitly allow this Vercel project and team');
+    const targets = configuredVercelPreviewTargets(env);
+    previewTarget = validateVercelPreviewTarget(input.previewTarget, targets);
+    destination = vercelPreviewDestination(previewTarget);
+    requireValue(input.destination === undefined || input.destination === destination,
+      'mission destination must match its configured Vercel preview project and team');
+  } else {
+    requireValue(typeof input.destination === 'string' && input.destination.trim(), 'mission preview destination required');
+    const destinationUrl = new URL(input.destination);
+    requireValue(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
+      !destinationUrl.search && !destinationUrl.hash,
+    'mission destination must be an HTTP(S) URL without credentials, query, or fragment');
+    destination = destinationUrl.href.replace(/\/$/, '');
+  }
+  return { ...input, repo: REPO, destination,
+    ...(previewTarget ? { previewTarget: structuredClone(previewTarget) } : {}),
     workspaceBranch,
     constraints: [...new Set([...(input.constraints ?? []), ...safetyConstraints])],
     team: { id: 'design-led-single-team', roles }, maxAttempts, maxRevisions };
@@ -125,7 +142,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
-    const input = await readMissionInput(resolve(args[0]), workspace.branch);
+    const input = await readMissionInput(resolve(args[0]), workspace.branch, env);
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
     const dispatchLock = await acquireLocalLock(join(lockRoot, '.dispatch.lock'), {
       busyMessage: 'another mission is being accepted; this shared workspace permits only one mission at a time',

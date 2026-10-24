@@ -15,23 +15,47 @@ function requireValue(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function sameTarget(left, right) {
+export function sameVercelPreviewTarget(left, right) {
   return left?.provider === right?.provider && left?.projectId === right?.projectId &&
     left?.teamId === right?.teamId && left?.environment === right?.environment &&
     left?.projectSlug === right?.projectSlug && left?.teamSlug === right?.teamSlug;
 }
 
-function validateTarget(target, configuredTargets) {
+export function validateVercelPreviewTarget(target, configuredTargets) {
   requireValue(target && target.provider === 'vercel' && target.environment === 'preview',
     'preview deployment adapter is preview-only');
+  requireValue(Object.keys(target).length === 6 && ['provider', 'projectId', 'teamId', 'environment', 'projectSlug', 'teamSlug']
+    .every(key => Object.hasOwn(target, key)), 'approved Vercel target must contain only project and team identity fields');
   requireValue(typeof target.projectId === 'string' && /^prj_[A-Za-z0-9]{8,}$/.test(target.projectId) &&
     typeof target.teamId === 'string' && /^team_[A-Za-z0-9]{8,}$/.test(target.teamId) &&
     typeof target.projectSlug === 'string' && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(target.projectSlug) &&
     typeof target.teamSlug === 'string' && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(target.teamSlug),
   'invalid approved Vercel preview target');
-  const configured = configuredTargets.find(item => sameTarget(item, target));
+  const configured = configuredTargets.find(item => sameVercelPreviewTarget(item, target));
   requireValue(configured, 'Vercel preview target is not allowlisted');
   return configured;
+}
+
+export function vercelPreviewDestination(target) {
+  validateVercelPreviewTarget(target, [target]);
+  return `vercel-preview://${target.teamSlug}/${target.projectSlug}`;
+}
+
+export function configuredVercelPreviewTargets(env = process.env) {
+  if (!env.VILLAGE_VERCEL_PREVIEW_TARGETS) return [];
+  let targets;
+  try { targets = JSON.parse(env.VILLAGE_VERCEL_PREVIEW_TARGETS); }
+  catch { throw new Error('VILLAGE_VERCEL_PREVIEW_TARGETS must be valid JSON'); }
+  requireValue(Array.isArray(targets) && targets.length > 0 && targets.length <= 8,
+    'VILLAGE_VERCEL_PREVIEW_TARGETS must be a nonempty list of at most 8 targets');
+  const seen = new Set();
+  for (const target of targets) {
+    validateVercelPreviewTarget(target, targets);
+    const key = `${target.teamId}:${target.projectId}`;
+    requireValue(!seen.has(key), 'VILLAGE_VERCEL_PREVIEW_TARGETS contains a duplicate project');
+    seen.add(key);
+  }
+  return structuredClone(targets);
 }
 
 function metadataFor(mission, fingerprint) {
@@ -39,7 +63,7 @@ function metadataFor(mission, fingerprint) {
     villageArtifactSha256: fingerprint };
 }
 
-function deploymentUrl(value, target) {
+export function vercelPreviewOrigin(value, target) {
   let url;
   try { url = new URL(value); } catch { throw new Error('Vercel did not return a valid preview URL'); }
   requireValue(url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash &&
@@ -219,6 +243,20 @@ export class VercelCliClient {
     return await runCli(['whoami', '--non-interactive', '--no-color'], { cwd, timeoutMs: 30000 });
   }
 
+  async getDevelopmentOidcToken({ projectId, teamSlug, cwd = process.cwd() }) {
+    requireValue(/^prj_[A-Za-z0-9]{8,}$/.test(projectId) && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(teamSlug),
+      'approved Vercel project and team are required for browser authentication');
+    const marker = 'VILLAGE_OIDC_TOKEN=';
+    const script = `process.stdout.write('${marker}' + (process.env.VERCEL_OIDC_TOKEN || '') + '\\n')`;
+    const output = await runCli(['env', 'run', '--environment', 'development', '--project', projectId,
+      '--scope', teamSlug, '--', process.execPath, '-e', script], { cwd, timeoutMs: 30000 });
+    const tokenLine = output.split(/\r?\n/).findLast(line => line.startsWith(marker));
+    const token = tokenLine?.slice(marker.length) ?? '';
+    requireValue(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token),
+      'Vercel CLI did not provide a short-lived development OIDC token');
+    return token;
+  }
+
   async deploy({ artifactPath, projectId, teamId, target, prebuilt, meta }) {
     requireValue(target === 'preview' && prebuilt === true, 'Vercel CLI adapter is preview-only and prebuilt-only');
     requireValue(/^prj_[A-Za-z0-9]{8,}$/.test(projectId) && /^team_[A-Za-z0-9]{8,}$/.test(teamId),
@@ -253,9 +291,10 @@ export class VercelPreviewDeployer {
     this.maxWaitMs = maxWaitMs;
   }
 
-  journalPath(id) {
+  journalPath(id, revision = 0) {
     if (!idPattern.test(id)) throw new Error('invalid mission id for preview deployment');
-    return join(this.stateRoot, `${id}.json`);
+    requireValue(Number.isSafeInteger(revision) && revision >= 0 && revision <= 1, 'preview deployment revision limit exceeded');
+    return join(this.stateRoot, revision === 0 ? `${id}.json` : `${id}-revision-${revision}.json`);
   }
 
   async deploy({ mission, artifactRoot, isCancelled = async () => false }) {
@@ -264,15 +303,16 @@ export class VercelPreviewDeployer {
       mission.mayaAgreement?.acceptedByUser === true && typeof isCancelled === 'function',
     'user-accepted Agent Village mission identity required');
     requireValue(!await isCancelled(), 'preview deployment cancelled before submission');
-    requireValue(sameTarget(mission.previewTarget, mission.mayaAgreement.previewTarget),
+    requireValue(sameVercelPreviewTarget(mission.previewTarget, mission.mayaAgreement.previewTarget),
       'Vercel preview target must be included in Maya agreement');
-    const target = validateTarget(mission.previewTarget, this.targets);
+    const target = validateVercelPreviewTarget(mission.previewTarget, this.targets);
     const [workspacePath, artifactPath] = await Promise.all([realpath(this.workspaceRoot), realpath(artifactRoot)]);
     requireValue(inside(workspacePath, artifactPath), 'artifact must be inside the approved workspace');
     const files = await collectArtifact(artifactPath);
     const staged = await stageArtifact(files, mission.artifactId, target);
     const fingerprint = staged.fingerprint;
-    const journalPath = this.journalPath(mission.id);
+    const revision = mission.revisions ?? 0;
+    const journalPath = this.journalPath(mission.id, revision);
     await mkdir(this.stateRoot, { recursive: true });
     const lockPath = `${journalPath}.lock`;
     let lock;
@@ -291,12 +331,13 @@ export class VercelPreviewDeployer {
         requireValue(previous.missionId === mission.id && previous.artifactId === mission.artifactId &&
           previous.artifactFingerprint === fingerprint && previous.projectId === target.projectId &&
           previous.teamId === target.teamId && previous.projectSlug === target.projectSlug &&
-          previous.teamSlug === target.teamSlug && previous.target === 'preview' && previous.version === 1 &&
+          previous.teamSlug === target.teamSlug && previous.target === 'preview' && previous.version === 2 &&
+          previous.revision === revision &&
           Number.isSafeInteger(previous.attempts) && previous.attempts >= 1 && previous.attempts <= 2 &&
           ['submitting', 'submitted', 'ready', 'failed', 'uncertain'].includes(previous.status),
         'mission preview deployment identity changed after submission or its journal is invalid');
         if (previous.status === 'ready') {
-          const verifiedUrl = deploymentUrl(previous.url, target);
+          const verifiedUrl = vercelPreviewOrigin(previous.url, target);
           const verified = previous.verified;
           requireValue(/^dpl_[A-Za-z0-9]{8,}$/.test(previous.deploymentId) && verified?.readyState === 'READY' &&
             verified.id === previous.deploymentId && verified.projectId === target.projectId &&
@@ -323,7 +364,7 @@ export class VercelPreviewDeployer {
         await writeJournal(journalPath, previous);
       }
       const metadata = metadataFor(mission, fingerprint);
-      const journal = previous ?? { version: 1, missionId: mission.id, artifactId: mission.artifactId,
+      const journal = previous ?? { version: 2, revision, missionId: mission.id, artifactId: mission.artifactId,
         artifactFingerprint: fingerprint, projectId: target.projectId, teamId: target.teamId,
         projectSlug: target.projectSlug, teamSlug: target.teamSlug,
         target: 'preview', status: 'submitting', createdAt: new Date().toISOString(), deploymentId: null, url: null, attempts: 1 };
@@ -337,7 +378,7 @@ export class VercelPreviewDeployer {
         const deploymentId = result?.id ?? result?.deploymentId;
         requireValue(typeof deploymentId === 'string' && /^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId),
           'Vercel response did not include a deployment ID');
-        const url = deploymentUrl(result?.url, target);
+        const url = vercelPreviewOrigin(result?.url, target);
         journal.deploymentId = deploymentId;
         journal.url = url;
         journal.status = 'submitted';
@@ -348,7 +389,7 @@ export class VercelPreviewDeployer {
         for (;;) {
           if (await isCancelled()) throw new Error('mission cancelled after preview submission; deployment outcome requires reconciliation');
           details = await this.cli.inspect(deploymentId, { teamId: target.teamId });
-          const currentUrl = deploymentUrl(details?.url, target);
+          const currentUrl = vercelPreviewOrigin(details?.url, target);
           const detailsMeta = details?.meta ?? details?.metadata ?? {};
           const matches = details?.id === deploymentId && details?.projectId === target.projectId &&
             details?.target !== 'production' && ['preview', null, undefined].includes(details?.target) &&

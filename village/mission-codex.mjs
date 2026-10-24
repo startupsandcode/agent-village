@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const schemaPath = fileURLToPath(new URL('./mission-stage.schema.json', import.meta.url));
@@ -31,7 +31,7 @@ function latestOutput(mission, stage) {
 }
 
 export class MissionCodexHandlers {
-  constructor({ codex, workspacePath, browserVerifier = null, timeoutSeconds = 900 }) {
+  constructor({ codex, workspacePath, browserVerifier = null, previewDeployer = null, timeoutSeconds = 900 }) {
     if (!codex || typeof codex.runStructured !== 'function') throw new Error('structured Codex runner required');
     if (!workspacePath) throw new Error('mission workspace path required');
     if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 900) {
@@ -40,6 +40,7 @@ export class MissionCodexHandlers {
     this.codex = codex;
     this.workspacePath = resolve(workspacePath);
     this.browserVerifier = browserVerifier;
+    this.previewDeployer = previewDeployer;
     this.timeoutSeconds = timeoutSeconds;
   }
 
@@ -83,7 +84,25 @@ export class MissionCodexHandlers {
         output: { kind: 'design_guide', guide: result.designGuide } };
     }
     if (stage === 'sam_implementation') {
-      if (result.status !== 'done' || !result.previewUrl) throw new Error('Sam must provide the tested preview candidate');
+      if (result.status !== 'done') throw new Error('Sam must complete the implementation');
+      if (mission.previewTarget) {
+        if (!this.previewDeployer) throw new Error('Vercel preview deployment is not configured for this mission');
+        if (result.previewUrl !== null || typeof result.artifactPath !== 'string' || !result.artifactPath.trim() ||
+            isAbsolute(result.artifactPath) || win32.isAbsolute(result.artifactPath)) {
+          throw new Error('Sam must return a relative static artifact path for the approved Vercel preview');
+        }
+        const artifactRoot = resolve(this.workspacePath, result.artifactPath);
+        const artifactRelative = relative(this.workspacePath, artifactRoot);
+        if (!artifactRelative || artifactRelative === '..' || artifactRelative.startsWith(`..${sep}`)) {
+          throw new Error('Sam artifact path must stay inside the approved workspace');
+        }
+        const deployed = await this.previewDeployer.deploy({ mission, artifactRoot, isCancelled });
+        return { status: 'done', evidence: [...result.evidence,
+          `Vercel preview ${deployed.deploymentId} reached READY for the accepted static artifact.`],
+        artifactId: mission.artifactId, output: { kind: 'implementation', previewUrl: deployed.url,
+          deploymentId: deployed.deploymentId, artifactFingerprint: deployed.artifactFingerprint } };
+      }
+      if (!result.previewUrl) throw new Error('Sam must provide the tested preview candidate');
       return { status: 'done', evidence: result.evidence, artifactId: mission.artifactId,
         output: { kind: 'implementation', previewUrl: result.previewUrl } };
     }
@@ -114,7 +133,9 @@ export class MissionCodexHandlers {
       `Design guide from Susie (must follow):\n${JSON.stringify(guide)}\n` +
       (findings.length ? `Susie's requested visual revisions:\n${findings.map(item => `- ${item}`).join('\n')}\n` : '') +
       `Revision ${revision}. Approved artifact: ${mission.artifactId}. Preview destination: ${mission.destination}.\n` +
-      `Return the preview URL that is already available at that exact destination. Do not publish, deploy, merge, provision, add credentials, or alter unrelated files. Do not exceed the agreed goal. Report files changed and checks actually run.`;
+      (mission.previewTarget ? `Accepted Vercel project/team target: ${JSON.stringify(mission.previewTarget)}. Implement a static site only. Create its complete static output inside the workspace (for example, dist/), include the exact <meta name="village-artifact-id" content="${mission.artifactId}"> marker in root index.html, and return that relative artifactPath with previewUrl null. Runtime will submit this output through the bounded preview-only adapter. Do not deploy yourself, invoke Vercel, or add credentials.\n` :
+        'Return the preview URL that is already available at that exact destination. Do not publish, deploy, merge, provision, add credentials, or alter unrelated files.\n') +
+      `Do not exceed the agreed goal. Report files changed and checks actually run.`;
   }
 
   functionalPrompt(mission, implementation, revision) {
@@ -129,7 +150,7 @@ export class MissionCodexHandlers {
   visualPrompt(mission, rendered, captures, revision) {
     return `You are Susie, reviewing the actual rendered screenshots attached from Chromium. This is a visual review, not a source-only review.\n` +
       `Goal: ${mission.goal}\nDesign guide: ${JSON.stringify(designGuideFrom(mission))}\n` +
-      `Artifact ${mission.artifactId}; destination ${mission.destination}; preview ${rendered.previewUrl}; revision ${revision}.\n` +
+      `Artifact ${mission.artifactId}; destination ${rendered.destination}; preview ${rendered.previewUrl}; revision ${revision}.\n` +
       `Desktop evidence: ${captures.desktop.evidenceRef} (${captures.desktop.metrics.width}px). ` +
       `Narrow evidence: ${captures.narrow.evidenceRef} (${captures.narrow.metrics.width}px).\n` +
       `Assess hierarchy, typography, spacing, responsive behavior, imagery, and interactions against the guide. ` +

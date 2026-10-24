@@ -36,6 +36,7 @@
       ]
     },
     "previewUrl": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "uri", "maxLength": 2000 }] },
+    "artifactPath": { "type": "string", "minLength": 1, "maxLength": 500 },
     "functionalChecks": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
     "visualFindings": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
   }

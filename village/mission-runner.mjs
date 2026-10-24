@@ -1,6 +1,8 @@
 import { mkdir, open, readFile, readdir, truncate, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { sameVercelPreviewTarget, validateVercelPreviewTarget, vercelPreviewDestination,
+  vercelPreviewOrigin } from './vercel-preview-deployer.mjs';
 
 const REPO = 'startupsandcode/agent-village';
 const stages = ['susie_design', 'sam_implementation', 'quinn_functional', 'susie_visual'];
@@ -23,7 +25,7 @@ function validateEvidence(evidence) {
   return evidence.map(item => item.trim());
 }
 
-function validateStageOutput(stage, status, output) {
+function validateStageOutput(stage, status, output, mission = null) {
   assert(output && typeof output === 'object' && !Array.isArray(output), 'stage deliverable required');
   if (stage === 'susie_design') {
     const guide = output.kind === 'design_guide' && output.guide;
@@ -42,6 +44,11 @@ function validateStageOutput(stage, status, output) {
   } else if (stage === 'sam_implementation') {
     assert(output.kind === 'implementation' && typeof output.previewUrl === 'string' &&
       /^https?:\/\//.test(output.previewUrl), 'Sam must provide a preview URL');
+    if (mission?.previewTarget) {
+      assert(vercelPreviewOrigin(output.previewUrl, mission.previewTarget) === output.previewUrl &&
+        /^dpl_[A-Za-z0-9]{8,}$/.test(output.deploymentId ?? '') && /^[a-f0-9]{64}$/.test(output.artifactFingerprint ?? ''),
+      'Vercel preview checkpoint must bind the accepted target, deployment ID, and artifact fingerprint');
+    }
   } else if (stage === 'quinn_functional') {
     assert(output.kind === 'functional_review' && Array.isArray(output.checks) && output.checks.length > 0 &&
       output.checks.every(check => typeof check === 'string' && check.trim()), 'Quinn functional checks required');
@@ -58,7 +65,7 @@ function same(left, right) {
 }
 
 function validateTransition(previous, next) {
-  const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination',
+  const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
@@ -177,10 +184,11 @@ function validateState(value, id) {
     'maxAttempts', 'maxRevisions', 'revisions', 'status', 'currentStage', 'events', 'attempts', 'inFlight',
     'error', 'createdAt', 'updatedAt'];
   if (value?.version === 3) stateKeys.push('workspaceBranch');
-  if (value?.version === 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
+  if (value?.version >= 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
+  if (value?.version >= 5) stateKeys.push('previewTarget');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -191,11 +199,17 @@ function validateState(value, id) {
     same(value.mayaAgreement.acceptanceCriteria, value.acceptanceCriteria) &&
     value.mayaAgreement.repo === value.repo && same(value.mayaAgreement.constraints, value.constraints) &&
     same(value.mayaAgreement.team, value.team) && value.mayaAgreement.destination === value.destination &&
+    (value.version < 5 || (value.previewTarget === null && !Object.hasOwn(value.mayaAgreement, 'previewTarget')) ||
+      value.previewTarget && sameVercelPreviewTarget(value.previewTarget, value.mayaAgreement.previewTarget)) &&
     value.mayaAgreement.artifactId === value.artifactId &&
     (value.version === 2 || typeof value.workspaceBranch === 'string' &&
       /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(value.workspaceBranch) &&
       value.mayaAgreement.workspaceBranch === value.workspaceBranch) &&
     typeof value.destination === 'string' && value.destination.trim() &&
+    (value.version < 5 || value.previewTarget === null || value.previewTarget && (() => {
+      try { validateVercelPreviewTarget(value.previewTarget, [value.previewTarget]);
+        return value.destination === vercelPreviewDestination(value.previewTarget); } catch { return false; }
+    })()) &&
     typeof value.artifactId === 'string' && value.artifactId.trim() &&
     value.team && Object.keys(value.team).length === 2 && Object.hasOwn(value.team, 'id') &&
     Object.hasOwn(value.team, 'roles') && typeof value.team.id === 'string' && value.team.id.trim() &&
@@ -207,7 +221,7 @@ function validateState(value, id) {
     stageNames.has(value.currentStage) && Number.isSafeInteger(value.revisions) && value.revisions >= 0 &&
     Number.isSafeInteger(value.maxRevisions) && value.maxRevisions >= 0 &&
     Number.isSafeInteger(value.maxAttempts) && value.maxAttempts >= 1 && value.maxAttempts <= 5 &&
-    (value.version !== 4 || Number.isSafeInteger(value.mayaIntakeCalls) && value.mayaIntakeCalls >= 1 &&
+    (value.version < 4 || Number.isSafeInteger(value.mayaIntakeCalls) && value.mayaIntakeCalls >= 1 &&
       value.mayaIntakeCalls <= MAX_MISSION_ROLE_CALLS) &&
     Array.isArray(value.constraints) && value.constraints.every(item => typeof item === 'string') &&
     Array.isArray(value.events) && value.events.every(event => event && stageNames.has(event.stage) &&
@@ -235,15 +249,18 @@ function validateState(value, id) {
         event.evidence.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000) ||
         event.artifactId !== value.artifactId) return false;
     if (event.stage !== 'susie_visual') return Object.keys(event).length === 7 &&
-      (() => { try { validateStageOutput(event.stage, event.status, event.output); return true; } catch { return false; } })();
-    try { validateStageOutput(event.stage, event.status, event.output); } catch { return false; }
+      (() => { try { validateStageOutput(event.stage, event.status, event.output, value); return true; } catch { return false; } })();
+    try { validateStageOutput(event.stage, event.status, event.output, value); } catch { return false; }
+    const implementation = value.events.findLast(item => item.stage === 'sam_implementation' && item.status === 'done' &&
+      item.revision === event.revision);
+    const expectedDestination = value.previewTarget ? implementation?.output?.previewUrl : value.destination;
     return Object.keys(event).length === 9 && event.rendered?.artifactId === value.artifactId &&
-      event.rendered?.destination === value.destination && typeof event.rendered?.previewUrl === 'string' &&
+      event.rendered?.destination === expectedDestination && typeof event.rendered?.previewUrl === 'string' &&
       event.rendered.desktop?.passed === true && typeof event.rendered.desktop.evidenceRef === 'string' &&
       event.rendered.narrow?.passed === true && typeof event.rendered.narrow.evidenceRef === 'string' &&
       typeof event.rendered.screenshotRef === 'string' && event.renderVerification?.verified === true &&
       event.renderVerification.artifactId === value.artifactId &&
-      event.renderVerification.destination === value.destination &&
+      event.renderVerification.destination === expectedDestination &&
       event.renderVerification.previewUrl === event.rendered.previewUrl &&
       event.renderVerification.screenshotRef === event.rendered.screenshotRef;
   }), 'invalid mission checkpoint');
@@ -273,11 +290,17 @@ export class MissionStore {
     assert(Array.isArray(acceptanceCriteria) && acceptanceCriteria.length >= 3 &&
       acceptanceCriteria.every(item => typeof item === 'string' && item.trim()), 'Maya acceptance criteria required');
     assert(typeof input.destination === 'string' && input.destination.trim(), 'preview destination required');
-    let destinationUrl;
-    try { destinationUrl = new URL(input.destination.trim()); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
-    assert(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
-      !destinationUrl.search && !destinationUrl.hash,
-    'preview destination must be an HTTP URL without credentials, query, or fragment');
+    if (input.previewTarget) {
+      validateVercelPreviewTarget(input.previewTarget, [input.previewTarget]);
+      assert(input.destination.trim() === vercelPreviewDestination(input.previewTarget),
+        'preview destination must identify the approved Vercel project and team');
+    } else {
+      let destinationUrl;
+      try { destinationUrl = new URL(input.destination.trim()); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
+      assert(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
+        !destinationUrl.search && !destinationUrl.hash,
+      'preview destination must be an HTTP URL without credentials, query, or fragment');
+    }
     assert(typeof input.artifactId === 'string' && input.artifactId.trim(), 'artifact identity required');
     const maxAttempts = input.maxAttempts ?? 2;
     const maxRevisions = input.maxRevisions ?? 2;
@@ -300,13 +323,16 @@ export class MissionStore {
       agreement.goal === input.goal.trim() && same(agreement.acceptanceCriteria, acceptanceCriteria) &&
       agreement.destination === input.destination.trim() && agreement.artifactId === input.artifactId.trim() &&
       agreement.repo === input.repo && same(agreement.constraints, input.constraints ?? []) && same(agreement.team, team) &&
+      (input.previewTarget ? sameVercelPreviewTarget(input.previewTarget, agreement.previewTarget) :
+        !Object.hasOwn(agreement, 'previewTarget')) &&
       typeof input.workspaceBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(input.workspaceBranch) &&
       agreement.workspaceBranch === input.workspaceBranch &&
       typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
     'a user-accepted Maya agreement for this exact mission is required');
-    const state = { version: 4, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
+    const state = { version: 5, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
       id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
       mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
+      previewTarget: input.previewTarget ? structuredClone(input.previewTarget) : null,
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,
       revisions: 0, status: 'ready', currentStage: 'susie_design', events: [], attempts: {}, inFlight: null,
       error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -343,6 +369,7 @@ export class MissionStore {
         const immutableKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
+        if (previous.version >= 5) immutableKeys.push('previewTarget');
         for (const key of immutableKeys) {
           if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) throw new Error('invalid mission checkpoint');
         }
@@ -436,10 +463,12 @@ function latestDoneFor(state, stage) {
 function acceptsPreview(state) {
   const design = state.events.find(event => event.stage === 'susie_design' && event.status === 'done');
   const visual = latestDoneFor(state, 'susie_visual');
+  const implementation = latestDoneFor(state, 'sam_implementation');
+  const acceptedDestination = state.previewTarget ? implementation?.output?.previewUrl : state.destination;
   return Boolean(design && latestDoneFor(state, 'sam_implementation') &&
     latestDoneFor(state, 'quinn_functional') && visual?.renderVerification?.verified === true &&
     visual.renderVerification.artifactId === state.artifactId &&
-    visual.renderVerification.destination === state.destination && visual.rendered?.screenshotRef);
+    visual.renderVerification.destination === acceptedDestination && visual.rendered?.screenshotRef);
 }
 
 export class MissionRunner {
@@ -507,10 +536,11 @@ export class MissionRunner {
           assert(outcome.status !== 'needs_revision' || stage === 'susie_visual',
             'only visual review may request a revision');
           assert(outcome.artifactId === state.artifactId, 'stage artifact identity does not match the approved mission');
-          validateStageOutput(stage, outcome.status, outcome.output);
+          validateStageOutput(stage, outcome.status, outcome.output, state);
           if (stage === 'susie_visual') {
+            const acceptedDestination = state.previewTarget ? latestDoneFor(state, 'sam_implementation')?.output?.previewUrl : state.destination;
             assert(outcome.rendered && outcome.rendered.artifactId === state.artifactId &&
-              outcome.rendered.destination === state.destination &&
+              outcome.rendered.destination === acceptedDestination &&
               typeof outcome.rendered.previewUrl === 'string' && /^https?:\/\//.test(outcome.rendered.previewUrl) &&
               outcome.rendered.desktop?.passed === true && typeof outcome.rendered.desktop.evidenceRef === 'string' &&
               outcome.rendered.desktop.evidenceRef.trim() &&
@@ -521,7 +551,7 @@ export class MissionRunner {
             renderVerification = await this.verifyRenderedEvidence({ mission: structuredClone(state),
               rendered: structuredClone(outcome.rendered) });
             assert(renderVerification?.verified === true && renderVerification.artifactId === state.artifactId &&
-              renderVerification.destination === state.destination && renderVerification.previewUrl === outcome.rendered.previewUrl &&
+              renderVerification.destination === acceptedDestination && renderVerification.previewUrl === outcome.rendered.previewUrl &&
               renderVerification.screenshotRef === outcome.rendered.screenshotRef,
             'rendered preview evidence verifier rejected the artifact');
           }
