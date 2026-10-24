@@ -33,6 +33,12 @@ function requireValue(value, message) {
   if (!value) throw new Error(message);
 }
 
+function sameLocalPath(left, right) {
+  const first = resolve(left);
+  const second = resolve(right);
+  return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
+}
+
 async function git(cwd, ...args) {
   const { stdout: output } = await execFileAsync('git', args, { cwd, timeout: 15000, windowsHide: true });
   return output.trim();
@@ -153,7 +159,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
     const lease = await readWorkspaceLease(lockRoot);
     requireValue(!backgroundStatus.worker, 'mission worker is still active; pre-execution recovery is blocked');
-    requireValue(lease && lease.missionId === id && lease.storeRoot === paths.root && lease.branch === workspace.branch,
+    requireValue(lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) && lease.branch === workspace.branch,
       'workspace reservation identity does not match this mission recovery');
     requireValue(Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid,
       'workspace reservation process identity is incomplete for recovery');
