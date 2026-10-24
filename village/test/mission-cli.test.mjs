@@ -75,11 +75,15 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
   await new Promise(resolve => setTimeout(resolve, 250));
   await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: deadPid });
   const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace, CODEX_HOME: codexHome };
-  const recovered = await main(['retry-preflight', missionId, sessionPath], { env, processCheck: async () => false });
+  const inspectStoppedWorkspace = async () => ({ worker: null, notifications: [],
+    reservation: { missionId, storeRoot, branch: 'mission-preflight-retry', pid: deadPid, processAlive: false } });
+  const recovered = await main(['retry-preflight', missionId, sessionPath], { env,
+    processCheck: async () => false, inspectBackgroundStatus: inspectStoppedWorkspace });
   assert.equal(recovered.status, 'ready');
   assert.equal(recovered.priorFailureRetained, true);
   assert.equal(recovered.roleCallsReserved, 2);
   const resumed = await main(['resume', missionId], { env, processCheck: async () => false,
+    inspectBackgroundStatus: inspectStoppedWorkspace,
     spawnWorker: async () => ({ pid: process.pid }) });
   assert.equal(resumed.status, 'queued');
   const checkpoint = await store.get(missionId);
