@@ -135,16 +135,21 @@ async function stageArtifact(files, artifactId, target) {
   const fingerprint = hash.digest('hex');
   const stageRoot = await mkdtemp(join(tmpdir(), 'village-preview-artifact-'));
   try {
-    const outputRoot = join(stageRoot, '.vercel', 'output');
-    const staticRoot = join(outputRoot, 'static');
-    await mkdir(staticRoot, { recursive: true });
-    await writeFile(join(outputRoot, 'config.json'), '{"version":3}\n', { flag: 'wx' });
-    await writeFile(join(stageRoot, '.vercel', 'project.json'), `${JSON.stringify({ projectId: target.projectId, orgId: target.teamId })}\n`,
-      { flag: 'wx' });
-    for (const file of files) {
-      const targetPath = join(staticRoot, file.relativePath);
-      await mkdir(dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, file.bytes, { flag: 'wx' });
+    // The approved Astra Lab project has rootDirectory="app". Keep a root-level
+    // prebuilt output for root-based projects and stage the exact same static
+    // bytes under app/ so Vercel CLI honors this project's existing root setting.
+    for (const projectRoot of [stageRoot, join(stageRoot, 'app')]) {
+      const outputRoot = join(projectRoot, '.vercel', 'output');
+      const staticRoot = join(outputRoot, 'static');
+      await mkdir(staticRoot, { recursive: true });
+      await writeFile(join(outputRoot, 'config.json'), '{"version":3}\n', { flag: 'wx' });
+      await writeFile(join(projectRoot, '.vercel', 'project.json'), `${JSON.stringify({ projectId: target.projectId, orgId: target.teamId })}\n`,
+        { flag: 'wx' });
+      for (const file of files) {
+        const targetPath = join(staticRoot, file.relativePath);
+        await mkdir(dirname(targetPath), { recursive: true });
+        await writeFile(targetPath, file.bytes, { flag: 'wx' });
+      }
     }
     return { stageRoot, fingerprint };
   } catch (error) {
@@ -231,11 +236,15 @@ async function runCli(args, { cwd, timeoutMs = CLI_TIMEOUT_MS }) {
       if (code === 0) resolveRun(stdout.trim());
       else {
         const error = new Error(timedOut ? 'Vercel CLI timed out' : `Vercel CLI failed${stderr ? `: ${stderr.slice(0, 500)}` : ''}`);
-        error.submitted = started;
+        error.submitted = started && !isKnownRootDirectoryPreflightFailure(error.message);
         rejectRun(error);
       }
     });
   });
+}
+
+export function isKnownRootDirectoryPreflightFailure(message) {
+  return typeof message === 'string' && /Vercel CLI failed:\s*Retrieving project\.\s*Error: The provided path ".+\\app" does not exist\./s.test(message);
 }
 
 export class VercelCliClient {
@@ -270,6 +279,16 @@ export class VercelCliClient {
   async inspect(deploymentId, { teamId }) {
     return parseCliJson(await runCli(['inspect', deploymentId, '--scope', teamId, '--json', '--no-color', '--non-interactive'],
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment inspection');
+  }
+
+  async listMissionDeployments({ missionId, target, cwd = process.cwd() }) {
+    requireValue(idPattern.test(missionId) && target?.provider === 'vercel' && target.environment === 'preview',
+      'approved mission and preview target are required for deployment reconciliation');
+    const output = await runCli(['list', target.projectSlug, '--scope', target.teamSlug,
+      '--meta', `villageMissionId=${missionId}`, '--json', '--limit', '100'], { cwd, timeoutMs: 30000 });
+    const response = parseCliJson(output, 'deployment list');
+    requireValue(response && Array.isArray(response.deployments), 'Vercel CLI deployment list response is invalid');
+    return response.deployments;
   }
 }
 
@@ -345,6 +364,19 @@ export class VercelPreviewDeployer {
             verified.url === verifiedUrl && verified.artifactFingerprint === fingerprint &&
             typeof previous.readyAt === 'string', 'ready preview journal failed identity validation');
           return previous;
+        }
+        if (previous.status === 'uncertain') {
+          requireValue(previous.deploymentId === null && previous.url === null &&
+            isKnownRootDirectoryPreflightFailure(previous.error),
+          'preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+          requireValue(typeof this.cli.listMissionDeployments === 'function',
+            'read-only Vercel deployment reconciliation is unavailable');
+          const matchingDeployments = await this.cli.listMissionDeployments({ missionId: mission.id, target, cwd: this.workspaceRoot });
+          requireValue(Array.isArray(matchingDeployments) && matchingDeployments.length === 0,
+            'matching Vercel deployment exists; inspect it before retrying');
+          previous.reconciliation = { method: 'vercel-list-mission-metadata', checkedAt: new Date().toISOString(), matchingDeployments: 0 };
+          previous.status = 'failed';
+          await writeJournal(journalPath, previous);
         }
         if (previous.status === 'failed' && previous.attempts >= 2) {
           throw new Error('preview deployment retry limit reached; reconcile before starting another operation');

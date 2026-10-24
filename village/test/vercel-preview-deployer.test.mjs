@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { VercelCliClient, VercelPreviewDeployer } from '../vercel-preview-deployer.mjs';
+import { isKnownRootDirectoryPreflightFailure, VercelCliClient, VercelPreviewDeployer } from '../vercel-preview-deployer.mjs';
 
 const projectId = 'prj_1234567890abcdef';
 const teamId = 'team_1234567890abcdef';
@@ -25,13 +25,15 @@ async function fixture(t, { mission = baseMission, targetOverride, cliOverride }
   await mkdir(artifactRoot, { recursive: true });
   await writeFile(join(artifactRoot, 'index.html'), `<html><head><meta name="village-artifact-id" content="${mission.artifactId}"></head><body>Preview</body></html>`);
   const calls = [];
-  const cli = cliOverride ?? {
+  const cli = {
     async whoami() { calls.push({ kind: 'whoami' }); return 'test-user'; },
     async deploy(options) {
       const outputConfig = await readFile(join(options.artifactPath, '.vercel', 'output', 'config.json'), 'utf8');
+      const appOutputConfig = await readFile(join(options.artifactPath, 'app', '.vercel', 'output', 'config.json'), 'utf8');
       const linkedProject = JSON.parse(await readFile(join(options.artifactPath, '.vercel', 'project.json'), 'utf8'));
       const staticFiles = await import('node:fs/promises').then(({ readdir }) => readdir(join(options.artifactPath, '.vercel', 'output', 'static')));
-      calls.push({ kind: 'deploy', options, outputConfig, linkedProject, staticFiles });
+      const appStaticFiles = await import('node:fs/promises').then(({ readdir }) => readdir(join(options.artifactPath, 'app', '.vercel', 'output', 'static')));
+      calls.push({ kind: 'deploy', options, outputConfig, appOutputConfig, linkedProject, staticFiles, appStaticFiles });
       return { id: 'dpl_1234567890abcdef', url: previewUrl };
     },
     async inspect(id) {
@@ -39,6 +41,7 @@ async function fixture(t, { mission = baseMission, targetOverride, cliOverride }
       const deployMeta = calls.find(call => call.kind === 'deploy')?.options.meta;
       return { id: 'dpl_1234567890abcdef', url: previewUrl, projectId, target: 'preview', readyState: 'READY', meta: deployMeta };
     },
+    ...(cliOverride ?? {}),
   };
   const target = targetOverride ?? mission.previewTarget;
   const deployer = new VercelPreviewDeployer({ workspaceRoot, stateRoot, targets: [target], cli });
@@ -59,8 +62,16 @@ test('submits only an accepted preview deployment to the exact allowlisted proje
   assert.equal(deployment.options.projectId, projectId);
   assert.equal(deployment.options.teamId, teamId);
   assert.equal(deployment.outputConfig, '{"version":3}\n');
+  assert.equal(deployment.appOutputConfig, '{"version":3}\n');
   assert.deepEqual(deployment.linkedProject, { projectId, orgId: teamId });
   assert.deepEqual(deployment.staticFiles, ['index.html']);
+  assert.deepEqual(deployment.appStaticFiles, ['index.html']);
+});
+
+test('classifies only the exact missing app root as a definite pre-submission CLI failure', () => {
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist. To change your Project Settings, open Vercel.'), true);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: connection closed after upload'), false);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\web" does not exist.'), false);
 });
 
 test('rejects production and any project/team/hostname outside the explicit allowlist before submission', async t => {
@@ -207,6 +218,55 @@ test('fails closed after an uncertain deployment submission and never retries it
   assert.equal(submissions, 1);
   const journal = JSON.parse(await readFile(join(f.stateRoot, `${f.mission.id}.json`), 'utf8'));
   assert.equal(journal.status, 'uncertain');
+});
+
+test('reconciles only the exact missing-app-root preflight via an empty Vercel metadata listing before one retry', async t => {
+  let submissions = 0;
+  let reconciliations = 0;
+  const f = await fixture(t, { cliOverride: {
+    async deploy(options) {
+      submissions++;
+      if (submissions === 1) {
+        assert.equal(await readFile(join(options.artifactPath, 'app', '.vercel', 'output', 'config.json'), 'utf8'), '{"version":3}\n');
+        const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.');
+        error.submitted = true;
+        throw error;
+      }
+      f.calls.push({ kind: 'deploy', options });
+      return { id: 'dpl_1234567890abcdef', url: previewUrl };
+    },
+    async listMissionDeployments({ missionId, target }) {
+      reconciliations++;
+      assert.equal(missionId, f.mission.id);
+      assert.equal(target.projectId, projectId);
+      return [];
+    },
+  } });
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /uncertain.*reconcile/i);
+  const result = await f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot });
+  assert.equal(result.status, 'ready');
+  assert.equal(submissions, 2);
+  assert.equal(reconciliations, 1);
+  const journal = JSON.parse(await readFile(join(f.stateRoot, `${f.mission.id}.json`), 'utf8'));
+  assert.equal(journal.attempts, 2);
+  assert.equal(journal.reconciliation.method, 'vercel-list-mission-metadata');
+  assert.equal(journal.reconciliation.matchingDeployments, 0);
+});
+
+test('a matching Vercel mission deployment blocks reconciliation and retry', async t => {
+  let submissions = 0;
+  const f = await fixture(t, { cliOverride: {
+    async deploy() {
+      submissions++;
+      const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.');
+      error.submitted = true;
+      throw error;
+    },
+    async listMissionDeployments() { return [{ uid: 'dpl_existing123', url: 'existing.vercel.app' }]; },
+  } });
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /uncertain.*reconcile/i);
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /matching Vercel deployment exists/);
+  assert.equal(submissions, 1);
 });
 
 test('rejects successful submission if Vercel reports production, a different project, or an unapproved host', async t => {
