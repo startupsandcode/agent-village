@@ -6,10 +6,16 @@ import test from 'node:test';
 import { MissionRunner, MissionStore } from '../mission-runner.mjs';
 
 const goal = 'Build a polished volunteer signup preview';
-const missionInput = { id: 'mission-46', repo: 'startupsandcode/agent-village', goal,
-  destination: 'preview:volunteer-signup', artifactId: 'artifact-46',
-  team: { id: 'single-design-led-team', roles: { design: 'susie', build: 'sam',
-    functional_review: 'quinn', visual_review: 'susie' } }, constraints: ['No paid services'],
+const acceptanceCriteria = ['The volunteer opportunity can be understood at a glance.',
+  'The signup path works at wide and narrow widths.', 'The page is keyboard accessible and shows useful form feedback.'];
+const team = { id: 'single-design-led-team', roles: { design: 'susie', build: 'sam',
+  functional_review: 'quinn', visual_review: 'susie' } };
+const constraints = ['No paid services'];
+const missionInput = { id: 'mission-46', repo: 'startupsandcode/agent-village', goal, acceptanceCriteria,
+  destination: 'https://preview.invalid/mission-46', artifactId: 'artifact-46', team, constraints,
+  mayaAgreement: { proposalId: 'maya-proposal-46', summary: 'A bounded responsive volunteer signup preview.',
+    acceptedByUser: true, acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', goal,
+    acceptanceCriteria, destination: 'https://preview.invalid/mission-46', artifactId: 'artifact-46', constraints, team },
   maxAttempts: 2, maxRevisions: 2 };
 const roles = ['susie_design', 'sam_implementation', 'quinn_functional', 'susie_visual'];
 const rendered = { artifactId: 'artifact-46', destination: missionInput.destination,
@@ -29,10 +35,25 @@ async function fixture(t, input = missionInput) {
 }
 
 function successfulHandlers(overrides = {}) {
-  return Object.fromEntries(roles.map(stage => [stage, async () => ({
-    status: 'done', evidence: [`${stage} checked the assigned work`], artifactId: 'artifact-46',
-    ...(stage === 'susie_visual' ? { rendered } : {}),
-  })]).map(([stage, handler]) => [stage, overrides[stage] ?? handler]));
+  const defaultOutput = (stage, status = 'done') => stage === 'susie_design' ? { kind: 'design_guide', guide: {
+    concept: 'A warm editorial invitation with a strong volunteer-first hierarchy and a confident, clear call to action.',
+    sections: ['Hero and primary action', 'Opportunity overview', 'Signup details'],
+    typeScale: ['display', 'heading', 'body'], spacing: [4, 8, 16, 24],
+    responsiveStates: ['Wide two-column layout', 'Narrow stacked layout'],
+    imagery: { direction: 'Documentary volunteer photography with human scale and warm natural light.',
+      sourceRequirements: 'Use existing, licensed project imagery only; never provision a paid image service.',
+      altStrategy: 'Write concise descriptions for informative images; mark decorative images with empty alt text.' },
+    interactions: ['Primary signup action', 'Accessible form error feedback'], references: ['Editorial civic design'] } } :
+    stage === 'sam_implementation' ? { kind: 'implementation', previewUrl: rendered.previewUrl } :
+      stage === 'quinn_functional' ? { kind: 'functional_review', checks: ['npm test passed'] } :
+        { kind: 'visual_review', decision: status === 'done' ? 'approved' : 'revise', findings: [] };
+  return Object.fromEntries(roles.map(stage => [stage, async context => {
+    const raw = overrides[stage] ? await overrides[stage](context) : {
+      status: 'done', evidence: [`${stage} checked the assigned work`], artifactId: 'artifact-46',
+      ...(stage === 'susie_visual' ? { rendered } : {}),
+    };
+    return { ...raw, output: raw.output ?? defaultOutput(stage, raw.status) };
+  }]));
 }
 
 test('mission lifecycle records durable ordered evidence before accepting tested preview', async t => {
@@ -42,6 +63,26 @@ test('mission lifecycle records durable ordered evidence before accepting tested
   assert.deepEqual(result.events.filter(event => event.status === 'done').map(event => event.stage), roles);
   const reopened = new MissionStore(f.root);
   assert.deepEqual(await reopened.get(f.mission.id), result);
+});
+
+test('mission cannot be created without Maya agreement accepted for the exact scope', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-missions-intake-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = new MissionStore(root);
+  await assert.rejects(store.create({ ...missionInput, mayaAgreement: null }), /user-accepted Maya agreement/);
+  await assert.rejects(store.create({ ...missionInput, mayaAgreement: { ...missionInput.mayaAgreement,
+    constraints: ['Allow paid image service'] } }), /user-accepted Maya agreement/);
+});
+
+test('a Susie checkpoint must contain a substantive concrete design guide before Sam can follow', async t => {
+  const f = await fixture(t);
+  const result = await f.runner.run(f.mission.id, successfulHandlers({
+    susie_design: async () => ({ status: 'done', evidence: ['Susie returned a title only.'], artifactId: 'artifact-46',
+      output: { kind: 'design_guide', guide: { concept: 'A title only.' } } }),
+  }));
+  assert.equal(result.status, 'blocked');
+  assert.match(result.error, /design guide is incomplete/);
+  assert.equal(result.events.some(event => event.stage === 'sam_implementation'), false);
 });
 
 test('stage failure is checkpointed and retries only up to the configured attempt limit', async t => {
@@ -58,6 +99,21 @@ test('stage failure is checkpointed and retries only up to the configured attemp
   assert.equal(attempts, 2);
   assert.equal(result.events.filter(event => event.stage === 'susie_design').length, 2);
   assert.equal(result.events.at(-1).error, 'designer runtime failed');
+});
+
+test('confirmed retryable failure can resume from its durable checkpoint without replaying uncertain outcomes', async t => {
+  const f = await fixture(t);
+  const ready = await f.store.get(f.mission.id);
+  const running = { ...ready, status: 'running', attempts: { '0:susie_design': 1 },
+    inFlight: { stage: 'susie_design', attempt: 1 } };
+  await f.store.save(running);
+  const failed = { ...running, status: 'failed', inFlight: null, error: 'temporary worker startup failure',
+    events: [{ stage: 'susie_design', revision: 0, attempt: 1, status: 'failed', evidence: [],
+      error: 'temporary worker startup failure', retryable: true }] };
+  await f.store.save(failed);
+  const resumed = await f.runner.run(f.mission.id, successfulHandlers());
+  assert.equal(resumed.status, 'accepted_preview');
+  assert.equal(resumed.attempts['0:susie_design'], 2);
 });
 
 test('non-retryable stage failure blocks ordinary resume from replaying uncertain work', async t => {
@@ -79,12 +135,16 @@ test('visual review loops through implementation and functional checks within re
   const f = await fixture(t);
   const calls = [];
   const handlers = successfulHandlers({
-    sam_implementation: async () => { calls.push('sam'); return { status: 'done', evidence: ['Build'], artifactId: 'artifact-46' }; },
-    quinn_functional: async () => { calls.push('quinn'); return { status: 'done', evidence: ['Tests pass'], artifactId: 'artifact-46' }; },
+    sam_implementation: async () => { calls.push('sam'); return { status: 'done', evidence: ['Build'], artifactId: 'artifact-46',
+      output: { kind: 'implementation', previewUrl: rendered.previewUrl } }; },
+    quinn_functional: async () => { calls.push('quinn'); return { status: 'done', evidence: ['Tests pass'], artifactId: 'artifact-46',
+      output: { kind: 'functional_review', checks: ['Tests pass'] } }; },
     susie_visual: async ({ revision }) => {
       calls.push('susie');
-      return revision === 0 ? { status: 'needs_revision', evidence: ['Improve mobile hierarchy'], artifactId: 'artifact-46', rendered } :
-        { status: 'done', evidence: ['Rendered mobile and desktop reviewed'], artifactId: 'artifact-46', rendered };
+      return revision === 0 ? { status: 'needs_revision', evidence: ['Improve mobile hierarchy'], artifactId: 'artifact-46', rendered,
+        output: { kind: 'visual_review', decision: 'revise', findings: ['Improve mobile hierarchy'] } } :
+        { status: 'done', evidence: ['Rendered mobile and desktop reviewed'], artifactId: 'artifact-46', rendered,
+          output: { kind: 'visual_review', decision: 'approved', findings: [] } };
     },
   });
   const result = await f.runner.run(f.mission.id, handlers);
@@ -96,7 +156,8 @@ test('visual review loops through implementation and functional checks within re
 test('visual revisions cannot exceed the configured cap', async t => {
   const f = await fixture(t);
   const result = await f.runner.run(f.mission.id, successfulHandlers({
-    susie_visual: async () => ({ status: 'needs_revision', evidence: ['Needs correction'], artifactId: 'artifact-46', rendered }),
+    susie_visual: async () => ({ status: 'needs_revision', evidence: ['Needs correction'], artifactId: 'artifact-46', rendered,
+      output: { kind: 'visual_review', decision: 'revise', findings: ['Needs correction'] } }),
   }));
   assert.equal(result.status, 'failed');
   assert.equal(result.revisions, 2);
@@ -112,6 +173,19 @@ test('cancellation is honored at a stage boundary and retained durably', async t
   const result = await f.runner.run(f.mission.id, handlers);
   assert.equal(result.status, 'cancelled');
   assert.equal(result.events.filter(event => event.status === 'done').length, 1);
+});
+
+test('cancellation racing with a role launch leaves a cancelled checkpoint, not a false stage failure', async t => {
+  const f = await fixture(t);
+  let calls = 0;
+  const result = await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => {
+    await f.store.cancel(f.mission.id);
+    calls++;
+    throw new Error('cancelled before role launch');
+  } }));
+  assert.equal(result.status, 'cancelled');
+  assert.equal(calls, 1);
+  assert.equal(result.events.length, 0);
 });
 
 test('duplicate concurrent execution is rejected while a mission is active', async t => {
@@ -183,7 +257,10 @@ test('journal rejects forged out-of-order stages, revisions, attempts, and repla
   await appendFile(join(f.root, 'mission-46.jsonl'), `${JSON.stringify(running)}\n`);
   const outOfOrder = { ...running, status: 'ready', currentStage: 'quinn_functional', inFlight: null,
     events: [{ stage: 'susie_design', revision: 0, attempt: 1, status: 'done',
-      evidence: ['Guide written'], artifactId: 'artifact-46' }] };
+      evidence: ['Guide written'], artifactId: 'artifact-46', output: { kind: 'design_guide', guide: {
+        concept: 'Editorial volunteer signup with a strong focus on joining the community.', sections: ['a', 'b', 'c'], typeScale: ['a', 'b', 'c'],
+        spacing: [4, 8, 16, 24], responsiveStates: ['wide', 'narrow'], imagery: { direction: 'documentary', sourceRequirements: 'existing licensed images', altStrategy: 'write alt text' },
+        interactions: ['signup', 'validation'], references: [] } } }] };
   await appendFile(join(f.root, 'mission-46.jsonl'), `${JSON.stringify(outOfOrder)}\n`);
   await assert.rejects(f.store.get(f.mission.id), /invalid mission checkpoint/);
 
@@ -194,7 +271,10 @@ test('journal rejects forged out-of-order stages, revisions, attempts, and repla
   await appendFile(join(revision.root, 'mission-46.jsonl'), `${JSON.stringify(designRunning)}\n`);
   const forgedRevision = { ...designRunning, status: 'ready', currentStage: 'sam_implementation', inFlight: null,
     events: [{ stage: 'susie_design', revision: 0, attempt: 1, status: 'needs_revision',
-      evidence: ['Revise this design'], artifactId: 'artifact-46' }] };
+      evidence: ['Revise this design'], artifactId: 'artifact-46', output: { kind: 'design_guide', guide: {
+        concept: 'Editorial volunteer signup with a strong focus on joining the community.', sections: ['a', 'b', 'c'], typeScale: ['a', 'b', 'c'],
+        spacing: [4, 8, 16, 24], responsiveStates: ['wide', 'narrow'], imagery: { direction: 'documentary', sourceRequirements: 'existing licensed images', altStrategy: 'write alt text' },
+        interactions: ['signup', 'validation'], references: [] } } }] };
   await appendFile(join(revision.root, 'mission-46.jsonl'), `${JSON.stringify(forgedRevision)}\n`);
   await assert.rejects(revision.store.get(revision.mission.id), /invalid mission checkpoint/);
 
@@ -263,7 +343,7 @@ test('mismatched artifacts, missing acceptance evidence, and unknown checkpoint 
   assert.match(unavailableReview.error, /verifier unavailable/);
 
   const h = await fixture(t);
-  await writeFile(join(h.root, 'mission-46.jsonl'), '{"version":2,"status":"accepted_preview"}\n');
+  await writeFile(join(h.root, 'mission-46.jsonl'), '{"version":3,"status":"accepted_preview"}\n');
   await assert.rejects(h.runner.run(h.mission.id, successfulHandlers()), /invalid mission checkpoint/);
 });
 

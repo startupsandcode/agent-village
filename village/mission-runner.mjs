@@ -13,9 +13,39 @@ function assert(condition, message) {
 }
 
 function validateEvidence(evidence) {
-  assert(Array.isArray(evidence) && evidence.length > 0 &&
-    evidence.every(item => typeof item === 'string' && item.trim()), 'stage evidence required');
+  assert(Array.isArray(evidence) && evidence.length > 0 && evidence.length <= 24 &&
+    evidence.every(item => typeof item === 'string' && item.trim() && item.length <= 1000), 'stage evidence required');
   return evidence.map(item => item.trim());
+}
+
+function validateStageOutput(stage, status, output) {
+  assert(output && typeof output === 'object' && !Array.isArray(output), 'stage deliverable required');
+  if (stage === 'susie_design') {
+    const guide = output.kind === 'design_guide' && output.guide;
+    assert(guide && typeof guide === 'object' && typeof guide.concept === 'string' && guide.concept.trim().length >= 30 &&
+      Array.isArray(guide.sections) && guide.sections.length >= 3 && guide.sections.every(item => typeof item === 'string' && item.trim()) &&
+      Array.isArray(guide.typeScale) && guide.typeScale.length >= 3 && guide.typeScale.every(item => typeof item === 'string' && item.trim()) &&
+      Array.isArray(guide.spacing) && guide.spacing.length >= 4 && guide.spacing.every(item => Number.isSafeInteger(item) && item > 0) &&
+      Array.isArray(guide.responsiveStates) && guide.responsiveStates.length >= 2 && guide.responsiveStates.every(item => typeof item === 'string' && item.trim()) &&
+      typeof guide.imagery?.direction === 'string' && guide.imagery.direction.trim() &&
+      typeof guide.imagery?.sourceRequirements === 'string' && guide.imagery.sourceRequirements.trim() &&
+      typeof guide.imagery?.altStrategy === 'string' && guide.imagery.altStrategy.trim() &&
+      Array.isArray(guide.interactions) && guide.interactions.length >= 2 && guide.interactions.every(item => typeof item === 'string' && item.trim()) &&
+      Array.isArray(guide.references) && guide.references.every(item => typeof item === 'string' && item.trim()),
+    'Susie design guide is incomplete');
+    assert(JSON.stringify(output).length <= 24000, 'design guide exceeds the mission limit');
+  } else if (stage === 'sam_implementation') {
+    assert(output.kind === 'implementation' && typeof output.previewUrl === 'string' &&
+      /^https?:\/\//.test(output.previewUrl), 'Sam must provide a preview URL');
+  } else if (stage === 'quinn_functional') {
+    assert(output.kind === 'functional_review' && Array.isArray(output.checks) && output.checks.length > 0 &&
+      output.checks.every(check => typeof check === 'string' && check.trim()), 'Quinn functional checks required');
+  } else {
+    assert(output.kind === 'visual_review' &&
+      output.decision === (status === 'done' ? 'approved' : 'revise') &&
+      Array.isArray(output.findings) && output.findings.every(item => typeof item === 'string'),
+    'Susie visual decision does not match the mission stage outcome');
+  }
 }
 
 function same(left, right) {
@@ -23,8 +53,8 @@ function same(left, right) {
 }
 
 function validateTransition(previous, next) {
-  const immutable = ['version', 'id', 'repo', 'goal', 'destination', 'artifactId', 'team',
-    'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+  const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination',
+    'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
   const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
@@ -56,9 +86,10 @@ function validateTransition(previous, next) {
     assert(event.stage === previous.currentStage && event.revision === previous.revisions &&
       event.attempt === prevAttempt, 'invalid mission checkpoint transition');
     if (event.status === 'failed') {
-      assert(next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
-        (next.status === 'blocked' && same(next.inFlight, previous.inFlight) ||
-          next.status === 'failed' && next.inFlight === null) && next.error === event.error,
+      assert(typeof event.retryable === 'boolean' && next.currentStage === previous.currentStage &&
+        next.revisions === previous.revisions &&
+        (event.retryable && next.status === 'failed' && next.inFlight === null ||
+          !event.retryable && next.status === 'blocked' && same(next.inFlight, previous.inFlight)) && next.error === event.error,
       'invalid mission checkpoint transition');
       return;
     }
@@ -92,6 +123,14 @@ function validateTransition(previous, next) {
     return;
   }
 
+  if (previous.status === 'running' && next.status === 'cancelled') {
+    assert(next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+      same(next.events, previous.events) && same(next.attempts, previous.attempts) &&
+      previous.inFlight && next.inFlight === null && next.error === null,
+    'invalid mission checkpoint transition');
+    return;
+  }
+
   if (previous.status === 'running') {
     assert(next.status === 'blocked' && next.currentStage === previous.currentStage &&
       next.revisions === previous.revisions && same(next.events, previous.events) &&
@@ -121,13 +160,23 @@ function validateTransition(previous, next) {
 }
 
 function validateState(value, id) {
-  const stateKeys = ['version', 'id', 'repo', 'goal', 'destination', 'artifactId', 'team', 'constraints',
+  const stateKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team', 'constraints',
     'maxAttempts', 'maxRevisions', 'revisions', 'status', 'currentStage', 'events', 'attempts', 'inFlight',
     'error', 'createdAt', 'updatedAt'];
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    value.version === 1 && value.id === id && value.repo === REPO &&
+    value.version === 2 && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
+    Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
+    value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
+    value.mayaAgreement && value.mayaAgreement.acceptedByUser === true &&
+    typeof value.mayaAgreement.proposalId === 'string' && value.mayaAgreement.proposalId.trim() &&
+    typeof value.mayaAgreement.acceptedAt === 'string' && typeof value.mayaAgreement.summary === 'string' &&
+    value.mayaAgreement.goal === value.goal &&
+    same(value.mayaAgreement.acceptanceCriteria, value.acceptanceCriteria) &&
+    value.mayaAgreement.repo === value.repo && same(value.mayaAgreement.constraints, value.constraints) &&
+    same(value.mayaAgreement.team, value.team) && value.mayaAgreement.destination === value.destination &&
+    value.mayaAgreement.artifactId === value.artifactId &&
     typeof value.destination === 'string' && value.destination.trim() &&
     typeof value.artifactId === 'string' && value.artifactId.trim() &&
     value.team && Object.keys(value.team).length === 2 && Object.hasOwn(value.team, 'id') &&
@@ -153,14 +202,17 @@ function validateState(value, id) {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
         !Array.isArray(event.evidence)) return false;
-    if (event.status === 'failed') return Object.keys(event).length === 6 &&
-      Object.keys(event).every(key => ['stage', 'revision', 'attempt', 'status', 'evidence', 'error'].includes(key)) &&
-      typeof event.error === 'string' && event.evidence.length === 0;
+    if (event.status === 'failed') return Object.keys(event).length === 7 &&
+      Object.keys(event).every(key => ['stage', 'revision', 'attempt', 'status', 'evidence', 'error', 'retryable'].includes(key)) &&
+      typeof event.error === 'string' && typeof event.retryable === 'boolean' && event.evidence.length === 0;
     if (event.status === 'needs_revision' && event.stage !== 'susie_visual') return false;
-    if (event.evidence.length === 0 || event.evidence.some(item => typeof item !== 'string' || !item.trim()) ||
+    if (event.evidence.length === 0 || event.evidence.length > 24 ||
+        event.evidence.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000) ||
         event.artifactId !== value.artifactId) return false;
-    if (event.stage !== 'susie_visual') return Object.keys(event).length === 6;
-    return Object.keys(event).length === 8 && event.rendered?.artifactId === value.artifactId &&
+    if (event.stage !== 'susie_visual') return Object.keys(event).length === 7 &&
+      (() => { try { validateStageOutput(event.stage, event.status, event.output); return true; } catch { return false; } })();
+    try { validateStageOutput(event.stage, event.status, event.output); } catch { return false; }
+    return Object.keys(event).length === 9 && event.rendered?.artifactId === value.artifactId &&
       event.rendered?.destination === value.destination && typeof event.rendered?.previewUrl === 'string' &&
       event.rendered.desktop?.passed === true && typeof event.rendered.desktop.evidenceRef === 'string' &&
       event.rendered.narrow?.passed === true && typeof event.rendered.narrow.evidenceRef === 'string' &&
@@ -192,7 +244,15 @@ export class MissionStore {
     const id = input.id;
     const path = this.path(id);
     assert(typeof input.goal === 'string' && input.goal.trim(), 'mission goal required');
+    const acceptanceCriteria = input.acceptanceCriteria;
+    assert(Array.isArray(acceptanceCriteria) && acceptanceCriteria.length >= 3 &&
+      acceptanceCriteria.every(item => typeof item === 'string' && item.trim()), 'Maya acceptance criteria required');
     assert(typeof input.destination === 'string' && input.destination.trim(), 'preview destination required');
+    let destinationUrl;
+    try { destinationUrl = new URL(input.destination.trim()); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
+    assert(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
+      !destinationUrl.search && !destinationUrl.hash,
+    'preview destination must be an HTTP URL without credentials, query, or fragment');
     assert(typeof input.artifactId === 'string' && input.artifactId.trim(), 'artifact identity required');
     const maxAttempts = input.maxAttempts ?? 2;
     const maxRevisions = input.maxRevisions ?? 2;
@@ -206,7 +266,16 @@ export class MissionStore {
       team.roles.design === 'susie' && team.roles.build === 'sam' &&
       team.roles.functional_review === 'quinn' && team.roles.visual_review === 'susie',
     'mission team role configuration required');
-    const state = { version: 1, id, repo: REPO, goal: input.goal.trim(), destination: input.destination.trim(),
+    const agreement = input.mayaAgreement;
+    assert(agreement && agreement.acceptedByUser === true && typeof agreement.proposalId === 'string' &&
+      agreement.proposalId.trim() && typeof agreement.summary === 'string' && agreement.summary.trim() &&
+      agreement.goal === input.goal.trim() && same(agreement.acceptanceCriteria, acceptanceCriteria) &&
+      agreement.destination === input.destination.trim() && agreement.artifactId === input.artifactId.trim() &&
+      agreement.repo === input.repo && same(agreement.constraints, input.constraints ?? []) && same(agreement.team, team) &&
+      typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
+    'a user-accepted Maya agreement for this exact mission is required');
+    const state = { version: 2, id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
+      mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,
       revisions: 0, status: 'ready', currentStage: 'susie_design', events: [], attempts: {}, inFlight: null,
       error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -240,7 +309,7 @@ export class MissionStore {
       catch { throw new Error('invalid mission checkpoint'); }
       validateState(value, id);
       if (previous) {
-        for (const key of ['version', 'id', 'repo', 'goal', 'destination', 'artifactId', 'team',
+        for (const key of ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt']) {
           if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) throw new Error('invalid mission checkpoint');
         }
@@ -337,6 +406,15 @@ export class MissionRunner {
     try {
       let state = await this.store.get(id);
       if (terminal.has(state.status)) return state;
+      if (state.status === 'failed') {
+        const lastFailure = state.events.findLast(event => event.stage === state.currentStage &&
+          event.revision === state.revisions && event.status === 'failed');
+        const key = `${state.revisions}:${state.currentStage}`;
+        if (!lastFailure?.retryable || (state.attempts[key] ?? 0) >= state.maxAttempts) return state;
+        state.status = 'ready';
+        state.error = null;
+        state = await this.store.save(state);
+      }
       if (state.status === 'running' || state.inFlight) {
         state.status = 'blocked';
         state.error = 'previous stage outcome is uncertain; reconcile before resuming';
@@ -377,6 +455,7 @@ export class MissionRunner {
           assert(outcome.status !== 'needs_revision' || stage === 'susie_visual',
             'only visual review may request a revision');
           assert(outcome.artifactId === state.artifactId, 'stage artifact identity does not match the approved mission');
+          validateStageOutput(stage, outcome.status, outcome.output);
           if (stage === 'susie_visual') {
             assert(outcome.rendered && outcome.rendered.artifactId === state.artifactId &&
               outcome.rendered.destination === state.destination &&
@@ -395,11 +474,18 @@ export class MissionRunner {
             'rendered preview evidence verifier rejected the artifact');
           }
           outcome = { status: outcome.status, evidence: validateEvidence(outcome.evidence),
+            output: structuredClone(outcome.output),
             ...(stage === 'susie_visual' ? { rendered: structuredClone(outcome.rendered) } : {}) };
         } catch (error) {
+          if (await this.store.isCancelled(id)) {
+            state.status = 'cancelled';
+            state.inFlight = null;
+            state.error = null;
+            return await this.store.save(state);
+          }
           const message = error instanceof Error ? error.message.slice(0, 500) : 'stage failed';
-          state.events.push({ stage, revision: state.revisions, attempt, status: 'failed', evidence: [], error: message });
           const retryable = error?.retryable === true;
+          state.events.push({ stage, revision: state.revisions, attempt, status: 'failed', evidence: [], error: message, retryable });
           if (retryable) state.inFlight = null;
           state.status = retryable ? 'failed' : 'blocked';
           state.error = message;
@@ -414,7 +500,7 @@ export class MissionRunner {
         }
 
         state.events.push({ stage, revision: state.revisions, attempt, status: outcome.status,
-          evidence: outcome.evidence, artifactId: state.artifactId,
+          evidence: outcome.evidence, artifactId: state.artifactId, output: structuredClone(outcome.output),
           ...(stage === 'susie_visual' ? { rendered: structuredClone(outcome.rendered), renderVerification } : {}) });
         state.inFlight = null;
         state.error = null;

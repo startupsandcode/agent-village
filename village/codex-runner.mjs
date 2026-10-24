@@ -9,10 +9,10 @@ import { validateResult } from './contract.mjs';
 const execFileAsync = promisify(execFile);
 const schema = fileURLToPath(new URL('./role-result.schema.json', import.meta.url));
 
-export function roleCommand(codex, cwd, schemaPath, output, readOnly) {
+export function roleCommand(codex, cwd, schemaPath, output, readOnly, images = []) {
   const mode = readOnly ? ['--sandbox', 'read-only'] : ['--approve-for-me'];
   return [codex, 'exec', '--ignore-user-config', ...mode, '-C', cwd,
-    '--output-schema', schemaPath, '-o', output, '-'];
+    ...images.flatMap(image => ['--image', image]), '--output-schema', schemaPath, '-o', output, '-'];
 }
 
 async function defaultLogin() {
@@ -47,8 +47,21 @@ export class CodexRunner {
 
   async runRole({ role, cwd, prompt, timeoutSeconds, env = process.env }) {
     if (!['maya', 'sam', 'quinn'].includes(role)) throw new Error('invalid role');
+    const data = await this.runStructured({ cwd, prompt, timeoutSeconds, schemaPath: schema,
+      readOnly: role === 'quinn', env });
+    return validateResult(data);
+  }
+
+  async runStructured({ cwd, prompt, timeoutSeconds, schemaPath, readOnly = true, images = [], env = process.env }) {
+    if (typeof cwd !== 'string' || !cwd.trim() || typeof prompt !== 'string' || !prompt.trim()) {
+      throw new Error('role workspace and prompt are required');
+    }
     if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 2700) {
       throw new Error('invalid role timeout');
+    }
+    if (typeof schemaPath !== 'string' || !schemaPath.trim() || !Array.isArray(images) || images.length > 4 ||
+        images.some(image => typeof image !== 'string' || !image.trim() || image.length > 4096)) {
+      throw new Error('structured role schema and images are invalid');
     }
     if (!await this.login()) throw new Error('Existing ChatGPT login required');
     const cleanEnv = { ...env };
@@ -57,12 +70,13 @@ export class CodexRunner {
     const directory = await mkdtemp(join(tmpdir(), 'village-codex-'));
     const output = join(directory, 'result.json');
     try {
-      const command = roleCommand('codex', cwd, schema, output, role === 'quinn');
+      const command = roleCommand('codex', cwd, schemaPath, output, readOnly, images);
       const launched = await this.launch(command, { cwd, env: cleanEnv, prompt, timeoutSeconds });
       const raw = typeof launched === 'string' ? launched : await readFile(output, 'utf-8');
+      if (Buffer.byteLength(raw, 'utf8') > 65536) throw new Error('Codex structured result exceeded the output limit');
       let data;
       try { data = JSON.parse(raw); } catch { throw new Error('Codex returned invalid JSON'); }
-      return validateResult(data);
+      return data;
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

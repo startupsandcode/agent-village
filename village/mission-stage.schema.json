@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["stage", "status", "artifactId", "evidence", "designGuide", "previewUrl", "functionalChecks", "visualFindings"],
+  "properties": {
+    "stage": { "enum": ["susie_design", "sam_implementation", "quinn_functional", "susie_visual"] },
+    "status": { "enum": ["done", "needs_revision", "blocked"] },
+    "artifactId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+    "designGuide": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["concept", "sections", "typeScale", "spacing", "responsiveStates", "imagery", "interactions", "references"],
+          "properties": {
+            "concept": { "type": "string", "minLength": 30, "maxLength": 2000 },
+            "sections": { "type": "array", "minItems": 3, "maxItems": 12, "items": { "type": "string", "minLength": 5, "maxLength": 500 } },
+            "typeScale": { "type": "array", "minItems": 3, "maxItems": 8, "items": { "type": "string", "minLength": 5, "maxLength": 300 } },
+            "spacing": { "type": "array", "minItems": 4, "maxItems": 12, "items": { "type": "integer", "minimum": 2, "maximum": 128 } },
+            "responsiveStates": { "type": "array", "minItems": 2, "maxItems": 8, "items": { "type": "string", "minLength": 10, "maxLength": 500 } },
+            "imagery": {
+              "type": "object", "additionalProperties": false,
+              "required": ["direction", "sourceRequirements", "altStrategy"],
+              "properties": {
+                "direction": { "type": "string", "minLength": 10, "maxLength": 1000 },
+                "sourceRequirements": { "type": "string", "minLength": 10, "maxLength": 1000 },
+                "altStrategy": { "type": "string", "minLength": 10, "maxLength": 1000 }
+              }
+            },
+            "interactions": { "type": "array", "minItems": 2, "maxItems": 12, "items": { "type": "string", "minLength": 8, "maxLength": 500 } },
+            "references": { "type": "array", "maxItems": 8, "items": { "type": "string", "minLength": 5, "maxLength": 500 } }
+          }
+        }
+      ]
+    },
+    "previewUrl": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "uri", "maxLength": 2000 }] },
+    "functionalChecks": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "visualFindings": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+  }
+}

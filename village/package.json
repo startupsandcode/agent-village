@@ -1,0 +1,11 @@
+{
+  "name": "agent-village-missions",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "test:browser": "node --test test/browser-verifier.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}
