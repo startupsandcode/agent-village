@@ -11,11 +11,12 @@ const acceptanceCriteria = ['The volunteer opportunity can be understood at a gl
 const team = { id: 'single-design-led-team', roles: { design: 'susie', build: 'sam',
   functional_review: 'quinn', visual_review: 'susie' } };
 const constraints = ['No paid services'];
-const missionInput = { id: 'mission-46', repo: 'startupsandcode/agent-village', goal, acceptanceCriteria,
+const missionInput = { id: 'mission-46', repo: 'startupsandcode/agent-village', workspaceBranch: 'issue-46-design-led-missions', goal, acceptanceCriteria,
   destination: 'https://preview.invalid/mission-46', artifactId: 'artifact-46', team, constraints,
   mayaAgreement: { proposalId: 'maya-proposal-46', summary: 'A bounded responsive volunteer signup preview.',
     acceptedByUser: true, acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', goal,
-    acceptanceCriteria, destination: 'https://preview.invalid/mission-46', artifactId: 'artifact-46', constraints, team },
+    acceptanceCriteria, destination: 'https://preview.invalid/mission-46', artifactId: 'artifact-46', constraints, team,
+    workspaceBranch: 'issue-46-design-led-missions' },
   maxAttempts: 2, maxRevisions: 2 };
 const roles = ['susie_design', 'sam_implementation', 'quinn_functional', 'susie_visual'];
 const rendered = { artifactId: 'artifact-46', destination: missionInput.destination,

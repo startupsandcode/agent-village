@@ -18,6 +18,7 @@ export class MayaMissionIntake {
   async propose(input) {
     if (!input || input.repo !== REPO || !/^[a-z0-9][a-z0-9-]{2,79}$/.test(input.id ?? '') ||
         typeof input.goal !== 'string' || !input.goal.trim() || input.goal.length > 2000 ||
+        typeof input.workspaceBranch !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(input.workspaceBranch) ||
         typeof input.destination !== 'string' || !input.destination.trim() || input.destination.length > 2000 ||
         typeof input.artifactId !== 'string' || !input.artifactId.trim() || input.artifactId.length > 160) {
       throw new Error('complete bounded mission scope required');
@@ -42,6 +43,7 @@ export class MayaMissionIntake {
       `If any scope, access, budget, or destructive-action condition is unclear, return needs_user and ask one concise question. ` +
       `If the request is clear and within scope, return agreed with a concise summary and at least three testable acceptance criteria. ` +
       `Never request new credentials or paid services.\nRepository: ${input.repo}\nGoal: ${input.goal}\n` +
+      `Feature branch: ${input.workspaceBranch}\n` +
       `Destination: ${input.destination}\nArtifact: ${input.artifactId}\nConstraints: ${input.constraints.join('; ')}\n` +
       `Team: Maya intake, Susie design then Sam build, Quinn functional review, Susie rendered review.`,
       timeoutSeconds: this.timeoutSeconds, schemaPath, readOnly: true });
@@ -71,6 +73,7 @@ export class MayaMissionIntake {
     const acceptedAt = new Date().toISOString();
     const mayaAgreement = { proposalId, summary: pending.proposal.summary, acceptedByUser: true, acceptedAt,
       repo: input.repo, goal: input.goal.trim(), acceptanceCriteria: [...pending.proposal.acceptanceCriteria],
+      workspaceBranch: input.workspaceBranch,
       destination: input.destination.trim(), artifactId: input.artifactId.trim(),
       constraints: [...input.constraints], team: structuredClone(input.team) };
     return { ...input, goal: input.goal.trim(), destination: input.destination.trim(),

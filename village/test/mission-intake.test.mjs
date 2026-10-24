@@ -9,6 +9,7 @@ import { join } from 'node:path';
 const team = { id: 'one-team', roles: { design: 'susie', build: 'sam',
   functional_review: 'quinn', visual_review: 'susie' } };
 const input = { id: 'mission-46', repo: 'startupsandcode/agent-village',
+  workspaceBranch: 'issue-46-design-led-missions',
   goal: 'Build a responsive preview for the volunteer program.', destination: 'https://preview.example.test',
   artifactId: 'volunteer-preview-46', constraints: ['No paid resources'], team };
 const criteria = ['Visitors can find an opportunity.', 'The signup flow works on desktop and mobile.',
@@ -28,6 +29,7 @@ test('Maya intake pins one scoped proposal and creates a manifest only after exa
   assert.equal(codex.calls.length, 1);
   assert.equal(codex.calls[0].readOnly, true);
   assert.match(codex.calls[0].prompt, /No paid resources/);
+  assert.match(codex.calls[0].prompt, /Feature branch: issue-46-design-led-missions/);
   assert.throws(() => intake.accept(proposal.proposalId, 'I agree'), /exact Maya proposal/);
 
   const agreedInput = intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`);
@@ -38,6 +40,8 @@ test('Maya intake pins one scoped proposal and creates a manifest only after exa
   assert.deepEqual(manifest.acceptanceCriteria, criteria);
   assert.equal(manifest.mayaAgreement.acceptedByUser, true);
   assert.equal(manifest.mayaAgreement.destination, input.destination);
+  assert.equal(manifest.workspaceBranch, input.workspaceBranch);
+  assert.equal(manifest.mayaAgreement.workspaceBranch, input.workspaceBranch);
 });
 
 test('Maya questions and blocked scopes cannot be accepted into a mission', async () => {

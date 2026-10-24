@@ -2,7 +2,7 @@
 
 This milestone can start one design-led mission in `startupsandcode/agent-village` from a clean named feature branch. It asks Maya to return an agreed scope, summary, and testable criteria. The CLI presents that proposal and requires one exact user acceptance before it creates the durable mission. If Maya flags an unresolved scope, access, budget, or destructive-action question, the CLI stops before creating a mission.
 
-After that single agreement, stage adapters call the installed Codex CLI in this order:
+After that single agreement, the CLI stores the accepted mission and launches one detached local worker. Stage adapters call the installed Codex CLI in this order:
 
 1. Susie returns a structured guide with concept, hierarchy, typography, spacing, responsive states, imagery and interactions.
 2. Sam receives that persisted guide and the agreed acceptance criteria. His CLI run uses the workspace-write sandbox with automatic approval review; it cannot publish, merge, provision resources, or add credentials.
@@ -10,7 +10,7 @@ After that single agreement, stage adapters call the installed Codex CLI in this
 4. Playwright opens the exact approved URL in Chromium, blocks requests to other origins, checks the rendered artifact marker, title, heading, fonts, image alt attributes and horizontal overflow at desktop and narrow sizes, and captures screenshots.
 5. Susie receives both real screenshots in a read-only visual-review run. A bounded revision returns to Sam, then repeats Quinn and Susie review.
 
-The append-only journal stores Maya's accepted scope, design-guide data, stage outputs, attempts, review feedback, browser evidence and final state. A single-use local lock rejects duplicate runs. Cancellation is checked at stage boundaries. The CLI caps each stage at two attempts and the visual revision loop at one; input files cannot raise those limits. Retryable errors may resume only within the attempt limit; uncertain writes and stale locks fail closed for manual reconciliation.
+The append-only journal stores Maya's accepted scope, design-guide data, stage outputs, attempts, review feedback, browser evidence and final state. A single-use local lock rejects duplicate runs. The dispatcher serializes mission intake and permits only one nonterminal mission in this shared workspace; a second start is refused before Maya is called. This avoids concurrent agents writing to the same checkout. Cancellation is checked at stage boundaries. The CLI caps each stage at two attempts and the visual revision loop at one; input files cannot raise those limits. Retryable errors may resume only within the attempt limit; uncertain writes and stale locks fail closed for manual reconciliation.
 
 ## Start a mission
 
@@ -22,13 +22,15 @@ Set `VILLAGE_MISSION_WORKSPACE` to the root of a clean `startupsandcode/agent-vi
 node village/mission-cli.mjs start .\mission-input.json
 ```
 
-The default durable state and evidence directories are `~/.agent-village/missions` and `~/.agent-village/evidence`; override them with `VILLAGE_MISSION_ROOT` and `VILLAGE_MISSION_EVIDENCE_ROOT`. `show <id>` reads status, `cancel <id>` requests cancellation, and `resume <id>` continues from a confirmed safe checkpoint. The workspace must stay available while the synchronous CLI command runs.
+The default durable state and evidence directories are `~/.agent-village/missions` and `~/.agent-village/evidence`; override them with `VILLAGE_MISSION_ROOT` and `VILLAGE_MISSION_EVIDENCE_ROOT`. Completion events are written to `missions/.notifications/`; override that path with `VILLAGE_MISSION_NOTIFICATIONS_ROOT`. The `start` command returns after it launches the detached worker, so the terminal and browser can close while the mission continues. The worker is a normal user-session process: it runs only while the machine and user session remain available. It does not install a service, register at startup, or restart after reboot.
+
+Use `node village/mission-cli.mjs status <id>` to inspect the durable manifest, worker PID, latest worker error, and completion events. `node village/mission-cli.mjs notifications` reads the local completion feed; `show`, `cancel`, and `resume` remain available. The manifest pins the original feature branch. Resume requires that branch and a clean checkout; a dirty or changed branch stops for reconciliation. When a worker exits unexpectedly, `status` reports whether its PID remains alive and `notifications` records the worker error. An in-flight role stage or stale lock remains blocked for manual reconciliation because its write outcome may be uncertain. Accepted missions are durable as `ready` manifests; there is no general multi-item queue because this first slice shares one checkout.
 
 ## Verification boundary
 
-The test suite includes real Chromium against an ephemeral local HTTP preview and a full CLI integration test with mock role outputs. It verifies that the browser, exact destination, artifact marker, screenshots, screenshot digests and desktop/narrow states work together. Unit tests also exercise role order, Maya agreement, guide enforcement, failure/retry, cancellation, duplicate execution and uncertain-write handling. The Codex role adapter uses the real CLI contract, schemas and permissions, but this task did not launch a live role: a live `codex exec` can consume the account's existing Codex quota, and no paid agent run was authorized.
+The test suite includes real Chromium against an ephemeral local HTTP preview and a full CLI integration test with mock role outputs. It verifies that the browser, exact destination, artifact marker, screenshots, screenshot digests and desktop/narrow states work together. Unit tests also exercise role order, Maya agreement, guide enforcement, failure/retry, cancellation, duplicate execution, queued-job serialization, worker credential filtering, completion events and uncertain-write handling. The Codex role adapter uses the real CLI contract, schemas and permissions, but this task did not launch a live role: a live `codex exec` can consume the account's existing Codex quota, and no paid agent run was authorized.
 
-This worker does not deploy or publish. Sam must return a URL that already serves the accepted artifact at the exact approved destination; otherwise browser review blocks. There is no automatic deployment integration, completion notification hook, or unattended scheduler. A local mission run remains active only while the user's machine and CLI process are running. Crash recovery detects in-flight uncertainty but does not replay that stage automatically.
+This worker does not deploy or publish. Sam must return a URL that already serves the accepted artifact at the exact approved destination; otherwise browser review blocks. The durable completion feed is local and can be consumed by a future UI integration; it does not yet send an OS notification, email, or message to the user. There is no unattended scheduler or restart-on-boot hook. If the machine sleeps, the user session ends, or the process crashes, execution stops; crash recovery does not replay an uncertain stage automatically.
 
 ## Future portfolio manager
 

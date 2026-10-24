@@ -11,6 +11,9 @@ import { CodexRunner } from './codex-runner.mjs';
 import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
+import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
+  readWorkspaceLease, reserveWorkspaceMission, updateWorkspaceMission, workspaceStateRoot,
+  recordMissionWorkerError } from './mission-background.mjs';
 
 const execFileAsync = promisify(execFile);
 const REPO = 'startupsandcode/agent-village';
@@ -40,18 +43,20 @@ export async function inspectMissionWorkspace(workspacePath, { requireClean = fa
     'mission workspace must belong to startupsandcode/agent-village');
   const branch = await git(root, 'branch', '--show-current');
   requireValue(branch && !['main', 'master'].includes(branch), 'mission workspace must use a named feature branch');
-  if (requireClean) requireValue(!(await git(root, 'status', '--porcelain')), 'mission workspace must be clean before mission start');
+  if (requireClean) requireValue(!(await git(root, 'status', '--porcelain')), 'mission workspace must be clean before it starts or resumes work');
   return { root, branch, remote };
 }
 
 export function missionPaths(env = process.env) {
-  const base = env.VILLAGE_MISSION_HOME || join(homedir(), '.agent-village');
-  return { root: resolve(env.VILLAGE_MISSION_ROOT || join(base, 'missions')),
-    evidence: resolve(env.VILLAGE_MISSION_EVIDENCE_ROOT || join(base, 'evidence')),
+  const home = resolve(env.VILLAGE_MISSION_HOME || join(homedir(), '.agent-village'));
+  const root = resolve(env.VILLAGE_MISSION_ROOT || join(home, 'missions'));
+  return { home, root,
+    evidence: resolve(env.VILLAGE_MISSION_EVIDENCE_ROOT || join(home, 'evidence')),
+    notifications: resolve(env.VILLAGE_MISSION_NOTIFICATIONS_ROOT || join(root, '.notifications')),
     workspace: env.VILLAGE_MISSION_WORKSPACE };
 }
 
-async function readMissionInput(path) {
+async function readMissionInput(path, workspaceBranch) {
   const source = await readFile(path, 'utf8');
   requireValue(Buffer.byteLength(source, 'utf8') <= 64000, 'mission input exceeds 64 KiB');
   const input = JSON.parse(source);
@@ -66,9 +71,11 @@ async function readMissionInput(path) {
   requireValue(Number.isSafeInteger(maxRevisions) && maxRevisions >= 0 && maxRevisions <= 1,
     'CLI revision limit must be 0-1');
   const destination = new URL(input.destination);
-  requireValue(['http:', 'https:'].includes(destination.protocol) && !destination.username && !destination.password,
-    'mission destination must be an HTTP(S) URL without credentials');
+  requireValue(['http:', 'https:'].includes(destination.protocol) && !destination.username && !destination.password &&
+    !destination.search && !destination.hash,
+  'mission destination must be an HTTP(S) URL without credentials, query, or fragment');
   return { ...input, repo: REPO, destination: destination.href.replace(/\/$/, ''),
+    workspaceBranch,
     constraints: [...new Set([...(input.constraints ?? []), ...safetyConstraints])],
     team: { id: 'design-led-single-team', roles }, maxAttempts, maxRevisions };
 }
@@ -84,43 +91,133 @@ async function askForAgreement(proposalId, summary, criteria) {
 }
 
 export async function main(argv = process.argv.slice(2), { env = process.env, codex = new CodexRunner(),
-  confirm = askForAgreement } = {}) {
+  confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker } = {}) {
   const [command, ...args] = argv;
   const paths = missionPaths(env);
+  const store = new MissionStore(paths.root);
+  if (command === 'notifications') {
+    requireValue(args.length <= 1, 'notifications [mission-id] required');
+    const feed = new MissionNotificationFeed(paths.notifications);
+    await feed.sync(await store.list());
+    const events = await feed.list();
+    return args.length === 0 ? events : events.filter(event => event.missionId === args[0]);
+  }
+  if (command === 'status') {
+    requireValue(args.length === 1, 'status <mission-id> required');
+    const feed = new MissionNotificationFeed(paths.notifications);
+    await feed.sync(await store.list());
+    const mission = await store.get(args[0]);
+    const workspace = paths.workspace ? await inspectMissionWorkspace(paths.workspace) : null;
+    const lockRoot = workspace ? workspaceStateRoot(paths.home, workspace.root) : paths.root;
+    return { mission, ...await readMissionBackgroundStatus({ root: lockRoot, missionId: args[0], feed }) };
+  }
+  if (command === 'show') {
+    requireValue(args.length === 1, 'show <mission-id> required');
+    return await store.get(args[0]);
+  }
+  if (command === 'cancel') {
+    requireValue(args.length === 1, 'cancel <mission-id> required');
+    await store.cancel(args[0]);
+    return { id: args[0], status: 'cancellation_requested' };
+  }
   requireValue(paths.workspace, 'set VILLAGE_MISSION_WORKSPACE to a clean startupsandcode/agent-village feature branch');
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
-  const store = new MissionStore(paths.root);
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
-    const input = await readMissionInput(resolve(args[0]));
-    const intake = new MayaMissionIntake({ codex, workspacePath: workspace.root });
-    const proposal = await intake.propose(input);
-    if (proposal.status !== 'agreed') {
-      return { status: proposal.status, summary: proposal.summary, questions: proposal.questions };
+    const input = await readMissionInput(resolve(args[0]), workspace.branch);
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const dispatchLock = await acquireLocalLock(join(lockRoot, '.dispatch.lock'), {
+      busyMessage: 'another mission is being accepted; this shared workspace permits only one mission at a time',
+    });
+    try {
+      const reservation = await readWorkspaceLease(lockRoot);
+      requireValue(!reservation, `workspace already has active mission ${reservation?.missionId ?? 'unknown'} from store ${reservation?.storeRoot ?? 'unknown'}; reconcile before starting another`);
+      const active = (await store.list()).find(state => !['accepted_preview', 'cancelled'].includes(state.status));
+      requireValue(!active, `mission ${active?.id} is still active or needs reconciliation before this single workspace can accept another mission`);
+      const intake = new MayaMissionIntake({ codex, workspacePath: workspace.root });
+      const proposal = await intake.propose(input);
+      if (proposal.status !== 'agreed') {
+        return { status: proposal.status, summary: proposal.summary, questions: proposal.questions };
+      }
+      const response = await confirm(proposal.proposalId, proposal.summary, proposal.acceptanceCriteria);
+      if (response !== 'YES') return { status: 'not_started', reason: 'Maya proposal was not accepted' };
+      const acceptedWorkspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+      requireValue(acceptedWorkspace.branch === workspace.branch, 'mission workspace branch changed during Maya agreement');
+      const missionInput = intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`);
+      const mission = await store.create(missionInput);
+      if (!background) {
+        const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
+          workspacePath: workspace.root, codex });
+        return await runtime.runner.run(mission.id, runtime.handlers);
+      }
+      const lease = await reserveWorkspaceMission({ root: lockRoot, missionId: mission.id,
+        storeRoot: paths.root, branch: workspace.branch });
+      let launched;
+      try {
+        launched = await spawnWorker({ missionId: mission.id, storeRoot: paths.root,
+          evidenceRoot: paths.evidence, notificationsRoot: paths.notifications,
+          workspacePath: workspace.root, workspaceStateRoot: lockRoot, leaseToken: lease.token,
+          expectedBranch: workspace.branch, env });
+        await updateWorkspaceMission({ root: lockRoot, missionId: mission.id, storeRoot: paths.root,
+          token: lease.token, pid: launched.pid });
+      } catch (error) {
+        await recordMissionWorkerError({ root: lockRoot, feed: new MissionNotificationFeed(paths.notifications),
+          missionId: mission.id, message: `worker launch failed: ${String(error?.message ?? 'spawn error').slice(0, 460)}` });
+        throw error;
+      }
+      return { id: mission.id, status: 'queued', workerPid: launched.pid,
+        statusCommand: `node village/mission-cli.mjs status ${mission.id}`,
+        notificationsCommand: 'node village/mission-cli.mjs notifications' };
+    } finally {
+      await dispatchLock.release();
     }
-    const response = await confirm(proposal.proposalId, proposal.summary, proposal.acceptanceCriteria);
-    if (response !== 'YES') return { status: 'not_started', reason: 'Maya proposal was not accepted' };
-    const missionInput = intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`);
-    const mission = await store.create(missionInput);
-    const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
-      workspacePath: workspace.root, codex });
-    return await runtime.runner.run(mission.id, runtime.handlers);
   }
   requireValue(args.length === 1, `${command} <mission-id> required`);
   const [id] = args;
-  if (command === 'cancel') {
-    await store.cancel(id);
-    return { id, status: 'cancellation_requested' };
-  }
-  if (command === 'show') return await store.get(id);
-  if (command === 'resume') {
+  if (command === 'resume' || command === 'worker') {
     const state = await store.get(id);
     requireValue(['ready', 'failed'].includes(state.status), 'mission is not at a resumable stage; uncertain in-flight work needs manual reconciliation');
-    const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
-      workspacePath: workspace.root, codex });
-    return await runtime.runner.run(id, runtime.handlers);
+    const resumeWorkspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+    requireValue(typeof state.workspaceBranch === 'string' && resumeWorkspace.branch === state.workspaceBranch,
+      'mission branch changed; return to the original branch and reconcile before resuming');
+    if (command === 'worker') {
+      const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
+        workspacePath: workspace.root, codex });
+      const { MissionBackgroundWorker, MissionNotificationFeed } = await import('./mission-background.mjs');
+      const worker = new MissionBackgroundWorker({ store, runner: runtime.runner, handlers: runtime.handlers,
+        feed: new MissionNotificationFeed(paths.notifications), root: workspaceStateRoot(paths.home, workspace.root),
+        storeRoot: paths.root, leaseToken: process.env.VILLAGE_MISSION_LEASE_TOKEN });
+      return await worker.run(id);
+    }
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id });
+    const activeReservation = await readWorkspaceLease(lockRoot);
+    if (activeReservation && (activeReservation.missionId !== id || activeReservation.storeRoot !== paths.root)) {
+      return { id, status: 'workspace_busy', activeMissionId: activeReservation.missionId };
+    }
+    if (backgroundStatus.worker?.processAlive) {
+      if (backgroundStatus.worker.missionId === id) return { id, status: 'already_running', workerPid: backgroundStatus.worker.pid,
+        statusCommand: `node village/mission-cli.mjs status ${id}` };
+      return { id, status: 'workspace_busy', activeMissionId: backgroundStatus.worker.missionId,
+        workerPid: backgroundStatus.worker.pid };
+    }
+    requireValue(!backgroundStatus.worker, 'a stale background worker lock remains; inspect and reconcile before resuming');
+    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' && !backgroundStatus.workerError) {
+      throw new Error('a queued mission reservation has no live worker; inspect status and reconcile before relaunching');
+    }
+    const lease = activeReservation ?? await reserveWorkspaceMission({ root: lockRoot, missionId: id,
+      storeRoot: paths.root, branch: state.workspaceBranch });
+    const launched = await spawnWorker({ missionId: id, storeRoot: paths.root,
+      evidenceRoot: paths.evidence, notificationsRoot: paths.notifications,
+      workspacePath: workspace.root, workspaceStateRoot: lockRoot, leaseToken: lease.token,
+      expectedBranch: workspace.branch, env });
+    await updateWorkspaceMission({ root: lockRoot, missionId: id, storeRoot: paths.root,
+      token: lease.token, pid: launched.pid });
+    return { id, status: 'queued', workerPid: launched.pid,
+      statusCommand: `node village/mission-cli.mjs status ${id}`,
+      notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, show, or cancel required');
+  throw new Error('start, resume, worker, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

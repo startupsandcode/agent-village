@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, truncate, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, truncate, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -55,6 +55,7 @@ function same(left, right) {
 function validateTransition(previous, next) {
   const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+  if (previous.version >= 3) immutable.push('workspaceBranch');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
   const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
@@ -163,9 +164,10 @@ function validateState(value, id) {
   const stateKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team', 'constraints',
     'maxAttempts', 'maxRevisions', 'revisions', 'status', 'currentStage', 'events', 'attempts', 'inFlight',
     'error', 'createdAt', 'updatedAt'];
+  if (value?.version === 3) stateKeys.push('workspaceBranch');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    value.version === 2 && value.id === id && value.repo === REPO &&
+    [2, 3].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -177,6 +179,9 @@ function validateState(value, id) {
     value.mayaAgreement.repo === value.repo && same(value.mayaAgreement.constraints, value.constraints) &&
     same(value.mayaAgreement.team, value.team) && value.mayaAgreement.destination === value.destination &&
     value.mayaAgreement.artifactId === value.artifactId &&
+    (value.version === 2 || typeof value.workspaceBranch === 'string' &&
+      /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(value.workspaceBranch) &&
+      value.mayaAgreement.workspaceBranch === value.workspaceBranch) &&
     typeof value.destination === 'string' && value.destination.trim() &&
     typeof value.artifactId === 'string' && value.artifactId.trim() &&
     value.team && Object.keys(value.team).length === 2 && Object.hasOwn(value.team, 'id') &&
@@ -272,9 +277,12 @@ export class MissionStore {
       agreement.goal === input.goal.trim() && same(agreement.acceptanceCriteria, acceptanceCriteria) &&
       agreement.destination === input.destination.trim() && agreement.artifactId === input.artifactId.trim() &&
       agreement.repo === input.repo && same(agreement.constraints, input.constraints ?? []) && same(agreement.team, team) &&
+      typeof input.workspaceBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(input.workspaceBranch) &&
+      agreement.workspaceBranch === input.workspaceBranch &&
       typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
     'a user-accepted Maya agreement for this exact mission is required');
-    const state = { version: 2, id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
+    const state = { version: 3, workspaceBranch: input.workspaceBranch,
+      id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
       mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,
       revisions: 0, status: 'ready', currentStage: 'susie_design', events: [], attempts: {}, inFlight: null,
@@ -309,8 +317,10 @@ export class MissionStore {
       catch { throw new Error('invalid mission checkpoint'); }
       validateState(value, id);
       if (previous) {
-        for (const key of ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
-          'constraints', 'maxAttempts', 'maxRevisions', 'createdAt']) {
+        const immutableKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
+          'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+        if (previous.version >= 3) immutableKeys.push('workspaceBranch');
+        for (const key of immutableKeys) {
           if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) throw new Error('invalid mission checkpoint');
         }
         if (value.events.length < previous.events.length ||
@@ -326,6 +336,20 @@ export class MissionStore {
       previous = value;
     }
     return value;
+  }
+
+  async list() {
+    let entries;
+    try { entries = await readdir(this.root, { withFileTypes: true }); }
+    catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+    const ids = entries.filter(entry => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map(entry => entry.name.slice(0, -6)).filter(id => idPattern.test(id)).sort();
+    const states = [];
+    for (const id of ids) states.push(await this.get(id));
+    return states.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   async save(state) {
