@@ -149,9 +149,12 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
     environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
   const destination = 'vercel-preview://jmanns-projects/astra-lab';
-  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+  const input = { ...missionInput, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
+  await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
+  await f.store.authorizePreExecutionSchemaRetry(f.mission.id, { sessionId: '01a16ed9-f8cb-73f2-836b-61c8445aa29e',
+    evidenceSha256: 'd'.repeat(64), errorCode: 'invalid_json_schema', missingField: 'artifactPath', stage: 'susie_design' });
   const samFailed = await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
     throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
   } }));
@@ -199,9 +202,12 @@ test('a user-approved 8-to-9 call extension preserves seven calls and audits Qui
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
     environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
   const destination = 'vercel-preview://jmanns-projects/astra-lab';
-  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+  const input = { ...missionInput, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
+  await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
+  await f.store.authorizePreExecutionSchemaRetry(f.mission.id, { sessionId: '01a16ed9-f8cb-73f2-836b-61c8445aa29e',
+    evidenceSha256: 'd'.repeat(64), errorCode: 'invalid_json_schema', missingField: 'artifactPath', stage: 'susie_design' });
   const samFailed = await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
     throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
   } }));
@@ -259,9 +265,12 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
     environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
   const destination = 'vercel-preview://jmanns-projects/astra-lab';
-  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+  const input = { ...missionInput, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
+  await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
+  await f.store.authorizePreExecutionSchemaRetry(f.mission.id, { sessionId: '01a16ed9-f8cb-73f2-836b-61c8445aa29e',
+    evidenceSha256: 'd'.repeat(64), errorCode: 'invalid_json_schema', missingField: 'artifactPath', stage: 'susie_design' });
   await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
     throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
   } }));

@@ -771,8 +771,8 @@ export class MissionStore {
       state.events.at(-1)?.attempt === 3 && state.events.at(-1)?.status === 'failed' &&
       state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Quinn must record functional checks' &&
       state.functionalReviewRecovery?.status === 'consumed' && state.uncertainFunctionalRetry?.status === 'consumed' &&
-      state.previewDeploymentRecovery?.status === 'consumed' && state.mayaIntakeCalls === 2 &&
-      roleCallsUsed(state) === 7 && !state.roleCallLimit && !state.finalQuinnRetry && !(await this.isCancelled(id)),
+      state.previewDeploymentRecovery?.status === 'consumed' && roleCallsUsed(state) === 7 &&
+      !state.roleCallLimit && !state.finalQuinnRetry && !(await this.isCancelled(id)),
     'mission is not eligible for the one-time approved Quinn and Susie call extension');
     assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
       'same verified browser evidence is required for the final Quinn review');
