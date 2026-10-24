@@ -132,6 +132,28 @@ test('non-retryable stage failure blocks ordinary resume from replaying uncertai
   assert.match(resumed.error, /uncertain stage failure/);
 });
 
+test('operator recovery permits one proven pre-execution Susie schema retry and preserves its failed attempt', async t => {
+  const f = await fixture(t, { ...missionInput, maxAttempts: 1 });
+  const paused = await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => {
+    throw new Error('Codex stage failed');
+  } }));
+  assert.equal(paused.status, 'blocked');
+  const proof = { sessionId: '01a16ed9-f8cb-73f2-836b-61c8445aa29e', evidenceSha256: 'a'.repeat(64),
+    errorCode: 'invalid_json_schema', missingField: 'artifactPath', stage: 'susie_design' };
+  const recovered = await f.store.authorizePreExecutionSchemaRetry(f.mission.id, proof);
+  assert.equal(recovered.status, 'ready');
+  assert.equal(recovered.maxAttempts, 1, 'accepted per-stage limit remains unchanged');
+  assert.equal(recovered.attempts['0:susie_design'], 1);
+  assert.equal(recovered.events.length, 1);
+  assert.equal(recovered.events[0].retryable, false, 'original rejection remains in the audit trail');
+  const completed = await f.runner.run(f.mission.id, successfulHandlers());
+  assert.equal(completed.status, 'accepted_preview');
+  assert.equal(completed.attempts['0:susie_design'], 2);
+  assert.deepEqual(completed.events.filter(event => event.stage === 'susie_design').map(event => event.status), ['failed', 'done']);
+  assert.equal(completed.preExecutionRecovery.status, 'consumed');
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, value) => sum + value, 0), 6);
+});
+
 test('visual review loops through implementation and functional checks within revision cap', async t => {
   const f = await fixture(t);
   const calls = [];

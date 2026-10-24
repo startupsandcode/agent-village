@@ -65,10 +65,28 @@ function same(left, right) {
 }
 
 function validateTransition(previous, next) {
+  const recoveryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    (previous.version === 5 || previous.version === 6) && next.version === 6 &&
+    next.preExecutionRecovery?.status === 'authorized' &&
+    next.preExecutionRecovery.stage === 'susie_design' && next.preExecutionRecovery.revision === previous.revisions &&
+    next.preExecutionRecovery.failedAttempt === previous.maxAttempts &&
+    next.preExecutionRecovery.retryAttempt === previous.maxAttempts + 1 &&
+    previous.mayaIntakeCalls + Object.values(previous.attempts).reduce((total, attempt) => total + attempt, 0) + 1 <=
+      MAX_MISSION_ROLE_CALLS &&
+    next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+    same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && previous.inFlight?.stage === 'susie_design' &&
+    previous.inFlight.attempt === next.preExecutionRecovery.failedAttempt &&
+    previous.events.at(-1)?.stage === 'susie_design' && previous.events.at(-1)?.status === 'failed' &&
+    previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.attempt === previous.inFlight.attempt &&
+    previous.events.at(-1)?.error === 'Codex stage failed';
   const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
+  if (previous.version === next.version) immutable.push('version');
+  else assert(recoveryGranted, 'invalid mission checkpoint transition');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
+  if (recoveryGranted) return;
   const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
   const prevAttempt = previous.attempts[stageKey] ?? 0;
@@ -79,15 +97,23 @@ function validateTransition(previous, next) {
     (previous.attempts[key] ?? 0) === (next.attempts[key] ?? 0)), 'invalid mission checkpoint transition');
 
   if (attemptDelta === 1) {
+    const recoveryAttempt = previous.preExecutionRecovery?.status === 'authorized' &&
+      previous.preExecutionRecovery.stage === previous.currentStage &&
+      previous.preExecutionRecovery.revision === previous.revisions &&
+      previous.preExecutionRecovery.retryAttempt === nextAttempt &&
+      next.preExecutionRecovery?.status === 'consumed' &&
+      same({ ...previous.preExecutionRecovery, status: 'consumed' }, next.preExecutionRecovery);
     assert(['ready', 'failed'].includes(previous.status) && previous.inFlight === null &&
       next.status === 'running' && next.currentStage === previous.currentStage &&
       next.revisions === previous.revisions && same(next.events, previous.events) &&
       next.inFlight?.stage === previous.currentStage && next.inFlight.attempt === nextAttempt &&
-      nextAttempt <= previous.maxAttempts && next.error === previous.error,
+      (nextAttempt <= previous.maxAttempts || recoveryAttempt) && next.error === previous.error &&
+      (recoveryAttempt || same(previous.preExecutionRecovery, next.preExecutionRecovery)),
     'invalid mission checkpoint transition');
     return;
   }
   assert(attemptDelta === 0, 'invalid mission checkpoint transition');
+  assert(same(previous.preExecutionRecovery, next.preExecutionRecovery), 'invalid mission checkpoint transition');
 
   const eventDelta = next.events.length - previous.events.length;
   assert(eventDelta === 0 || eventDelta === 1, 'invalid mission checkpoint transition');
@@ -186,9 +212,10 @@ function validateState(value, id) {
   if (value?.version === 3) stateKeys.push('workspaceBranch');
   if (value?.version >= 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
   if (value?.version >= 5) stateKeys.push('previewTarget');
+  if (value?.version >= 6) stateKeys.push('preExecutionRecovery');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4, 5].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5, 6].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -231,12 +258,35 @@ function validateState(value, id) {
     Object.entries(value.attempts).every(([key, attempt]) => {
       const match = /^(\d+):([a-z_]+)$/.exec(key);
       return match && stageNames.has(match[2]) && Number(match[1]) <= value.maxRevisions &&
-        Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= value.maxAttempts;
+        Number.isSafeInteger(attempt) && attempt >= 1 && (attempt <= value.maxAttempts ||
+          value.preExecutionRecovery?.stage === match[2] && value.preExecutionRecovery.revision === Number(match[1]) &&
+          attempt === value.preExecutionRecovery.retryAttempt);
     }) &&
     (value.inFlight === null || value.inFlight && Object.keys(value.inFlight).length === 2 &&
       stageNames.has(value.inFlight.stage) && Number.isSafeInteger(value.inFlight.attempt)) &&
     (value.error === null || typeof value.error === 'string') &&
     typeof value.createdAt === 'string' && typeof value.updatedAt === 'string', 'invalid mission checkpoint');
+  assert(value.version < 6 || value.preExecutionRecovery === null || value.preExecutionRecovery &&
+    Object.keys(value.preExecutionRecovery).length === 7 &&
+    ['stage', 'revision', 'failedAttempt', 'retryAttempt', 'sessionId', 'evidenceSha256', 'status']
+      .every(key => Object.hasOwn(value.preExecutionRecovery, key)) &&
+    value.preExecutionRecovery.stage === 'susie_design' &&
+    Number.isSafeInteger(value.preExecutionRecovery.revision) && value.preExecutionRecovery.revision >= 0 &&
+    value.preExecutionRecovery.revision <= value.maxRevisions &&
+    Number.isSafeInteger(value.preExecutionRecovery.failedAttempt) &&
+    value.preExecutionRecovery.failedAttempt === value.maxAttempts &&
+    value.preExecutionRecovery.retryAttempt === value.preExecutionRecovery.failedAttempt + 1 &&
+    /^[0-9a-f-]{36}$/i.test(value.preExecutionRecovery.sessionId) &&
+    /^[0-9a-f]{64}$/i.test(value.preExecutionRecovery.evidenceSha256) &&
+    ['authorized', 'consumed'].includes(value.preExecutionRecovery.status) &&
+    value.events.some(event => event.stage === value.preExecutionRecovery.stage &&
+      event.revision === value.preExecutionRecovery.revision && event.attempt === value.preExecutionRecovery.failedAttempt &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Codex stage failed') &&
+    (value.preExecutionRecovery.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === value.preExecutionRecovery.stage && value.revisions === value.preExecutionRecovery.revision &&
+      value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] === value.preExecutionRecovery.failedAttempt :
+      value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] >=
+        value.preExecutionRecovery.retryAttempt), 'invalid pre-execution recovery record');
   assert(value.events.every(event => {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
@@ -329,13 +379,14 @@ export class MissionStore {
       agreement.workspaceBranch === input.workspaceBranch &&
       typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
     'a user-accepted Maya agreement for this exact mission is required');
-    const state = { version: 5, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
+    const state = { version: 6, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
       id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
       mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
       previewTarget: input.previewTarget ? structuredClone(input.previewTarget) : null,
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,
       revisions: 0, status: 'ready', currentStage: 'susie_design', events: [], attempts: {}, inFlight: null,
-      error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      error: null, preExecutionRecovery: null,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     await mkdir(this.root, { recursive: true });
     try {
       const handle = await open(path, 'wx');
@@ -366,8 +417,9 @@ export class MissionStore {
       catch { throw new Error('invalid mission checkpoint'); }
       validateState(value, id);
       if (previous) {
-        const immutableKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
+        const immutableKeys = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+        if (!(previous.version === 5 && value.version === 6)) immutableKeys.push('version');
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
         if (previous.version >= 5) immutableKeys.push('previewTarget');
         for (const key of immutableKeys) {
@@ -427,6 +479,30 @@ export class MissionStore {
     const path = `${this.path(id)}.cancel`;
     try { const handle = await open(path, 'wx'); await handle.close(); }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
+  }
+
+  async authorizePreExecutionSchemaRetry(id, proof) {
+    const state = await this.get(id);
+    assert((state.version === 5 || state.version === 6) && state.status === 'blocked' &&
+      state.currentStage === 'susie_design' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.inFlight?.stage === 'susie_design' && state.inFlight.attempt === 1 &&
+      state.attempts['0:susie_design'] === 1 && state.events.at(-1)?.stage === 'susie_design' &&
+      state.events.at(-1)?.revision === 0 && state.events.at(-1)?.attempt === 1 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error === 'Codex stage failed' && state.events.length === 1 &&
+      !state.preExecutionRecovery && !(await this.isCancelled(id)),
+    'mission is not eligible for a definite pre-execution Susie schema retry');
+    assert(proof && proof.errorCode === 'invalid_json_schema' && proof.missingField === 'artifactPath' &&
+      proof.stage === 'susie_design' && /^[0-9a-f-]{36}$/i.test(proof.sessionId ?? '') &&
+      /^[0-9a-f]{64}$/i.test(proof.evidenceSha256 ?? ''), 'verified Codex schema rejection evidence required');
+    assert(roleCallsUsed(state) < MAX_MISSION_ROLE_CALLS, 'mission reached the eight-call Codex CLI limit');
+    state.version = 6;
+    state.preExecutionRecovery = { stage: 'susie_design', revision: 0, failedAttempt: 1, retryAttempt: 2,
+      sessionId: proof.sessionId, evidenceSha256: proof.evidenceSha256, status: 'authorized' };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
   }
 
   async isCancelled(id) {
@@ -517,12 +593,16 @@ export class MissionRunner {
         const stage = state.currentStage;
         const key = `${state.revisions}:${stage}`;
         const attempt = (state.attempts[key] ?? 0) + 1;
-        if (attempt > state.maxAttempts) {
+        const authorizedPreExecutionRetry = state.preExecutionRecovery?.status === 'authorized' &&
+          state.preExecutionRecovery.stage === stage && state.preExecutionRecovery.revision === state.revisions &&
+          state.preExecutionRecovery.retryAttempt === attempt;
+        if (attempt > state.maxAttempts && !authorizedPreExecutionRetry) {
           state.status = 'failed';
           state.error = `attempt limit reached for ${stage}`;
           return await this.store.save(state);
         }
         assert(typeof handlers[stage] === 'function', `handler required for ${stage}`);
+        if (authorizedPreExecutionRetry) state.preExecutionRecovery.status = 'consumed';
         state.status = 'running';
         state.attempts[key] = attempt;
         state.inFlight = { stage, attempt };

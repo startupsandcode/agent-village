@@ -14,6 +14,7 @@ import { createMissionRuntime } from './mission-runtime.mjs';
 import { configuredVercelPreviewTargets, validateVercelPreviewTarget,
   vercelPreviewDestination } from './vercel-preview-deployer.mjs';
 import { reserveMissionIntakeCall } from './mission-budget.mjs';
+import { verifyCodexSchemaRejection } from './mission-preexecution-recovery.mjs';
 import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
   readWorkspaceLease, reserveWorkspaceMission, updateWorkspaceMission, workspaceStateRoot,
   recordMissionWorkerError } from './mission-background.mjs';
@@ -139,6 +140,27 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     return { id: args[0], status: 'cancellation_requested' };
   }
   requireValue(paths.workspace, 'set VILLAGE_MISSION_WORKSPACE to a clean startupsandcode/agent-village feature branch');
+  if (command === 'retry-preflight') {
+    requireValue(args.length === 2, 'retry-preflight <mission-id> <Codex-session-log> required');
+    const [id, sessionPath] = args;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+    const state = await store.get(id);
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; return to the original branch before recovery');
+    const proof = await verifyCodexSchemaRejection({ sessionPath, mission: state, workspacePath: workspace.root, codexHome: env.CODEX_HOME });
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id, feed });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker &&
+      lease && lease.missionId === id && lease.storeRoot === paths.root && lease.branch === workspace.branch &&
+      Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid &&
+      !backgroundStatus.reservation.processAlive,
+    'mission worker or workspace reservation is not safely stopped for pre-execution recovery');
+    const recovered = await store.authorizePreExecutionSchemaRetry(id, proof);
+    return { id, status: recovered.status, retryStage: recovered.currentStage,
+      priorFailureRetained: recovered.events.at(-1)?.status === 'failed',
+      roleCallsReserved: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((total, attempt) => total + attempt, 0) };
+  }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
@@ -225,7 +247,10 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     }
     requireValue(!backgroundStatus.worker, 'a stale background worker lock remains; inspect and reconcile before resuming');
     const durableWorkerError = backgroundStatus.workerError || backgroundStatus.notifications.some(event => event.kind === 'worker_error');
-    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' && !durableWorkerError) {
+    const provenPreExecutionRecovery = state.preExecutionRecovery?.status === 'authorized' &&
+      state.preExecutionRecovery.stage === 'susie_design' && state.currentStage === 'susie_design';
+    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' &&
+        !durableWorkerError && !provenPreExecutionRecovery) {
       throw new Error('a queued mission reservation has no live worker; inspect status and reconcile before relaunching');
     }
     const lease = activeReservation ?? await reserveWorkspaceMission({ root: lockRoot, missionId: id,
@@ -240,7 +265,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

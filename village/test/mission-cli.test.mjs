@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { main } from '../mission-cli.mjs';
-import { MissionStore } from '../mission-runner.mjs';
-import { MissionNotificationFeed, recordMissionWorkerError, workspaceStateRoot } from '../mission-background.mjs';
+import { MissionRunner, MissionStore } from '../mission-runner.mjs';
+import { MissionNotificationFeed, recordMissionWorkerError, reserveWorkspaceMission, updateWorkspaceMission,
+  workspaceStateRoot } from '../mission-background.mjs';
 
 const execFileAsync = promisify(execFile);
 const artifactId = 'local-preview-artifact-46';
@@ -22,6 +23,60 @@ const guide = { concept: 'An editorial volunteer invitation with a people-first 
     altStrategy: 'Describe informative images; leave decorative images with empty alt.' },
   interactions: ['Every field has a persistent label and visible error state.', 'Keyboard focus remains visible and confirmation is announced.'],
   references: ['Editorial service design'] };
+
+test('retry-preflight requires exact local provider evidence and resumes the same accepted mission', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-mission-preflight-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await execFileAsync('git', ['init', '-b', 'mission-preflight-retry'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'remote.origin.url', 'https://github.com/startupsandcode/agent-village.git'], { cwd: workspace });
+  const home = join(root, 'mission-home');
+  const storeRoot = join(home, 'missions');
+  const missionId = 'retry-preflight-cli';
+  const missionGoal = 'Build a bounded, local-first mission demo.';
+  const criteria = ['Keep the artifact local to the mission folder.', 'Show the agreed role sequence clearly.', 'Render accessibly on narrow screens.'];
+  const roleTeam = { id: 'design-led-single-team', roles: { design: 'susie', build: 'sam', functional_review: 'quinn', visual_review: 'susie' } };
+  const constraints = ['No paid services'];
+  const store = new MissionStore(storeRoot);
+  await store.create({ id: missionId, repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preflight-retry',
+    goal: missionGoal, acceptanceCriteria: criteria, destination: 'https://preview.example.test', artifactId,
+    constraints, team: roleTeam, maxAttempts: 1, maxRevisions: 0,
+    mayaAgreement: { proposalId: 'maya-preflight', summary: 'One bounded test preview.', acceptedByUser: true,
+      acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preflight-retry',
+      goal: missionGoal, acceptanceCriteria: criteria, destination: 'https://preview.example.test', artifactId, constraints, team: roleTeam } });
+  const failed = await new MissionRunner(store).run(missionId, { susie_design: async () => { throw new Error('Codex stage failed'); } });
+  assert.equal(failed.status, 'blocked');
+
+  const codexHome = join(root, '.codex');
+  const sessionId = '01a16ed9-f8cb-73f2-836b-61c8445aa29e';
+  const sessionDirectory = join(codexHome, 'sessions', '2026', '10', '24');
+  await mkdir(sessionDirectory, { recursive: true });
+  const sessionPath = join(sessionDirectory, `rollout-2026-10-24T12-59-01-${sessionId}.jsonl`);
+  const providerError = { error: { code: 'invalid_json_schema', param: 'text.format.schema',
+    message: "Invalid schema for response_format 'codex_output_schema': 'schema.required' is required to include every key in properties. Missing 'artifactPath'." }, status: 400 };
+  const session = [
+    { type: 'session_meta', payload: { session_id: sessionId, cwd: workspace } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text',
+      text: `You are Susie, the product designer. Mission ${missionId}; artifact ${artifactId}.` }] } },
+    { type: 'event_msg', payload: { type: 'task_complete', error: { message: JSON.stringify(providerError) } } },
+  ];
+  await writeFile(sessionPath, `${session.map(record => JSON.stringify(record)).join('\n')}\n`);
+  const lockRoot = workspaceStateRoot(home, workspace);
+  const lease = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-preflight-retry' });
+  await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: 2147483647 });
+  const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace, CODEX_HOME: codexHome };
+  const recovered = await main(['retry-preflight', missionId, sessionPath], { env });
+  assert.equal(recovered.status, 'ready');
+  assert.equal(recovered.priorFailureRetained, true);
+  assert.equal(recovered.roleCallsReserved, 2);
+  const resumed = await main(['resume', missionId], { env, spawnWorker: async () => ({ pid: 2147483646 }) });
+  assert.equal(resumed.status, 'queued');
+  const checkpoint = await store.get(missionId);
+  assert.equal(checkpoint.events.length, 1);
+  assert.equal(checkpoint.events[0].retryable, false);
+  assert.equal(checkpoint.preExecutionRecovery.status, 'authorized');
+});
 
 test('start runs mocked roles in order and accepts only a real rendered local preview', async t => {
   const root = await mkdtemp(join(tmpdir(), 'village-mission-cli-'));
