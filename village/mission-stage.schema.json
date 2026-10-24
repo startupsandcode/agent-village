@@ -42,7 +42,7 @@
     "artifactPath": { "anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] },
     "functionalChecks": {
       "type": "array", "maxItems": 24,
-      "description": "Quinn must include at least one concise check, including the failed or unverified criterion if blocked. Other roles use an empty array.",
+      "description": "Quinn must include concise functional checks. For blocked or needs_revision, include actionable criterion, observed result, and expected result or verification limitation; status alone is not a reason. These checks are retained in owner-visible mission status, so omit credentials, session data, URLs, local paths, and unrelated private content. Other roles use an empty array.",
       "items": { "type": "string", "minLength": 1, "maxLength": 500 }
     },
     "visualFindings": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }

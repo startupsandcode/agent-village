@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MissionRunner, MissionStore } from '../mission-runner.mjs';
+import { MissionCodexHandlers } from '../mission-codex.mjs';
 
 const goal = 'Build a polished volunteer signup preview';
 const acceptanceCriteria = ['The volunteer opportunity can be understood at a glance.',
@@ -100,6 +101,24 @@ test('stage failure is checkpointed and retries only up to the configured attemp
   assert.equal(attempts, 2);
   assert.equal(result.events.filter(event => event.stage === 'susie_design').length, 2);
   assert.equal(result.events.at(-1).error, 'designer runtime failed');
+});
+
+test('Quinn blocked findings are durably visible to the mission owner without sensitive spill', async t => {
+  const f = await fixture(t);
+  const quinn = new MissionCodexHandlers({ workspacePath: 'C:/workspace', codex: { async runStructured() {
+    return { stage: 'quinn_functional', status: 'blocked', artifactId: 'artifact-46',
+      evidence: ['Private role evidence must not be copied into the owner diagnostic.'], designGuide: null,
+      previewUrl: null, artifactPath: null,
+      functionalChecks: ['Keyboard cancellation check failed: cancel remained enabled after activation. Bearer secret-token-value'],
+      visualFindings: [] };
+  } } }).handlers().quinn_functional;
+  const result = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: quinn }));
+  assert.equal(result.status, 'blocked');
+  assert.match(result.error, /Keyboard cancellation check failed: cancel remained enabled/);
+  assert.equal(result.error, result.events.at(-1).error);
+  assert.doesNotMatch(result.error, /secret-token-value|Private role evidence/);
+  assert.equal(result.events.at(-1).status, 'failed');
+  assert.equal(result.currentStage, 'quinn_functional');
 });
 
 test('one evidence-backed Quinn retry preserves the blocked review and stays inside the mission call cap', async t => {

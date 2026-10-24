@@ -62,3 +62,22 @@ test('local Office mission loader reads worker errors from the configured notifi
   const result = await loader();
   assert.equal(result.items[0].needsAttention, true);
 });
+
+test('local Office mission projection surfaces only a bounded redacted Quinn review reason', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'office-mission-review-reason-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const blocked = { ...mission, status: 'blocked', currentStage: 'quinn_functional',
+    error: 'Quinn review did not approve (status=blocked); findings: Retry control remained enabled.',
+    events: [{ stage: 'quinn_functional', status: 'failed', error: 'Quinn review did not approve (status=blocked); findings: Retry control remained enabled after cancel. Bearer private-token https://private.example.test C:\\secret\\result.json person@example.test' }] };
+  const loader = createMissionLoader({ root: join(root, 'missions'), notificationsRoot: join(root, 'notifications'),
+    store: { async list() { return [blocked]; } } });
+  const result = await loader();
+  assert.equal(result.items[0].attentionReason,
+    'Quinn review did not approve (status=blocked); findings: Retry control remained enabled after cancel. Bearer [redacted] [url] [path] [email]');
+  assert.ok(result.items[0].attentionReason.length <= 500);
+  assert.equal(JSON.stringify(result.items).includes('private-token'), false);
+  assert.equal(JSON.stringify(result.items).includes('private.example.test'), false);
+  assert.equal(JSON.stringify(result.items).includes('secret\\result.json'), false);
+  assert.equal(JSON.stringify(result.items).includes('person@example.test'), false);
+  assert.equal(JSON.stringify(result.items).includes('private stage payload'), false);
+});
