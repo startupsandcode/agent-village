@@ -111,14 +111,33 @@ function validateTransition(previous, next) {
     next.functionalReviewRecovery?.status === 'authorized' && next.functionalReviewRecovery.stage === 'quinn_functional' &&
     next.functionalReviewRecovery.revision === 0 && next.functionalReviewRecovery.failedAttempt === 1 &&
     next.functionalReviewRecovery.retryAttempt === 2;
+  const uncertainFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 8 && next.version === 9 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 2 && previous.attempts['0:quinn_functional'] === 2 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.revision === 0 &&
+    previous.events.at(-1)?.attempt === 2 && previous.events.at(-1)?.status === 'failed' &&
+    previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.error === 'Codex stage failed' &&
+    previous.functionalReviewRecovery?.status === 'consumed' && previous.functionalReviewRecovery.retryAttempt === 2 &&
+    previous.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+    roleCallsUsed(previous) + 2 <= MAX_MISSION_ROLE_CALLS &&
+    next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+    same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && next.uncertainFunctionalRetry?.status === 'authorized' &&
+    next.uncertainFunctionalRetry.stage === 'quinn_functional' && next.uncertainFunctionalRetry.revision === 0 &&
+    next.uncertainFunctionalRetry.failedAttempt === 2 && next.uncertainFunctionalRetry.retryAttempt === 3 &&
+    next.uncertainFunctionalRetry.operatorApproved === true &&
+    next.uncertainFunctionalRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256;
   const immutable = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
   if (previous.version === next.version) immutable.push('version');
-  else assert(recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted, 'invalid mission checkpoint transition');
+  else assert(recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted,
+    'invalid mission checkpoint transition');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
-  if (recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted) return;
-  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error', 'previewDeploymentRecovery', 'functionalReviewRecovery'];
+  if (recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted) return;
+  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error', 'previewDeploymentRecovery',
+    'functionalReviewRecovery', 'uncertainFunctionalRetry'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
   const prevAttempt = previous.attempts[stageKey] ?? 0;
   const nextAttempt = next.attempts[stageKey] ?? 0;
@@ -140,13 +159,21 @@ function validateTransition(previous, next) {
       previous.functionalReviewRecovery.retryAttempt === nextAttempt && nextAttempt === 2 &&
       next.functionalReviewRecovery?.status === 'consumed' &&
       same({ ...previous.functionalReviewRecovery, status: 'consumed' }, next.functionalReviewRecovery);
+    const uncertainFunctionalRetry = previous.uncertainFunctionalRetry?.status === 'authorized' &&
+      previous.uncertainFunctionalRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.uncertainFunctionalRetry.revision === previous.revisions &&
+      previous.uncertainFunctionalRetry.retryAttempt === nextAttempt && nextAttempt === 3 &&
+      next.uncertainFunctionalRetry?.status === 'consumed' &&
+      same({ ...previous.uncertainFunctionalRetry, status: 'consumed' }, next.uncertainFunctionalRetry);
     assert(['ready', 'failed'].includes(previous.status) && previous.inFlight === null &&
       next.status === 'running' && next.currentStage === previous.currentStage &&
       next.revisions === previous.revisions && same(next.events, previous.events) &&
       next.inFlight?.stage === previous.currentStage && next.inFlight.attempt === nextAttempt &&
-      (nextAttempt <= previous.maxAttempts || recoveryAttempt || functionalRetry) && next.error === previous.error &&
+      (nextAttempt <= previous.maxAttempts || recoveryAttempt || functionalRetry || uncertainFunctionalRetry) &&
+      next.error === previous.error &&
       (recoveryAttempt || same(previous.preExecutionRecovery, next.preExecutionRecovery)) &&
-      (functionalRetry || same(previous.functionalReviewRecovery, next.functionalReviewRecovery)),
+      (functionalRetry || same(previous.functionalReviewRecovery, next.functionalReviewRecovery)) &&
+      (uncertainFunctionalRetry || same(previous.uncertainFunctionalRetry, next.uncertainFunctionalRetry)),
     'invalid mission checkpoint transition');
     return;
   }
@@ -253,9 +280,10 @@ function validateState(value, id) {
   if (value?.version >= 6) stateKeys.push('preExecutionRecovery');
   if (value?.version >= 7) stateKeys.push('previewDeploymentRecovery');
   if (value?.version >= 8) stateKeys.push('functionalReviewRecovery');
+  if (value?.version >= 9) stateKeys.push('uncertainFunctionalRetry');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4, 5, 6, 7, 8].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5, 6, 7, 8, 9].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -302,7 +330,9 @@ function validateState(value, id) {
           value.preExecutionRecovery?.stage === match[2] && value.preExecutionRecovery.revision === Number(match[1]) &&
           attempt === value.preExecutionRecovery.retryAttempt ||
           value.functionalReviewRecovery?.stage === match[2] && value.functionalReviewRecovery.revision === Number(match[1]) &&
-          attempt === value.functionalReviewRecovery.retryAttempt);
+          attempt === value.functionalReviewRecovery.retryAttempt ||
+          value.uncertainFunctionalRetry?.stage === match[2] && value.uncertainFunctionalRetry.revision === Number(match[1]) &&
+          attempt === value.uncertainFunctionalRetry.retryAttempt);
     }) &&
     (value.inFlight === null || value.inFlight && Object.keys(value.inFlight).length === 2 &&
       stageNames.has(value.inFlight.stage) && Number.isSafeInteger(value.inFlight.attempt)) &&
@@ -361,6 +391,24 @@ function validateState(value, id) {
     (value.functionalReviewRecovery.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
       value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 1 :
       value.attempts['0:quinn_functional'] >= 2), 'invalid functional review retry record');
+  assert(value.version < 9 || value.uncertainFunctionalRetry === null || value.uncertainFunctionalRetry &&
+    Object.keys(value.uncertainFunctionalRetry).length === 8 &&
+    ['stage', 'revision', 'failedAttempt', 'retryAttempt', 'evidenceSha256', 'operatorApproved', 'status', 'authorizedAt']
+      .every(key => Object.hasOwn(value.uncertainFunctionalRetry, key)) &&
+    value.uncertainFunctionalRetry.stage === 'quinn_functional' && value.uncertainFunctionalRetry.revision === 0 &&
+    value.uncertainFunctionalRetry.failedAttempt === 2 && value.uncertainFunctionalRetry.retryAttempt === 3 &&
+    /^[a-f0-9]{64}$/.test(value.uncertainFunctionalRetry.evidenceSha256) &&
+    value.uncertainFunctionalRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.uncertainFunctionalRetry.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.uncertainFunctionalRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.uncertainFunctionalRetry.status) &&
+    value.events.some(event => event.stage === 'quinn_functional' && event.revision === 0 && event.attempt === 1 &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Quinn must record functional checks') &&
+    value.events.some(event => event.stage === 'quinn_functional' && event.revision === 0 && event.attempt === 2 &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Codex stage failed') &&
+    (value.uncertainFunctionalRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 2 :
+      value.attempts['0:quinn_functional'] >= 3), 'invalid uncertain functional retry record');
   assert(value.events.every(event => {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
@@ -494,7 +542,7 @@ export class MissionStore {
         const immutableKeys = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
         if (!((previous.version === 5 && value.version === 6) || (previous.version === 6 && value.version === 7) ||
-          (previous.version === 7 && value.version === 8))) immutableKeys.push('version');
+          (previous.version === 7 && value.version === 8) || (previous.version === 8 && value.version === 9))) immutableKeys.push('version');
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
         if (previous.version >= 5) immutableKeys.push('previewTarget');
         for (const key of immutableKeys) {
@@ -641,6 +689,32 @@ export class MissionStore {
     return await this.save(state);
   }
 
+  async authorizeUncertainFunctionalRetry(id, evidence, { operatorApproved = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for an uncertain Quinn retry');
+    assert(state.version === 8 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 2 && state.attempts['0:quinn_functional'] === 2 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 2 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Codex stage failed' &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.functionalReviewRecovery.retryAttempt === 2 &&
+      state.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+      !(await this.isCancelled(id)), 'mission is not eligible for an operator-approved uncertain Quinn retry');
+    assert(roleCallsUsed(state) + 2 <= MAX_MISSION_ROLE_CALLS,
+      'mission cannot reserve one Quinn call and one final Susie visual review within the eight-call limit');
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the uncertain Quinn retry');
+    state.version = 9;
+    state.uncertainFunctionalRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 2, retryAttempt: 3,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized',
+      authorizedAt: new Date().toISOString() };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
   async isCancelled(id) {
     try { await readFile(`${this.path(id)}.cancel`); return true; }
     catch (error) { if (error.code === 'ENOENT') return false; throw error; }
@@ -735,7 +809,11 @@ export class MissionRunner {
         const authorizedFunctionalRetry = state.functionalReviewRecovery?.status === 'authorized' &&
           state.functionalReviewRecovery.stage === stage && state.functionalReviewRecovery.revision === state.revisions &&
           state.functionalReviewRecovery.retryAttempt === attempt;
-        if (attempt > state.maxAttempts && !authorizedPreExecutionRetry && !authorizedFunctionalRetry) {
+        const authorizedUncertainFunctionalRetry = state.uncertainFunctionalRetry?.status === 'authorized' &&
+          state.uncertainFunctionalRetry.stage === stage && state.uncertainFunctionalRetry.revision === state.revisions &&
+          state.uncertainFunctionalRetry.retryAttempt === attempt;
+        if (attempt > state.maxAttempts && !authorizedPreExecutionRetry && !authorizedFunctionalRetry &&
+            !authorizedUncertainFunctionalRetry) {
           state.status = 'failed';
           state.error = `attempt limit reached for ${stage}`;
           return await this.store.save(state);
@@ -743,6 +821,7 @@ export class MissionRunner {
         assert(typeof handlers[stage] === 'function', `handler required for ${stage}`);
         if (authorizedPreExecutionRetry) state.preExecutionRecovery.status = 'consumed';
         if (authorizedFunctionalRetry) state.functionalReviewRecovery.status = 'consumed';
+        if (authorizedUncertainFunctionalRetry) state.uncertainFunctionalRetry.status = 'consumed';
         state.status = 'running';
         state.attempts[key] = attempt;
         state.inFlight = { stage, attempt };

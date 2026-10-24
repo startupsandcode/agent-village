@@ -24,6 +24,11 @@ const guide = { concept: 'An editorial volunteer invitation with a people-first 
   interactions: ['Every field has a persistent label and visible error state.', 'Keyboard focus remains visible and confirmation is announced.'],
   references: ['Editorial service design'] };
 
+test('uncertain functional retry requires the explicit approval flag before loading a mission', async () => {
+  await assert.rejects(() => main(['retry-functional-uncertain', 'mission-46'], { env: {} }),
+    /retry-functional-uncertain <mission-id> --operator-approved-uncertain-outcome/);
+});
+
 test('preview evidence URL comparison accepts only equivalent clean HTTP(S) locations', () => {
   assert.equal(samePreviewUrl('https://astra.example.test', 'https://astra.example.test/'), true);
   assert.equal(samePreviewUrl('https://astra.example.test/path/', 'https://astra.example.test/path'), true);
