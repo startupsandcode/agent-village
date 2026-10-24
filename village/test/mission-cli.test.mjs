@@ -29,6 +29,11 @@ test('uncertain functional retry requires the explicit approval flag before load
     /retry-functional-uncertain <mission-id> --operator-approved-uncertain-outcome/);
 });
 
+test('final review call increase requires the explicit user-approved 8-to-9 flag before loading a mission', async () => {
+  await assert.rejects(() => main(['increase-final-review-cap', 'mission-46'], { env: {} }),
+    /increase-final-review-cap <mission-id> --user-approved-8-to-9/);
+});
+
 test('preview evidence URL comparison accepts only equivalent clean HTTP(S) locations', () => {
   assert.equal(samePreviewUrl('https://astra.example.test', 'https://astra.example.test/'), true);
   assert.equal(samePreviewUrl('https://astra.example.test/path/', 'https://astra.example.test/path'), true);

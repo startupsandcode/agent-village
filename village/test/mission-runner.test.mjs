@@ -195,6 +195,106 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 8);
 });
 
+test('a user-approved 8-to-9 call extension preserves seven calls and audits Quinn before Susie', async t => {
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+    mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
+  const f = await fixture(t, input);
+  const samFailed = await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
+    throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+  } }));
+  assert.equal(samFailed.status, 'blocked');
+  await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
+    artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
+    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
+  const first = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  const evidence = { evidenceSha256: 'a'.repeat(64),
+    functionalChecks: ['HTTP 200', 'artifact identity matches', 'retry state one', 'retry state two',
+      'retry limit disables control', 'cancel disables attempts', 'reset restores initial state'],
+    screenshotRefs: { desktop: `sha256:${'b'.repeat(64)}`, narrow: `sha256:${'c'.repeat(64)}` } };
+  await f.store.authorizeFunctionalReviewRetry(f.mission.id, evidence);
+  const second = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Codex stage failed');
+  } }));
+  await f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence, { operatorApproved: true });
+  const third = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  assert.equal(first.status, 'blocked');
+  assert.equal(second.status, 'blocked');
+  assert.equal(third.status, 'blocked');
+  assert.equal(third.mayaIntakeCalls + Object.values(third.attempts).reduce((sum, attempt) => sum + attempt, 0), 7);
+  const previousEvents = structuredClone(third.events);
+  await assert.rejects(f.store.authorizeFinalFunctionalReviewRetry(f.mission.id, evidence), /explicit operator approval/);
+  const authorized = await f.store.authorizeFinalFunctionalReviewRetry(f.mission.id, evidence, { operatorApproved: true });
+  assert.equal(authorized.status, 'ready');
+  assert.equal(authorized.version, 10);
+  assert.equal(authorized.roleCallLimit, 9);
+  assert.equal(authorized.roleCallLimitIncrease.previousLimit, 8);
+  assert.equal(authorized.roleCallLimitIncrease.newLimit, 9);
+  assert.equal(authorized.finalQuinnRetry.status, 'authorized');
+  assert.deepEqual(authorized.events, previousEvents);
+  assert.equal(authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0), 7);
+  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const completed = await f.runner.run(f.mission.id, successfulHandlers({
+    susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the desktop and narrow renders.'],
+      artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
+      output: { kind: 'visual_review', decision: 'approved', findings: [] } }),
+  }));
+  assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
+  assert.deepEqual(completed.events.filter(event => event.stage === 'quinn_functional').map(event => event.status),
+    ['failed', 'failed', 'failed', 'done']);
+  assert.equal(completed.attempts['0:quinn_functional'], 4);
+  assert.equal(completed.attempts['0:susie_visual'], 1);
+  assert.equal(completed.finalQuinnRetry.status, 'consumed');
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 9);
+});
+
+test('a failed final Quinn retry blocks before consuming the reserved Susie call', async t => {
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+    mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
+  const f = await fixture(t, input);
+  await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
+    throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+  } }));
+  await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
+    artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
+    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
+  const evidence = { evidenceSha256: 'a'.repeat(64), functionalChecks: ['one', 'two', 'three', 'four', 'five', 'six'],
+    screenshotRefs: { desktop: `sha256:${'b'.repeat(64)}`, narrow: `sha256:${'c'.repeat(64)}` } };
+  await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  await f.store.authorizeFunctionalReviewRetry(f.mission.id, evidence);
+  await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => { throw new Error('Codex stage failed'); } }));
+  await f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence, { operatorApproved: true });
+  await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  await f.store.authorizeFinalFunctionalReviewRetry(f.mission.id, evidence, { operatorApproved: true });
+  let visualCalls = 0;
+  const blocked = await f.runner.run(f.mission.id, successfulHandlers({
+    quinn_functional: async () => { throw new Error('Quinn review did not approve (status=needs_revision)'); },
+    susie_visual: async () => { visualCalls++; throw new Error('Susie must not run after Quinn failure'); },
+  }));
+  assert.equal(blocked.status, 'blocked');
+  assert.match(blocked.error, /needs_revision/);
+  assert.equal(blocked.attempts['0:quinn_functional'], 4);
+  assert.equal(blocked.attempts['0:susie_visual'], undefined);
+  assert.equal(visualCalls, 0);
+  assert.equal(blocked.finalQuinnRetry.status, 'consumed');
+  assert.equal(blocked.mayaIntakeCalls + Object.values(blocked.attempts).reduce((sum, attempt) => sum + attempt, 0), 8);
+});
+
 test('confirmed retryable failure can resume from its durable checkpoint without replaying uncertain outcomes', async t => {
   const f = await fixture(t);
   const ready = await f.store.get(f.mission.id);
