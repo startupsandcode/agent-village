@@ -64,7 +64,15 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
   await writeFile(sessionPath, `${session.map(record => JSON.stringify(record)).join('\n')}\n`);
   const lockRoot = workspaceStateRoot(home, workspace);
   const lease = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-preflight-retry' });
-  await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: 2147483647 });
+  const deadWorker = await import('node:child_process').then(({ spawn }) => spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }));
+  await new Promise((resolve, reject) => {
+    deadWorker.once('error', reject);
+    deadWorker.once('spawn', resolve);
+  });
+  const deadPid = deadWorker.pid;
+  deadWorker.kill();
+  await new Promise(resolve => deadWorker.once('exit', resolve));
+  await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: deadPid });
   const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace, CODEX_HOME: codexHome };
   const recovered = await main(['retry-preflight', missionId, sessionPath], { env });
   assert.equal(recovered.status, 'ready');
