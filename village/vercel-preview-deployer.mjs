@@ -287,7 +287,7 @@ export class VercelCliClient {
 
   async inspect(deploymentId, { teamId }) {
     requireValue((/^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) ||
-      (typeof deploymentId === 'string' && /^https:\/\/[a-z0-9.-]+\.vercel\.app\/?$/i.test(deploymentId))) &&
+      (typeof deploymentId === 'string' && /^(?:https:\/\/)?[a-z0-9.-]+\.vercel\.app\/?$/i.test(deploymentId))) &&
       /^team_[A-Za-z0-9]{8,}$/.test(teamId), 'deployment reference and team IDs are required for read-only inspection');
     const cliDetails = parseCliJson(await this.run(['inspect', deploymentId, '--scope', teamId, '--json', '--no-color', '--non-interactive'],
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment inspection');

@@ -95,7 +95,7 @@ test('Vercel inspect combines CLI preview state with read-only API project and a
         villageArtifactId: baseMission.artifactId, villageArtifactSha256: 'a'.repeat(64) },
       oidcTokenClaims: { owner_id: teamId, environment: 'preview' } });
   } });
-  const previewRef = 'https://astra-abc-jmanns-projects.vercel.app';
+  const previewRef = 'astra-abc-jmanns-projects.vercel.app';
   const details = await client.inspect(previewRef, { teamId });
   assert.equal(details.projectId, projectId);
   assert.equal(details.teamId, teamId);
