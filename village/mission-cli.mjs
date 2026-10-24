@@ -68,6 +68,14 @@ export async function inspectMissionWorkspace(workspacePath, { requireClean = fa
   return { root, branch, remote };
 }
 
+export async function inspectMissionWorkerWorkspace(workspacePath, mission) {
+  requireValue(mission && typeof mission.id === 'string' && /^[a-z0-9][a-z0-9-]{2,79}$/.test(mission.id),
+    'mission identity required for worker workspace inspection');
+  return mission.previewDeploymentRecovery?.status === 'consumed' ?
+    await inspectMissionWorkspace(workspacePath, { allowedUntrackedRoot: `validation/${mission.id}` }) :
+    await inspectMissionWorkspace(workspacePath, { requireClean: true });
+}
+
 export function missionPaths(env = process.env) {
   const home = resolve(env.VILLAGE_MISSION_HOME || join(homedir(), '.agent-village'));
   const root = resolve(env.VILLAGE_MISSION_ROOT || join(home, 'missions'));

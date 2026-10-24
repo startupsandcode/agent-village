@@ -17,11 +17,11 @@ async function main() {
   const leaseToken = process.env.VILLAGE_MISSION_LEASE_TOKEN;
   if (!storeRoot || !evidenceRoot || !workspacePath || !workspaceStateRoot || !leaseToken) throw new Error('mission worker paths and workspace reservation are not configured');
   const expectedBranch = process.env.VILLAGE_MISSION_EXPECTED_BRANCH;
-  const { inspectMissionWorkspace } = await import('./mission-cli.mjs');
-  const workspace = await inspectMissionWorkspace(workspacePath, { requireClean: true });
-  if (!expectedBranch || workspace.branch !== expectedBranch) throw new Error('mission workspace branch changed before background execution');
   const store = new MissionStore(storeRoot);
   const mission = await store.get(missionId);
+  const { inspectMissionWorkerWorkspace } = await import('./mission-cli.mjs');
+  const workspace = await inspectMissionWorkerWorkspace(workspacePath, mission);
+  if (!expectedBranch || workspace.branch !== expectedBranch) throw new Error('mission workspace branch changed before background execution');
   if (mission.workspaceBranch !== workspace.branch) throw new Error('mission branch no longer matches its accepted checkpoint');
   const notificationsRoot = process.env.VILLAGE_MISSION_NOTIFICATIONS_ROOT || join(storeRoot, '.notifications');
   const feed = new MissionNotificationFeed(notificationsRoot);

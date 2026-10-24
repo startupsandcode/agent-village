@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { main } from '../mission-cli.mjs';
+import { inspectMissionWorkerWorkspace, main } from '../mission-cli.mjs';
 import { MissionRunner, MissionStore } from '../mission-runner.mjs';
 import { MissionNotificationFeed, recordMissionWorkerError, reserveWorkspaceMission, updateWorkspaceMission,
   isMissionProcessAlive, workspaceStateRoot } from '../mission-background.mjs';
@@ -23,6 +23,22 @@ const guide = { concept: 'An editorial volunteer invitation with a people-first 
     altStrategy: 'Describe informative images; leave decorative images with empty alt.' },
   interactions: ['Every field has a persistent label and visible error state.', 'Keyboard focus remains visible and confirmation is announced.'],
   references: ['Editorial service design'] };
+
+test('mission worker permits only the reconciled mission output folder to remain untracked', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-worker-workspace-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  await mkdir(join(workspace, 'validation', 'worker-preview-46'), { recursive: true });
+  await writeFile(join(workspace, 'validation', 'worker-preview-46', 'index.html'), 'mission artifact');
+  await execFileAsync('git', ['init', '-b', 'worker-preview-branch'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'remote.origin.url', 'https://github.com/startupsandcode/agent-village.git'], { cwd: workspace });
+  const mission = { id: 'worker-preview-46', previewDeploymentRecovery: { status: 'consumed' } };
+  const inspected = await inspectMissionWorkerWorkspace(workspace, mission);
+  assert.equal(inspected.branch, 'worker-preview-branch');
+  await writeFile(join(workspace, 'unrelated.txt'), 'preserve me');
+  await assert.rejects(inspectMissionWorkerWorkspace(workspace, mission), /only untracked validation\/worker-preview-46/);
+  await assert.rejects(inspectMissionWorkerWorkspace(workspace, { ...mission, previewDeploymentRecovery: null }), /clean before it starts or resumes/);
+});
 
 test('retry-preflight requires exact local provider evidence and resumes the same accepted mission', async t => {
   const root = await mkdtemp(join(tmpdir(), 'village-mission-preflight-cli-'));
