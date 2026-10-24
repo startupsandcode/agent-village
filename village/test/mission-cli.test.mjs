@@ -188,3 +188,32 @@ test('a worker launch failure is durably recorded and permits a safe resume retr
   assert.equal(resumed.status, 'queued');
   assert.equal(resumed.workerPid, 9876);
 });
+
+test('Maya clarification calls consume the same durable eight-call budget before mission acceptance', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-mission-intake-budget-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  const fs = await import('node:fs/promises');
+  await fs.mkdir(workspace);
+  await execFileAsync('git', ['init', '-b', 'mission-intake-budget-46'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'remote.origin.url', 'https://github.com/startupsandcode/agent-village.git'], { cwd: workspace });
+  await writeFile(join(workspace, 'seed.txt'), 'seed');
+  await execFileAsync('git', ['add', 'seed.txt'], { cwd: workspace });
+  await execFileAsync('git', ['-c', 'user.name=Mission Test', '-c', 'user.email=mission@example.test', 'commit', '-m', 'Seed'], { cwd: workspace });
+  const missions = join(root, 'missions');
+  const input = join(root, 'mission.json');
+  await writeFile(input, JSON.stringify({ id: 'maya-budget-46', goal: 'Build a reviewed local preview.',
+    destination: 'http://127.0.0.1:3000/preview', artifactId: 'maya-budget-46' }));
+  let calls = 0;
+  const options = { env: { VILLAGE_MISSION_WORKSPACE: workspace, VILLAGE_MISSION_ROOT: missions,
+    VILLAGE_MISSION_HOME: join(root, 'home') },
+    codex: { async runStructured() { calls++; return { status: 'needs_user', summary: 'Clarification is required.',
+      acceptanceCriteria: [], questions: ['Which audience should this preview address?'] }; } } };
+  for (let index = 0; index < 8; index++) {
+    assert.equal((await main(['start', input], options)).status, 'needs_user');
+  }
+  await assert.rejects(() => main(['start', input], options), /8-call Codex CLI limit/);
+  assert.equal(calls, 8, 'the ninth intake does not call Codex');
+  const ledger = JSON.parse(await fs.readFile(join(missions, '.intake-calls', 'maya-budget-46.json'), 'utf8'));
+  assert.equal(ledger.calls, 8);
+});

@@ -11,6 +11,7 @@ import { CodexRunner } from './codex-runner.mjs';
 import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
+import { reserveMissionIntakeCall } from './mission-budget.mjs';
 import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
   readWorkspaceLease, reserveWorkspaceMission, updateWorkspaceMission, workspaceStateRoot,
   recordMissionWorkerError } from './mission-background.mjs';
@@ -136,6 +137,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       requireValue(!storedMissions.some(state => state.id === input.id), 'mission id already exists; use its existing checkpoint instead of asking Maya again');
       const active = storedMissions.find(state => !['accepted_preview', 'cancelled'].includes(state.status));
       requireValue(!active, `mission ${active?.id} is still active or needs reconciliation before this single workspace can accept another mission`);
+      const mayaIntakeCalls = await reserveMissionIntakeCall(paths.root, input.id);
       const intake = new MayaMissionIntake({ codex, workspacePath: workspace.root });
       const proposal = await intake.propose(input);
       if (proposal.status !== 'agreed') {
@@ -145,7 +147,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       if (response !== 'YES') return { status: 'not_started', reason: 'Maya proposal was not accepted' };
       const acceptedWorkspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
       requireValue(acceptedWorkspace.branch === workspace.branch, 'mission workspace branch changed during Maya agreement');
-      const missionInput = intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`);
+      const missionInput = { ...intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`), mayaIntakeCalls };
       const mission = await store.create(missionInput);
       if (!background) {
         const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,

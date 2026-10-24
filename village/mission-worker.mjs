@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MissionStore } from './mission-runner.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
-import { MissionBackgroundWorker, MissionNotificationFeed, recordMissionWorkerError } from './mission-background.mjs';
+import { MissionBackgroundWorker, MissionNotificationFeed, clearMissionWorkerError,
+  recordMissionWorkerError } from './mission-background.mjs';
 import { CodexRunner } from './codex-runner.mjs';
 
 const [missionId, ...extra] = process.argv.slice(2);
@@ -29,7 +29,7 @@ async function main() {
   const worker = new MissionBackgroundWorker({ store, runner: runtime.runner, handlers: runtime.handlers,
     feed, root: workspaceStateRoot, storeRoot, leaseToken });
   const result = await worker.run(missionId);
-  await unlink(join(storeRoot, '.worker-errors', `${missionId}.json`)).catch(() => {});
+  await clearMissionWorkerError({ root: workspaceStateRoot, missionId });
   process.stdout.write(`${JSON.stringify({ id: result.id, status: result.status })}\n`);
 }
 

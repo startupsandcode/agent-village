@@ -6,7 +6,8 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { launchMissionWorker, MissionBackgroundWorker, MissionNotificationFeed,
-  missionCompletionEvent, readMissionBackgroundStatus, reserveWorkspaceMission } from '../mission-background.mjs';
+  clearMissionWorkerError, missionCompletionEvent, readMissionBackgroundStatus, recordMissionWorkerError,
+  reserveWorkspaceMission } from '../mission-background.mjs';
 
 async function makeWorker({ root, id, store, feed, runner, handlers = {} }) {
   const storeRoot = join(root, 'store');
@@ -178,6 +179,17 @@ test('worker startup failures appear in the durable notification feed and missio
   assert.equal(status.notifications[0].status, 'worker_error');
   const otherMission = await readMissionBackgroundStatus({ root, missionId: 'another-job-46', feed });
   assert.equal(otherMission.worker.missionId, 'background-error-46', 'the shared worker lock identifies which mission owns it');
+});
+
+test('successful recovery clears the current worker error record', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-worker-error-recovery-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const feed = new MissionNotificationFeed(join(root, 'notifications'));
+  await recordMissionWorkerError({ root, feed, missionId: 'recovered-mission-46', message: 'transient launch error' });
+  assert.equal((await readMissionBackgroundStatus({ root, missionId: 'recovered-mission-46', feed })).workerError.message,
+    'transient launch error');
+  await clearMissionWorkerError({ root, missionId: 'recovered-mission-46' });
+  assert.equal((await readMissionBackgroundStatus({ root, missionId: 'recovered-mission-46', feed })).workerError, null);
 });
 
 test('detached worker bootstrap failures are recorded under the shared workspace lock root', async t => {

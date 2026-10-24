@@ -10,7 +10,7 @@ const idPattern = /^[a-z0-9][a-z0-9-]{2,79}$/;
 export const MAX_MISSION_ROLE_CALLS = 8;
 
 function roleCallsUsed(state) {
-  return 1 + Object.values(state.attempts).reduce((total, attempt) => total + attempt, 0);
+  return (state.mayaIntakeCalls ?? 1) + Object.values(state.attempts).reduce((total, attempt) => total + attempt, 0);
 }
 
 function assert(condition, message) {
@@ -59,7 +59,7 @@ function same(left, right) {
 
 function validateTransition(previous, next) {
   const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination',
-    'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+    'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
   const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
@@ -177,9 +177,10 @@ function validateState(value, id) {
     'maxAttempts', 'maxRevisions', 'revisions', 'status', 'currentStage', 'events', 'attempts', 'inFlight',
     'error', 'createdAt', 'updatedAt'];
   if (value?.version === 3) stateKeys.push('workspaceBranch');
+  if (value?.version === 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -206,6 +207,8 @@ function validateState(value, id) {
     stageNames.has(value.currentStage) && Number.isSafeInteger(value.revisions) && value.revisions >= 0 &&
     Number.isSafeInteger(value.maxRevisions) && value.maxRevisions >= 0 &&
     Number.isSafeInteger(value.maxAttempts) && value.maxAttempts >= 1 && value.maxAttempts <= 5 &&
+    (value.version !== 4 || Number.isSafeInteger(value.mayaIntakeCalls) && value.mayaIntakeCalls >= 1 &&
+      value.mayaIntakeCalls <= MAX_MISSION_ROLE_CALLS) &&
     Array.isArray(value.constraints) && value.constraints.every(item => typeof item === 'string') &&
     Array.isArray(value.events) && value.events.every(event => event && stageNames.has(event.stage) &&
       Number.isSafeInteger(event.revision) && Number.isSafeInteger(event.attempt) &&
@@ -278,8 +281,11 @@ export class MissionStore {
     assert(typeof input.artifactId === 'string' && input.artifactId.trim(), 'artifact identity required');
     const maxAttempts = input.maxAttempts ?? 2;
     const maxRevisions = input.maxRevisions ?? 2;
+    const mayaIntakeCalls = input.mayaIntakeCalls ?? 1;
     assert(Number.isSafeInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= 5, 'maxAttempts must be 1-5');
     assert(Number.isSafeInteger(maxRevisions) && maxRevisions >= 0 && maxRevisions <= 3, 'maxRevisions must be 0-3');
+    assert(Number.isSafeInteger(mayaIntakeCalls) && mayaIntakeCalls >= 1 && mayaIntakeCalls <= MAX_MISSION_ROLE_CALLS,
+      `Maya intake calls must be 1-${MAX_MISSION_ROLE_CALLS}`);
     const constraints = input.constraints ?? [];
     assert(Array.isArray(constraints) && constraints.every(item => typeof item === 'string'), 'invalid mission constraints');
     const team = input.team;
@@ -298,7 +304,7 @@ export class MissionStore {
       agreement.workspaceBranch === input.workspaceBranch &&
       typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
     'a user-accepted Maya agreement for this exact mission is required');
-    const state = { version: 3, workspaceBranch: input.workspaceBranch,
+    const state = { version: 4, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
       id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
       mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,

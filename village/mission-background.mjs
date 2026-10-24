@@ -235,6 +235,14 @@ export async function recordMissionWorkerError({ root, feed, missionId, message,
   await feed.recordWorkerError({ missionId, message, createdAt });
 }
 
+export async function clearMissionWorkerError({ root, missionId } = {}) {
+  assert(root && typeof missionId === 'string' && /^[a-z0-9][a-z0-9-]{2,79}$/.test(missionId),
+    'valid background worker error identity required');
+  await unlink(join(resolve(root), '.worker-errors', `${missionId}.json`)).catch(error => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+}
+
 export async function launchMissionWorker({ missionId, storeRoot, evidenceRoot, workspacePath,
   notificationsRoot, workspaceStateRoot: lockRoot, leaseToken, expectedBranch, env = process.env, spawnProcess = spawn } = {}) {
   assert(typeof missionId === 'string' && /^[a-z0-9][a-z0-9-]{2,79}$/.test(missionId), 'valid mission id required');

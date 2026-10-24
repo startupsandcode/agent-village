@@ -191,6 +191,17 @@ test('accepted mission stops at the hard eight-call Codex CLI ceiling across ret
   assert.deepEqual(await new MissionStore(f.root).get(f.mission.id), result);
 });
 
+test('mission accepted after the eighth Maya call is recorded but no role stage can launch', async t => {
+  const f = await fixture(t, { ...missionInput, mayaIntakeCalls: 8 });
+  let calls = 0;
+  const handlers = successfulHandlers(Object.fromEntries(roles.map(stage => [stage, async () => { calls++; }])));
+  const result = await f.runner.run(f.mission.id, handlers);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.mayaIntakeCalls, 8);
+  assert.match(result.error, /8-call Codex CLI limit/);
+  assert.equal(calls, 0);
+});
+
 test('cancellation is honored at a stage boundary and retained durably', async t => {
   const f = await fixture(t);
   const handlers = successfulHandlers({ susie_design: async () => {
