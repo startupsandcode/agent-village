@@ -5,7 +5,10 @@
   "required": ["stage", "status", "artifactId", "evidence", "designGuide", "previewUrl", "artifactPath", "functionalChecks", "visualFindings"],
   "properties": {
     "stage": { "enum": ["susie_design", "sam_implementation", "quinn_functional", "susie_visual"] },
-    "status": { "enum": ["done", "needs_revision", "blocked"] },
+    "status": {
+      "enum": ["done", "needs_revision", "blocked"],
+      "description": "Use done for Susie design and Sam implementation. Quinn uses done only when acceptance criteria pass and functionalChecks are nonempty; otherwise use blocked. Susie visual review uses done or needs_revision."
+    },
     "artifactId": { "type": "string", "minLength": 1, "maxLength": 160 },
     "evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
     "designGuide": {
@@ -37,7 +40,11 @@
     },
     "previewUrl": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "uri", "maxLength": 2000 }] },
     "artifactPath": { "anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] },
-    "functionalChecks": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "functionalChecks": {
+      "type": "array", "maxItems": 24,
+      "description": "Quinn must include at least one concise check, including the failed or unverified criterion if blocked. Other roles use an empty array.",
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
     "visualFindings": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
   }
 }

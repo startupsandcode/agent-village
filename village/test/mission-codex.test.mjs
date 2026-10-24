@@ -13,6 +13,8 @@ test('strict role schema requires every property and allows null artifactPath ou
       assert.deepEqual(new Set(definition.required), new Set(Object.keys(definition.properties)), `${name} strict required fields`);
     }
   }
+  assert.match(schema.properties.status.description, /Quinn uses done only when acceptance criteria pass/);
+  assert.match(schema.properties.functionalChecks.description, /Quinn must include at least one concise check/);
 });
 
 const guide = { concept: 'Editorial volunteer invitation with a clear service-first composition.',
@@ -74,6 +76,8 @@ test('mission Codex adapters execute Susie design before Sam, then Quinn and scr
   assert.equal(calls[1].readOnly, false);
   assert.match(calls[1].prompt, /Editorial volunteer invitation/);
   assert.equal(calls[2].readOnly, true);
+  assert.match(calls[2].prompt, /Set status to done only when the acceptance criteria pass/);
+  assert.match(calls[2].prompt, /Always return at least one concise functionalChecks item and evidence/);
   assert.equal(calls[3].readOnly, true);
   assert.deepEqual(calls[3].images, ['C:/evidence/desktop.png', 'C:/evidence/narrow.png']);
   assert.equal(visual.rendered.previewUrl, mission.destination);
@@ -91,4 +95,44 @@ test('Sam cannot launch without Susie design checkpoint and role result must mat
     stage: 'susie_design', status: 'done', artifactId: 'other-artifact', evidence: ['wrong artifact'], designGuide: guide,
   }; } }, workspacePath: 'C:/workspace' }).handlers().susie_design;
   await assert.rejects(susie({ mission, stage: 'susie_design', revision: 0 }), /did not match the approved artifact/);
+});
+
+function quinnFixture({ status, functionalChecks }) {
+  const implementation = { stage: 'sam_implementation', revision: 0, status: 'done',
+    output: { kind: 'implementation', previewUrl: mission.destination } };
+  const reviewedMission = { ...mission, events: [...mission.events, implementation] };
+  const result = { stage: 'quinn_functional', status, artifactId: mission.artifactId,
+    evidence: ['Fixture evidence is intentionally not copied into failure diagnostics.'], designGuide: null,
+    previewUrl: null, artifactPath: null, functionalChecks, visualFindings: [] };
+  const handler = new MissionCodexHandlers({ codex: { async runStructured() { return result; } },
+    workspacePath: 'C:/workspace' }).handlers().quinn_functional;
+  return () => handler({ mission: reviewedMission, stage: 'quinn_functional', revision: 0, attempt: 1 });
+}
+
+test('Quinn non-approval is recorded as a safe status diagnostic, without copying role evidence', async () => {
+  await assert.rejects(quinnFixture({ status: 'blocked', functionalChecks: [] }), error => {
+    assert.equal(error.message, 'Quinn review did not approve (status=blocked)');
+    assert.doesNotMatch(error.message, /Fixture evidence|intentionally/);
+    return true;
+  });
+});
+
+test('Quinn status diagnostics whitelist enum values instead of echoing arbitrary model text', async () => {
+  await assert.rejects(quinnFixture({ status: 'blocked Bearer secret-token-value', functionalChecks: ['unverified'] }), error => {
+    assert.equal(error.message, 'Quinn review did not approve (status=invalid)');
+    assert.doesNotMatch(error.message, /secret-token-value/);
+    return true;
+  });
+});
+
+test('Quinn approval with no functional checks is distinguished from a blocked review', async () => {
+  await assert.rejects(quinnFixture({ status: 'done', functionalChecks: [] }), error => {
+    assert.equal(error.message, 'Quinn returned no functional checks (status=done)');
+    return true;
+  });
+});
+
+test('Quinn completed review carries its nonempty functional checks into the durable stage result', async () => {
+  const result = await quinnFixture({ status: 'done', functionalChecks: ['preview marker matched', 'retry control works'] })();
+  assert.deepEqual(result.output, { kind: 'functional_review', checks: ['preview marker matched', 'retry control works'] });
 });

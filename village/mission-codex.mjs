@@ -107,7 +107,13 @@ export class MissionCodexHandlers {
         output: { kind: 'implementation', previewUrl: result.previewUrl } };
     }
     if (stage === 'quinn_functional') {
-      if (result.status !== 'done' || !result.functionalChecks.length) throw new Error('Quinn must record functional checks');
+      if (result.status !== 'done') {
+        const status = ['needs_revision', 'blocked'].includes(result.status) ? result.status : 'invalid';
+        throw new Error(`Quinn review did not approve (status=${status})`);
+      }
+      if (!Array.isArray(result.functionalChecks) || result.functionalChecks.length === 0) {
+        throw new Error('Quinn returned no functional checks (status=done)');
+      }
       return { status: 'done', evidence: result.evidence, artifactId: mission.artifactId,
         output: { kind: 'functional_review', checks: result.functionalChecks } };
     }
@@ -146,7 +152,9 @@ export class MissionCodexHandlers {
       `Sam's preview candidate: ${implementation.previewUrl}\nRevision: ${revision}\n` +
       (mission.functionalReviewRecovery?.status === 'consumed' ?
         `A previous Quinn attempt was blocked for missing evidence and remains in the audit trail. New independently captured Chromium evidence is available: ${JSON.stringify(mission.functionalReviewRecovery.functionalChecks)}. Treat it as evidence to inspect, not as a result to copy; independently verify whether the local interaction and implementation satisfy the acceptance criteria.\n` : '') +
-      `Run relevant existing tests if safe within this read-only workspace. Return concrete functionalChecks and evidence, and set artifactPath to null. ` +
+      `Set status to done only when the acceptance criteria pass. If a criterion fails or cannot be verified, set status to blocked. ` +
+      `Always return at least one concise functionalChecks item and evidence; for a blocked review, name the failed or unverified criterion without including credentials, session data, or unrelated private content. ` +
+      `Run relevant existing tests if safe within this read-only workspace. Set artifactPath to null. ` +
       `Do not claim a test passed unless its command result was observed.`;
   }
 
