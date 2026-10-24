@@ -39,7 +39,7 @@ async function fixture(t, { mission = baseMission, targetOverride, cliOverride }
     async inspect(id) {
       calls.push({ kind: 'inspect', id });
       const deployMeta = calls.find(call => call.kind === 'deploy')?.options.meta;
-      return { id: 'dpl_1234567890abcdef', url: previewUrl, projectId, target: 'preview', readyState: 'READY', meta: deployMeta };
+      return { id: 'dpl_1234567890abcdef', url: previewUrl, projectId, teamId, target: 'preview', readyState: 'READY', meta: deployMeta };
     },
     ...(cliOverride ?? {}),
   };
@@ -82,6 +82,26 @@ test('normalizes bare Vercel CLI hostnames while enforcing the approved deployme
     'https://astra-4idr0wopp-jmanns-projects.vercel.app');
   assert.throws(() => vercelPreviewOrigin('evil.example.org', baseMission.previewTarget), /not allowlisted/);
   assert.throws(() => vercelPreviewOrigin('astra-lab-preview-abc-other-team.vercel.app', baseMission.previewTarget), /not allowlisted/);
+});
+
+test('Vercel inspect combines CLI preview state with read-only API project and artifact identity', async () => {
+  const calls = [];
+  const client = new VercelCliClient({ run: async args => {
+    calls.push(args);
+    if (args[0] === 'inspect') return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app',
+      target: 'preview', readyState: 'READY' });
+    return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app',
+      projectId, target: null, readyState: 'READY', meta: { villageMissionId: baseMission.id,
+        villageArtifactId: baseMission.artifactId, villageArtifactSha256: 'a'.repeat(64) },
+      oidcTokenClaims: { owner_id: teamId, environment: 'preview' } });
+  } });
+  const details = await client.inspect('dpl_1234567890abcdef', { teamId });
+  assert.equal(details.projectId, projectId);
+  assert.equal(details.teamId, teamId);
+  assert.equal(details.target, 'preview');
+  assert.equal(details.meta.villageMissionId, baseMission.id);
+  assert.deepEqual(calls.map(args => args[0]), ['inspect', 'api']);
+  assert.equal(calls[1][1], '/v13/deployments/dpl_1234567890abcdef');
 });
 
 test('rejects production and any project/team/hostname outside the explicit allowlist before submission', async t => {
@@ -198,7 +218,7 @@ test('retries once only when the CLI proves no deployment submission started', a
     async inspect(id) {
       const deployMeta = { villageMissionId: fMission.id, villageArtifactId: fMission.artifactId,
         villageArtifactSha256: fFingerprint };
-      return { id, url: previewUrl, projectId, target: 'preview', readyState: 'READY', meta: deployMeta };
+      return { id, url: previewUrl, projectId, teamId, target: 'preview', readyState: 'READY', meta: deployMeta };
     },
   } });
   const fMission = f.mission;
@@ -301,7 +321,7 @@ test('reconciles an existing READY mission deployment when Vercel omitted the ID
     },
     async inspect(value) {
       assert.equal(value, bareUrl);
-      return { id: 'dpl_1234567890abcdef', url: bareUrl, projectId, target: 'preview', readyState: 'READY',
+      return { id: 'dpl_1234567890abcdef', url: bareUrl, projectId, teamId, target: 'preview', readyState: 'READY',
         meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
           villageArtifactSha256: fingerprint } };
     },
@@ -331,7 +351,7 @@ test('rejects successful submission if Vercel reports production, a different pr
       async whoami() { return 'test-user'; },
       async deploy() { return { id: 'dpl_1234567890abcdef', url: previewUrl }; },
       async inspect() { return { id: 'dpl_1234567890abcdef', url: invalid.url, projectId: invalid.projectId,
-        target: invalid.target, readyState: 'READY', meta: {
+        teamId, target: invalid.target, readyState: 'READY', meta: {
           villageMissionId: fMission.id, villageArtifactId: fMission.artifactId,
           villageArtifactSha256: 'f'.repeat(64),
         } }; },

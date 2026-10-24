@@ -255,8 +255,10 @@ export function isKnownRootDirectoryPreflightFailure(message) {
 }
 
 export class VercelCliClient {
+  constructor({ run = runCli } = {}) { this.run = run; }
+
   async whoami({ cwd = process.cwd() } = {}) {
-    return await runCli(['whoami', '--non-interactive', '--no-color'], { cwd, timeoutMs: 30000 });
+    return await this.run(['whoami', '--non-interactive', '--no-color'], { cwd, timeoutMs: 30000 });
   }
 
   async getDevelopmentOidcToken({ projectId, teamSlug, cwd = process.cwd() }) {
@@ -264,7 +266,7 @@ export class VercelCliClient {
       'approved Vercel project and team are required for browser authentication');
     const marker = 'VILLAGE_OIDC_TOKEN=';
     const script = `process.stdout.write('${marker}' + (process.env.VERCEL_OIDC_TOKEN || '') + '\\n')`;
-    const output = await runCli(['env', 'run', '--environment', 'development', '--project', projectId,
+    const output = await this.run(['env', 'run', '--environment', 'development', '--project', projectId,
       '--scope', teamSlug, '--', process.execPath, '-e', script], { cwd, timeoutMs: 30000 });
     const tokenLine = output.split(/\r?\n/).findLast(line => line.startsWith(marker));
     const token = tokenLine?.slice(marker.length) ?? '';
@@ -280,18 +282,25 @@ export class VercelCliClient {
     const args = ['deploy', artifactPath, '--prebuilt', '--target', target, '--project', projectId, '--scope', teamId,
       '--yes', '--no-wait', '--json', '--no-color', '--non-interactive'];
     for (const [key, value] of Object.entries(meta)) args.push('--meta', `${key}=${value}`);
-    return parseCliJson(await runCli(args, { cwd: artifactPath }), 'deployment');
+    return parseCliJson(await this.run(args, { cwd: artifactPath }), 'deployment');
   }
 
   async inspect(deploymentId, { teamId }) {
-    return parseCliJson(await runCli(['inspect', deploymentId, '--scope', teamId, '--json', '--no-color', '--non-interactive'],
+    requireValue(/^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) && /^team_[A-Za-z0-9]{8,}$/.test(teamId),
+      'deployment and team IDs are required for read-only inspection');
+    const cliDetails = parseCliJson(await this.run(['inspect', deploymentId, '--scope', teamId, '--json', '--no-color', '--non-interactive'],
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment inspection');
+    const apiDetails = parseCliJson(await this.run(['api', `/v13/deployments/${deploymentId}`, '--scope', teamId, '--raw'],
+      { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment API inspection');
+    return { ...cliDetails, ...apiDetails,
+      target: apiDetails.target ?? cliDetails.target ?? (apiDetails.oidcTokenClaims?.environment === 'preview' ? 'preview' : null),
+      teamId: apiDetails.teamId ?? apiDetails.oidcTokenClaims?.owner_id ?? null };
   }
 
   async listMissionDeployments({ missionId, target, cwd = process.cwd() }) {
     requireValue(idPattern.test(missionId) && target?.provider === 'vercel' && target.environment === 'preview',
       'approved mission and preview target are required for deployment reconciliation');
-    const output = await runCli(['list', target.projectSlug, '--scope', target.teamSlug,
+    const output = await this.run(['list', target.projectSlug, '--scope', target.teamSlug,
       '--meta', `villageMissionId=${missionId}`, '--json', '--limit', '100'], { cwd, timeoutMs: 30000 });
     const response = parseCliJson(output, 'deployment list');
     requireValue(response && Array.isArray(response.deployments), 'Vercel CLI deployment list response is invalid');
@@ -431,6 +440,7 @@ export class VercelPreviewDeployer {
           const currentUrl = vercelPreviewOrigin(details?.url, target);
           const detailsMeta = details?.meta ?? details?.metadata ?? {};
           const matches = details?.id === deploymentId && details?.projectId === target.projectId &&
+            details?.teamId === target.teamId &&
             details?.target !== 'production' && ['preview', null, undefined].includes(details?.target) &&
             currentUrl === url && detailsMeta.villageMissionId === mission.id &&
             detailsMeta.villageArtifactId === mission.artifactId && detailsMeta.villageArtifactSha256 === fingerprint;
@@ -512,7 +522,7 @@ export class VercelPreviewDeployer {
         const inspectedUrl = vercelPreviewOrigin(details?.url, target);
         const detailsMeta = details?.meta ?? details?.metadata ?? {};
         requireValue(typeof deploymentId === 'string' && /^dpl_[A-Za-z0-9]{8,}$/.test(deploymentId) &&
-          details.projectId === target.projectId && details.target !== 'production' &&
+          details.projectId === target.projectId && details.teamId === target.teamId && details.target !== 'production' &&
           ['preview', null, undefined].includes(details.target) && inspectedUrl === candidateUrl &&
           detailsMeta.villageMissionId === mission.id && detailsMeta.villageArtifactId === mission.artifactId &&
           detailsMeta.villageArtifactSha256 === fingerprint,

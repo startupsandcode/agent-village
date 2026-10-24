@@ -54,7 +54,7 @@ async function fixture(t, { reviseVisualOnce = false } = {}) {
     cli: { async whoami() { deployCalls.push('whoami'); },
       async deploy(options) { deployCalls.push(options); deploymentCount++;
         return { id: `dpl_AbCdEf12345${deploymentCount}`, url: previewUrl }; },
-      async inspect(id, options) { return { id, projectId: target.projectId, target: 'preview', readyState: 'READY',
+      async inspect(id, options) { return { id, projectId: target.projectId, teamId: target.teamId, target: 'preview', readyState: 'READY',
         url: previewUrl, meta: deployCalls.findLast(call => call?.meta)?.meta }; } } });
   const calls = [];
   const codex = { async runStructured(options) {
