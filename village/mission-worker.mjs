@@ -40,7 +40,8 @@ main().catch(async error => {
       const message = String(error?.message ?? 'background worker failed').slice(0, 500);
       const notificationsRoot = process.env.VILLAGE_MISSION_NOTIFICATIONS_ROOT || join(storeRoot, '.notifications');
       const feed = new MissionNotificationFeed(notificationsRoot);
-      await recordMissionWorkerError({ root: workspaceStateRoot || storeRoot, feed, missionId, message });
+      await recordMissionWorkerError({ root: process.env.VILLAGE_MISSION_WORKSPACE_STATE_ROOT || storeRoot,
+        feed, missionId, message });
     } catch {}
   }
   process.stderr.write(`${error?.message ?? 'background worker failed'}\n`);

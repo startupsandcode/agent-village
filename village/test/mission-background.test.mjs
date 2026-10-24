@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { launchMissionWorker, MissionBackgroundWorker, MissionNotificationFeed,
   missionCompletionEvent, readMissionBackgroundStatus, reserveWorkspaceMission } from '../mission-background.mjs';
 
@@ -176,4 +178,23 @@ test('worker startup failures appear in the durable notification feed and missio
   assert.equal(status.notifications[0].status, 'worker_error');
   const otherMission = await readMissionBackgroundStatus({ root, missionId: 'another-job-46', feed });
   assert.equal(otherMission.worker.missionId, 'background-error-46', 'the shared worker lock identifies which mission owns it');
+});
+
+test('detached worker bootstrap failures are recorded under the shared workspace lock root', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-background-bootstrap-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const storeRoot = join(root, 'store');
+  const lockRoot = join(root, 'workspace-lock');
+  const notificationsRoot = join(root, 'notifications');
+  const workerPath = fileURLToPath(new URL('../mission-worker.mjs', import.meta.url));
+  const child = spawnSync(process.execPath, [workerPath, 'bootstrap-failure-46'], { encoding: 'utf8', env: {
+    ...process.env, VILLAGE_MISSION_ROOT: storeRoot, VILLAGE_MISSION_WORKSPACE_STATE_ROOT: lockRoot,
+    VILLAGE_MISSION_NOTIFICATIONS_ROOT: notificationsRoot,
+  } });
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /mission worker paths and workspace reservation are not configured/);
+  const feed = new MissionNotificationFeed(notificationsRoot);
+  const status = await readMissionBackgroundStatus({ root: lockRoot, missionId: 'bootstrap-failure-46', feed });
+  assert.match(status.workerError.message, /mission worker paths/);
+  assert.equal(status.notifications[0].status, 'worker_error');
 });
