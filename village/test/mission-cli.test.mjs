@@ -140,10 +140,23 @@ test('recover-preview deploys only the accepted mission output after the exact p
     projectSlug: target.projectSlug, teamSlug: target.teamSlug, target: 'preview', status: 'uncertain',
     createdAt: new Date().toISOString(), deploymentId: null, url: null, attempts: 1,
     error: 'Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.' }));
+  const canonicalWorkspace = await realpath(workspace);
+  const lockRoot = workspaceStateRoot(home, canonicalWorkspace);
+  const lease = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-preview-recovery' });
+  const deadWorker = await import('node:child_process').then(({ spawn }) => spawn(process.execPath,
+    ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' }));
+  await new Promise((resolve, reject) => { deadWorker.once('error', reject); deadWorker.once('spawn', resolve); });
+  const deadPid = deadWorker.pid;
+  deadWorker.kill();
+  await new Promise(resolve => deadWorker.once('exit', resolve));
+  await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: deadPid });
+  const inspectStoppedWorkspace = async () => ({ worker: null,
+    reservation: { missionId, storeRoot, branch: 'mission-preview-recovery', pid: deadPid, processAlive: false } });
   const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
   const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace };
   let deployments = 0;
-  const result = await main(['recover-preview', missionId], { env,
+  const result = await main(['recover-preview', missionId], { env, processCheck: async () => false,
+    inspectBackgroundStatus: inspectStoppedWorkspace,
     previewDeployer: { async deploy({ mission, artifactRoot }) {
       deployments++;
       assert.equal(mission.id, missionId);

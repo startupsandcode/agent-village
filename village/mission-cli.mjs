@@ -190,6 +190,15 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const outputRoot = `validation/${id}`;
     const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
     requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; preview recovery requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; preview recovery is blocked');
+    requireValue(lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped workspace reservation must match the mission before preview recovery');
     requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
       state.currentStage === 'sam_implementation' && state.revisions === 0 && state.maxAttempts === 1 &&
       state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
