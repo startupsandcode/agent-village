@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateResult } from './contract.mjs';
 
@@ -15,15 +15,29 @@ export function roleCommand(codex, cwd, schemaPath, output, readOnly, images = [
     ...images.flatMap(image => ['--image', image]), '--output-schema', schemaPath, '-o', output, '-'];
 }
 
+export async function resolveCodexCommand(args, { platform = process.platform, pathValue = process.env.PATH,
+  nodeExecutable = process.execPath, canAccess = access } = {}) {
+  if (platform !== 'win32') return args;
+  for (const directory of String(pathValue ?? '').split(';').filter(Boolean)) {
+    const entry = win32.join(directory, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+    try {
+      await canAccess(entry);
+      return [nodeExecutable, entry, ...args.slice(1)];
+    } catch {}
+  }
+  throw new Error('official Codex CLI npm installation was not found on PATH');
+}
+
 async function defaultLogin() {
   try {
-    const { stdout, stderr } = await execFileAsync('codex', ['login', 'status'], { timeout: 20000 });
+    const [executable, ...args] = await resolveCodexCommand(['codex', 'login', 'status']);
+    const { stdout, stderr } = await execFileAsync(executable, args, { timeout: 20000 });
     return `${stdout}${stderr}`.includes('Logged in using ChatGPT');
   } catch { return false; }
 }
 
 async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }) {
-  const [executable, ...rest] = args;
+  const [executable, ...rest] = await resolveCodexCommand(args);
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, rest, { cwd, env, stdio: ['pipe', 'ignore', 'pipe'] });
     let errors = '';

@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { roleCommand, CodexRunner } from '../codex-runner.mjs';
+import { roleCommand, CodexRunner, resolveCodexCommand } from '../codex-runner.mjs';
+
+test('Windows Codex CLI launches the installed official npm entry point without a shell', async () => {
+  const checked = [];
+  const command = await resolveCodexCommand(['codex', 'login', 'status'], {
+    platform: 'win32', pathValue: 'C:\\Users\\JMann\\AppData\\Roaming\\npm;C:\\Windows\\System32',
+    nodeExecutable: 'C:\\Program Files\\nodejs\\node.exe',
+    async canAccess(path) {
+      checked.push(path);
+      if (path === 'C:\\Users\\JMann\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js') return;
+      throw new Error('not installed');
+    },
+  });
+  assert.deepEqual(command, ['C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Users\\JMann\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js', 'login', 'status']);
+  assert.equal(checked.length, 1);
+});
 
 test('write roles retain approval review and Quinn is read only', () => {
   const sam = roleCommand('codex', '/tmp/astra', '/tmp/schema.json', '/tmp/out.json', false);
