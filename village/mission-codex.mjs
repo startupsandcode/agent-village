@@ -119,7 +119,7 @@ export class MissionCodexHandlers {
 
   designPrompt(mission) {
     return `You are Susie, the product designer. Produce the concrete design guide before implementation starts.\n` +
-      `Return the JSON designGuide fields required by the attached schema: a distinct visual concept, at least three ordered sections, a usable type scale, a spacing scale, wide and narrow responsive behavior, imagery/source/alt guidance, interaction guidance and references. Avoid dated generic templates.\n` +
+      `Return the JSON designGuide fields required by the attached schema: a distinct visual concept, at least three ordered sections, a usable type scale, a spacing scale, wide and narrow responsive behavior, imagery/source/alt guidance, interaction guidance and references. Set artifactPath to null. Avoid dated generic templates.\n` +
       `Approved goal: ${mission.goal}\nAcceptance criteria: ${mission.acceptanceCriteria?.join('\n') ?? 'Use the approved goal.'}\n` +
       `Constraints: ${mission.constraints.join('; ')}\n` +
       `Repository: ${mission.repo}\nArtifact identity: ${mission.artifactId}\nDestination: ${mission.destination}\n` +
@@ -143,7 +143,7 @@ export class MissionCodexHandlers {
       `Review only artifact ${mission.artifactId} for goal: ${mission.goal}\n` +
       `Acceptance criteria:\n${(mission.acceptanceCriteria ?? []).map(item => `- ${item}`).join('\n')}\n` +
       `Sam's preview candidate: ${implementation.previewUrl}\nRevision: ${revision}\n` +
-      `Run relevant existing tests if safe within this read-only workspace. Return concrete functionalChecks and evidence. ` +
+      `Run relevant existing tests if safe within this read-only workspace. Return concrete functionalChecks and evidence, and set artifactPath to null. ` +
       `Do not claim a test passed unless its command result was observed.`;
   }
 
@@ -154,6 +154,6 @@ export class MissionCodexHandlers {
       `Desktop evidence: ${captures.desktop.evidenceRef} (${captures.desktop.metrics.width}px). ` +
       `Narrow evidence: ${captures.narrow.evidenceRef} (${captures.narrow.metrics.width}px).\n` +
       `Assess hierarchy, typography, spacing, responsive behavior, imagery, and interactions against the guide. ` +
-      `Return done only if the screenshots meet the goal; otherwise return needs_revision with specific visualFindings. Do not edit files or deploy.`;
+      `Return done only if the screenshots meet the goal; otherwise return needs_revision with specific visualFindings. Set artifactPath to null. Do not edit files or deploy.`;
   }
 }

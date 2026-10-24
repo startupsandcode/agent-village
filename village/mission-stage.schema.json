@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["stage", "status", "artifactId", "evidence", "designGuide", "previewUrl", "functionalChecks", "visualFindings"],
+  "required": ["stage", "status", "artifactId", "evidence", "designGuide", "previewUrl", "artifactPath", "functionalChecks", "visualFindings"],
   "properties": {
     "stage": { "enum": ["susie_design", "sam_implementation", "quinn_functional", "susie_visual"] },
     "status": { "enum": ["done", "needs_revision", "blocked"] },
@@ -36,7 +36,7 @@
       ]
     },
     "previewUrl": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "uri", "maxLength": 2000 }] },
-    "artifactPath": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "artifactPath": { "anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] },
     "functionalChecks": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
     "visualFindings": { "type": "array", "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
   }

@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { MissionCodexHandlers } from '../mission-codex.mjs';
+
+test('strict role schema requires every property and allows null artifactPath outside Sam output', async () => {
+  const schema = JSON.parse(await readFile(fileURLToPath(new URL('../mission-stage.schema.json', import.meta.url)), 'utf8'));
+  assert.deepEqual(new Set(schema.required), new Set(Object.keys(schema.properties)));
+  assert.deepEqual(schema.properties.artifactPath.anyOf.map(option => option.type), ['null', 'string']);
+  for (const [name, definition] of Object.entries(schema.properties)) {
+    if (definition.type === 'object' && definition.properties) {
+      assert.deepEqual(new Set(definition.required), new Set(Object.keys(definition.properties)), `${name} strict required fields`);
+    }
+  }
+});
 
 const guide = { concept: 'Editorial volunteer invitation with a clear service-first composition.',
   sections: ['Hero and action', 'Opportunity details', 'Signup form'],
