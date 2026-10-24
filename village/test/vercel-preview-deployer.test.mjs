@@ -78,7 +78,10 @@ test('classifies only the exact missing app root as a definite pre-submission CL
 
 test('normalizes bare Vercel CLI hostnames while enforcing the approved deployment host', () => {
   assert.equal(vercelPreviewOrigin('astra-lab-preview-abc-jmanns-projects.vercel.app', baseMission.previewTarget), previewUrl);
+  assert.equal(vercelPreviewOrigin('astra-4idr0wopp-jmanns-projects.vercel.app', baseMission.previewTarget),
+    'https://astra-4idr0wopp-jmanns-projects.vercel.app');
   assert.throws(() => vercelPreviewOrigin('evil.example.org', baseMission.previewTarget), /not allowlisted/);
+  assert.throws(() => vercelPreviewOrigin('astra-lab-preview-abc-other-team.vercel.app', baseMission.previewTarget), /not allowlisted/);
 });
 
 test('rejects production and any project/team/hostname outside the explicit allowlist before submission', async t => {

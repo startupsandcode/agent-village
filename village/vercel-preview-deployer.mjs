@@ -71,11 +71,13 @@ export function vercelPreviewOrigin(value, target) {
     (url.pathname === '' || url.pathname === '/'),
     'Vercel preview URL must be an HTTPS origin without credentials, port, query, or fragment');
   const host = url.hostname.toLowerCase();
-  const projectPrefix = `${target.projectSlug.toLowerCase()}-`;
   const teamSuffix = `-${target.teamSlug.toLowerCase()}.vercel.app`;
-  const deploymentName = host.startsWith(projectPrefix) && host.endsWith(teamSuffix) ?
-    host.slice(projectPrefix.length, -teamSuffix.length) : '';
-  requireValue(/^[a-z0-9][a-z0-9-]*$/i.test(deploymentName),
+  // Vercel's generated deployment hostname can use a shortened project label
+  // (for example, `astra-<hash>` for the `astra-lab` project). Bind the host to
+  // the approved team domain here; callers must additionally verify the exact
+  // project ID and mission metadata with Vercel's authenticated inspect API.
+  const deploymentName = host.endsWith(teamSuffix) ? host.slice(0, -teamSuffix.length) : '';
+  requireValue(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(deploymentName),
     'Vercel preview URL host is not allowlisted');
   return url.origin;
 }
