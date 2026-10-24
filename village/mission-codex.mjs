@@ -30,6 +30,30 @@ function latestOutput(mission, stage) {
     event.revision === mission.revisions)?.output;
 }
 
+function safeFunctionalFinding(value) {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFKC')
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\b(?:sk|rk|pk|ghp|gho|github_pat|vercel)_[A-Za-z0-9_-]{8,}\b/gi, '[token]')
+    .replace(/\b[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{12,}\b/g, '[token]')
+    .replace(/\b(api[_-]?key|access[_-]?token|token|secret|password|authorization)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/https?:\/\/[^\s,;]+/gi, '[url]')
+    .replace(/\b[A-Za-z]:\\[^\s,;]+/g, '[path]')
+    .replace(/\/(?:[^/\s]+\/)+[^\s,;]+/g, '[path]')
+    .replace(/\s+/g, ' ').trim().slice(0, 150);
+}
+
+function quinnFailureMessage(result) {
+  const status = ['blocked', 'needs_revision'].includes(result.status) ? result.status : 'invalid';
+  const findings = ['blocked', 'needs_revision'].includes(status) && Array.isArray(result.functionalChecks) ?
+    [...new Set(result.functionalChecks.map(safeFunctionalFinding).filter(Boolean))].slice(0, 2) : [];
+  const explanation = findings.length ? `; findings: ${findings.join('; ')}` :
+    '; no actionable functionalChecks reason was returned';
+  return `Quinn review did not approve (status=${status})${explanation}`.slice(0, 500);
+}
+
 export class MissionCodexHandlers {
   constructor({ codex, workspacePath, browserVerifier = null, previewDeployer = null, timeoutSeconds = 900 }) {
     if (!codex || typeof codex.runStructured !== 'function') throw new Error('structured Codex runner required');
@@ -108,8 +132,7 @@ export class MissionCodexHandlers {
     }
     if (stage === 'quinn_functional') {
       if (result.status !== 'done') {
-        const status = ['needs_revision', 'blocked'].includes(result.status) ? result.status : 'invalid';
-        throw new Error(`Quinn review did not approve (status=${status})`);
+        throw new Error(quinnFailureMessage(result));
       }
       if (!Array.isArray(result.functionalChecks) || result.functionalChecks.length === 0) {
         throw new Error('Quinn returned no functional checks (status=done)');
@@ -147,13 +170,14 @@ export class MissionCodexHandlers {
   functionalPrompt(mission, implementation, revision) {
     return `You are Quinn, an independent read-only functional reviewer. Do not modify files.\n` +
       `Review only artifact ${mission.artifactId} for goal: ${mission.goal}\n` +
-      `Inspect the accepted local source in validation/${mission.id}/ and its static output in validation/${mission.id}/dist/. Review the actual HTML, CSS, and JavaScript files directly; do not rely on public unauthenticated retrieval of a protected preview.\n` +
+      `You have read-only access to the approved mission workspace. Inspect the accepted local source in validation/${mission.id}/ and its static output in validation/${mission.id}/dist/. Review the actual HTML, CSS, and JavaScript files directly; do not rely on public unauthenticated retrieval of a protected preview.\n` +
       `Acceptance criteria:\n${(mission.acceptanceCriteria ?? []).map(item => `- ${item}`).join('\n')}\n` +
       `Sam's preview candidate: ${implementation.previewUrl}\nRevision: ${revision}\n` +
       (mission.functionalReviewRecovery?.status === 'consumed' ?
         `A previous Quinn attempt was blocked for missing evidence and remains in the audit trail. New independently captured Chromium evidence is available: ${JSON.stringify(mission.functionalReviewRecovery.functionalChecks)}. Treat it as evidence to inspect, not as a result to copy; independently verify whether the local interaction and implementation satisfy the acceptance criteria.\n` : '') +
       `Set status to done only when the acceptance criteria pass. If a criterion fails or cannot be verified, set status to blocked. ` +
-      `Always return at least one concise functionalChecks item and evidence; for a blocked review, name the failed or unverified criterion without including credentials, session data, or unrelated private content. ` +
+      `For every blocked or needs_revision result, return at least one concise actionable functionalChecks item naming the criterion, observed result, and expected result or verification limitation; status alone is not a reason. These checks are retained in the mission owner's status, so include only review findings and omit credentials, session data, URLs, local paths, and unrelated private content. ` +
+      `For done, also return at least one concise functionalChecks item and evidence. ` +
       `Run relevant existing tests if safe within this read-only workspace. Set artifactPath to null. ` +
       `Do not claim a test passed unless its command result was observed.`;
   }
