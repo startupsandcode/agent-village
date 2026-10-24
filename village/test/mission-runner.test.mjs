@@ -154,15 +154,41 @@ test('visual review loops through implementation and functional checks within re
   assert.equal(result.revisions, 1);
 });
 
-test('visual revisions cannot exceed the configured cap', async t => {
+test('the global role-call ceiling stops revisions before the configured revision cap', async t => {
   const f = await fixture(t);
   const result = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'needs_revision', evidence: ['Needs correction'], artifactId: 'artifact-46', rendered,
       output: { kind: 'visual_review', decision: 'revise', findings: ['Needs correction'] } }),
   }));
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'blocked');
   assert.equal(result.revisions, 2);
-  assert.match(result.error, /revision limit/);
+  assert.match(result.error, /8-call Codex CLI limit/);
+});
+
+test('accepted mission stops at the hard eight-call Codex CLI ceiling across retries and visual revision', async t => {
+  const f = await fixture(t);
+  const base = successfulHandlers();
+  const calls = [];
+  const handlers = Object.fromEntries(roles.map(stage => [stage, async context => {
+    calls.push(stage);
+    if (stage === 'susie_visual') return { status: 'needs_revision', evidence: ['One bounded visual correction requested.'],
+      artifactId: 'artifact-46', rendered,
+      output: { kind: 'visual_review', decision: 'revise', findings: ['Improve mobile hierarchy'] } };
+    if (stage !== 'susie_design' && stage !== 'sam_implementation' && stage !== 'quinn_functional') return base[stage](context);
+    if (context.attempt === 1) {
+      const error = new Error('retryable role response failure');
+      error.retryable = true;
+      throw error;
+    }
+    return base[stage](context);
+  }]));
+  const result = await f.runner.run(f.mission.id, handlers);
+  assert.equal(calls.length, 7, 'one Maya intake plus seven stage attempts uses the complete eight-call allowance');
+  assert.equal(result.status, 'blocked');
+  assert.match(result.error, /8-call Codex CLI limit/);
+  assert.equal(result.events.at(-1).status, 'needs_revision');
+  assert.equal(result.attempts['1:sam_implementation'], undefined, 'Sam does not launch after the global ceiling is reached');
+  assert.deepEqual(await new MissionStore(f.root).get(f.mission.id), result);
 });
 
 test('cancellation is honored at a stage boundary and retained durably', async t => {

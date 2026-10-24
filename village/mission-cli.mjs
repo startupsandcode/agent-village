@@ -132,7 +132,9 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     try {
       const reservation = await readWorkspaceLease(lockRoot);
       requireValue(!reservation, `workspace already has active mission ${reservation?.missionId ?? 'unknown'} from store ${reservation?.storeRoot ?? 'unknown'}; reconcile before starting another`);
-      const active = (await store.list()).find(state => !['accepted_preview', 'cancelled'].includes(state.status));
+      const storedMissions = await store.list();
+      requireValue(!storedMissions.some(state => state.id === input.id), 'mission id already exists; use its existing checkpoint instead of asking Maya again');
+      const active = storedMissions.find(state => !['accepted_preview', 'cancelled'].includes(state.status));
       requireValue(!active, `mission ${active?.id} is still active or needs reconciliation before this single workspace can accept another mission`);
       const intake = new MayaMissionIntake({ codex, workspacePath: workspace.root });
       const proposal = await intake.propose(input);

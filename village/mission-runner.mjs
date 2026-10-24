@@ -7,6 +7,11 @@ const stages = ['susie_design', 'sam_implementation', 'quinn_functional', 'susie
 const stageNames = new Set(stages);
 const terminal = new Set(['accepted_preview', 'cancelled', 'blocked']);
 const idPattern = /^[a-z0-9][a-z0-9-]{2,79}$/;
+export const MAX_MISSION_ROLE_CALLS = 8;
+
+function roleCallsUsed(state) {
+  return 1 + Object.values(state.attempts).reduce((total, attempt) => total + attempt, 0);
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -143,6 +148,13 @@ function validateTransition(previous, next) {
     assert(unchanged.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
     return;
   }
+  if (previous.status === 'ready' && next.status === 'blocked') {
+    assert(next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+      same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
+      next.error === `mission reached the ${MAX_MISSION_ROLE_CALLS}-call Codex CLI limit`,
+    'invalid mission checkpoint transition');
+    return;
+  }
   if (previous.status === 'failed' && next.status === 'ready') {
     assert(next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
       same(next.events, previous.events) && same(next.attempts, previous.attempts) &&
@@ -199,6 +211,11 @@ function validateState(value, id) {
       Number.isSafeInteger(event.revision) && Number.isSafeInteger(event.attempt) &&
       ['done', 'needs_revision', 'failed'].includes(event.status) && Array.isArray(event.evidence)) &&
     value.attempts && typeof value.attempts === 'object' && !Array.isArray(value.attempts) &&
+    Object.entries(value.attempts).every(([key, attempt]) => {
+      const match = /^(\d+):([a-z_]+)$/.exec(key);
+      return match && stageNames.has(match[2]) && Number(match[1]) <= value.maxRevisions &&
+        Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= value.maxAttempts;
+    }) &&
     (value.inFlight === null || value.inFlight && Object.keys(value.inFlight).length === 2 &&
       stageNames.has(value.inFlight.stage) && Number.isSafeInteger(value.inFlight.attempt)) &&
     (value.error === null || typeof value.error === 'string') &&
@@ -455,6 +472,11 @@ export class MissionRunner {
         if (await this.store.isCancelled(id)) {
           state.status = 'cancelled';
           state.inFlight = null;
+          return await this.store.save(state);
+        }
+        if (roleCallsUsed(state) >= MAX_MISSION_ROLE_CALLS) {
+          state.status = 'blocked';
+          state.error = `mission reached the ${MAX_MISSION_ROLE_CALLS}-call Codex CLI limit`;
           return await this.store.save(state);
         }
         const stage = state.currentStage;
