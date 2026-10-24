@@ -8,6 +8,18 @@ import { validateResult } from './contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const schema = fileURLToPath(new URL('./role-result.schema.json', import.meta.url));
+const MAX_CODEX_STDERR_BYTES = 8192;
+
+export function sanitizeCodexDiagnostic(value) {
+  return String(value ?? '')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/gi, '[redacted-token]')
+    .replace(/\b[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\b/g, '[redacted-token]')
+    .replace(/\b(authorization|api[_-]?key|token)\s*[:=]\s*\S+/gi, '$1=[redacted]')
+    .replace(/https?:\/\/[^\s]+/gi, '[url]')
+    .replace(/\b[A-Za-z]:\\[^\s"']+/g, '[local-path]')
+    .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
 
 export function roleCommand(codex, cwd, schemaPath, output, readOnly, images = []) {
   const mode = readOnly ? ['--sandbox', 'read-only'] : ['--approve-for-me'];
@@ -36,17 +48,27 @@ async function defaultLogin() {
   } catch { return false; }
 }
 
-async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }) {
-  const [executable, ...rest] = await resolveCodexCommand(args);
+async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }, { spawnProcess = spawn,
+  resolveCommand = resolveCodexCommand } = {}) {
+  const [executable, ...rest] = await resolveCommand(args);
   return await new Promise((resolve, reject) => {
-    const child = spawn(executable, rest, { cwd, env, stdio: ['pipe', 'ignore', 'pipe'] });
+    const child = spawnProcess(executable, rest, { cwd, env, stdio: ['pipe', 'ignore', 'pipe'] });
     let errors = '';
-    child.stderr.on('data', chunk => { if (errors.length < 1024 * 1024) errors += String(chunk); });
-    child.on('error', () => reject(new Error('Codex stage failed')));
+    child.stderr.on('data', chunk => {
+      if (errors.length < MAX_CODEX_STDERR_BYTES) errors += String(chunk).slice(0, MAX_CODEX_STDERR_BYTES - errors.length);
+    });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Codex stage timed out')); }, timeoutSeconds * 1000);
+    child.on('error', error => {
+      clearTimeout(timer);
+      const diagnostic = sanitizeCodexDiagnostic(`${error.code ?? ''} ${error.message}`);
+      reject(new Error(`Codex stage failed (process launch${error.code ? ` ${error.code}` : ''})${diagnostic ? `: ${diagnostic}` : ''}`));
+    });
     child.on('close', code => {
       clearTimeout(timer);
-      if (code !== 0) reject(new Error('Codex stage failed'));
+      if (code !== 0) {
+        const diagnostic = sanitizeCodexDiagnostic(errors);
+        reject(new Error(`Codex stage failed (exit ${code})${diagnostic ? `: ${diagnostic}` : ''}`));
+      }
       else resolve(null);
     });
     child.stdin.end(prompt);
@@ -54,8 +76,8 @@ async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }) {
 }
 
 export class CodexRunner {
-  constructor({ launch = defaultLaunch, login = defaultLogin } = {}) {
-    this.launch = launch;
+  constructor({ launch, login = defaultLogin, spawnProcess = spawn, resolveCommand = resolveCodexCommand } = {}) {
+    this.launch = launch ?? ((args, options) => defaultLaunch(args, options, { spawnProcess, resolveCommand }));
     this.login = login;
   }
 

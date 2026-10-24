@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { roleCommand, CodexRunner, resolveCodexCommand } from '../codex-runner.mjs';
 
@@ -67,4 +68,50 @@ test('model API keys are absent from child environment', async () => {
     env: { OPENAI_API_KEY: 'secret', CODEX_API_KEY: 'secret', PATH: '/bin' } });
   assert.equal(seen.OPENAI_API_KEY, undefined);
   assert.equal(seen.CODEX_API_KEY, undefined);
+});
+
+test('CLI nonzero exit retains a short sanitized diagnostic without exposing tokens or local paths', async () => {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => true;
+  const runner = new CodexRunner({ login: async () => true,
+    resolveCommand: async () => ['node', 'codex.js'],
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.emit('data', 'request failed: temporary write denied; Authorization: Bearer secret-token-value. ' +
+          'path C:\\Users\\JMann\\.codex\\tmp\\session.json');
+        child.emit('close', 12);
+      });
+      return child;
+    },
+  });
+  await assert.rejects(() => runner.runStructured({ cwd: 'C:\\workspace', prompt: 'Review the mission',
+    timeoutSeconds: 10, schemaPath: 'C:\\schema.json' }), error => {
+    assert.match(error.message, /Codex stage failed \(exit 12\)/);
+    assert.match(error.message, /temporary write denied/);
+    assert.doesNotMatch(error.message, /secret-token-value|C:\\\\Users/);
+    return true;
+  });
+});
+
+test('CLI process launch failures keep a safe platform error code', async () => {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => true;
+  const runner = new CodexRunner({ login: async () => true,
+    resolveCommand: async () => ['node', 'codex.js'],
+    spawnProcess: () => {
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('access denied at C:\\Users\\JMann\\.codex'),
+        { code: 'EACCES' })));
+      return child;
+    },
+  });
+  await assert.rejects(() => runner.runStructured({ cwd: 'C:\\workspace', prompt: 'Review the mission',
+    timeoutSeconds: 10, schemaPath: 'C:\\schema.json' }), error => {
+    assert.match(error.message, /Codex stage failed \(process launch EACCES\)/);
+    assert.doesNotMatch(error.message, /C:\\\\Users/);
+    return true;
+  });
 });
