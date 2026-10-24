@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "acceptanceCriteria", "questions"],
+  "properties": {
+    "status": { "enum": ["agreed", "needs_user", "blocked"] },
+    "summary": { "type": "string", "maxLength": 2000 },
+    "acceptanceCriteria": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 10, "maxLength": 500 } },
+    "questions": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 5, "maxLength": 500 } }
+  }
+}

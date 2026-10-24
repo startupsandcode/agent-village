@@ -20,4 +20,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: npm ci --prefix village
+      - run: npm exec --prefix village -- playwright install chromium
       - run: node --test

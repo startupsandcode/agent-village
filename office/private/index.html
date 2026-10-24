@@ -9,6 +9,7 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/office-assets/styles.css" />
     <script src="/office-assets/app.js" defer></script>
+    <script src="/office-assets/local-missions.js" defer></script>
     <script src="/office-assets/hosted-chat.js" defer></script>
   </head>
   <body>
@@ -21,6 +22,7 @@
         </a>
         <nav aria-label="Page sections">
           <a href="#office">Office</a>
+          <a href="#local-missions">Local missions</a>
           <a href="#work-board">Work board</a>
           <a href="/">Public demo</a>
         </nav>
@@ -82,6 +84,18 @@
               <h4>Talk with Maya</h4><form id="hosted-chat-form"><label for="hosted-message">Your answer to Maya</label><textarea id="hosted-message" maxlength="1000" rows="3" required placeholder="Answer Maya’s question…"></textarea><button type="submit">Send answer</button></form><p id="hosted-request-state" role="status"></p><div class="hosted-actions"><button id="hosted-retry-question" type="button" hidden>Retry Maya question</button><button id="hosted-build" type="button" hidden>Build site</button><button id="hosted-revise" type="button" hidden>Revise once using Quinn’s findings</button><button id="hosted-review" type="button" hidden>Ask Quinn to review</button><button id="hosted-cancel" type="button" hidden>Cancel current stage</button></div><h4>Recorded team activity</h4><ol id="hosted-events"></ol><div id="hosted-artifact"></div><section id="hosted-usage" aria-labelledby="hosted-usage-title"><h4 id="hosted-usage-title">API usage in this Village</h4><p>This tracks this Village’s OpenAI or Anthropic API calls, not your ChatGPT or Codex subscription quota. Token counts come from provider responses when available. Costs are estimates, not bills.</p><p id="hosted-usage-status" role="status">Checking usage records…</p><ul id="hosted-usage-agents"></ul><ol id="hosted-usage-calls"></ol><p id="hosted-usage-pricing"></p></section><section id="hosted-publish" hidden><h4>Publish reviewed site</h4><p>The exact destinations below are set by the office owner on the server. Each button makes a separate external write after you press it.</p><p id="hosted-publish-targets"></p><div class="hosted-actions"><button id="hosted-publish-github" type="button" hidden>Publish to private GitHub branch</button><button id="hosted-publish-vercel" type="button" hidden>Deploy Vercel Preview</button><button id="hosted-publish-reconcile" type="button" hidden>Reconcile a deleted Vercel attempt</button><button id="hosted-publish-refresh" type="button">Check publish status</button></div><p id="hosted-publish-result" role="status"></p></section>
             </section>
           </div>
+        </section>
+        <section id="local-missions" class="local-missions" aria-labelledby="local-missions-title">
+          <div class="local-missions-heading">
+            <div>
+              <p class="section-index">This computer</p>
+              <h2 id="local-missions-title">Local mission runs</h2>
+            </div>
+            <button id="local-missions-refresh" class="refresh-button" type="button">Refresh missions</button>
+          </div>
+          <p class="local-missions-note">Private to this local Office session. Hosted Office cannot see files on this computer.</p>
+          <p id="local-missions-status" class="local-missions-status" role="status" aria-live="polite">Checking local mission status.</p>
+          <ul id="local-missions-list" class="local-missions-list" aria-label="Local mission status"></ul>
         </section>
         <div id="global-office">
 

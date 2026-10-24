@@ -147,6 +147,22 @@ main { display: flex; flex-direction: column; }
 .hosted-maya p { max-width: 780px; line-height: 1.5; }
 .hosted-maya a { color: var(--teal); font-weight: 800; }
 .hosted-maya ol { line-height: 1.6; }
+.local-missions { margin: 0 0 46px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 16px; background: #edf5ef; }
+.local-missions-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.local-missions-heading .section-index { margin-bottom: 5px; }
+.local-missions-heading h2 { font-size: clamp(24px, 2.7vw, 34px); }
+.local-missions-note, .local-missions-status { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.local-missions-status { font-weight: 700; }
+.local-missions-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+.local-mission-card { min-width: 0; padding: 18px; border: 1px solid #bfd2c6; border-radius: 12px; background: #fffef8; }
+.local-mission-card-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.local-mission-card h3 { margin: 0; font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
+.local-mission-badge { flex: 0 0 auto; padding: 5px 9px; border-radius: 999px; background: #d9eee6; color: #175d4e; font-size: 12px; font-weight: 800; }
+.local-mission-badge.is-error { background: #8d2c25; color: white; }
+.local-mission-description { margin: 14px 0 8px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.local-mission-time { margin: 0; color: var(--muted); font-size: 12px; }
+.local-mission-preview { display: inline-flex; margin-top: 13px; color: var(--teal); font-size: 14px; font-weight: 800; }
+.local-missions button:focus-visible, .local-missions a:focus-visible { outline-offset: 3px; }
 #hosted-chat { margin-top: 20px; }
 .project-dashboard-heading, .project-detail-heading, .project-detail-nav { display: flex; justify-content: space-between; align-items: start; gap: 22px; }
 .project-detail-nav { flex-wrap: wrap; align-items: center; margin-bottom: 28px; }
@@ -261,6 +277,8 @@ main { display: flex; flex-direction: column; }
   .task-row { grid-template-columns: 42px 1fr 18px; gap: 8px; padding: 14px 15px; }
   .site-footer { align-items: start; flex-direction: column; justify-content: center; gap: 6px; }
   .hosted-maya { margin: 16px 0 26px; padding: 20px; }
+  .local-missions { margin-bottom: 34px; padding: 19px; }
+  .local-missions-heading { align-items: start; flex-direction: column; }
   .project-dashboard-heading, .project-detail-heading { flex-direction: column; gap: 12px; }
   .project-detail-identity { flex-basis: auto; width: 100%; }
   .project-detail-heading { align-items: start; }

@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCheckins, readAgents } from './lib/checkins.mjs';
 import { createTaskLoader } from './lib/tasks.mjs';
+import { createMissionLoader } from './lib/missions.mjs';
 
 const officeDir = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -38,6 +39,7 @@ export function createOfficeServer({
   privatePageFile = resolve(officeDir, 'private', 'index.html'),
   now = Date.now,
   getTasks = createTaskLoader({ repo: process.env.VILLAGE_GITHUB_REPO || null }),
+  getMissions = createMissionLoader(),
 } = {}) {
   return createServer(async (request, response) => {
     const head = request.method === 'HEAD';
@@ -52,6 +54,12 @@ export function createOfficeServer({
       try { tasks = await getTasks(); } catch { tasks = { status: 'error', updatedAt: null, items: [] }; }
       const body = JSON.stringify({ generatedAt: new Date(now()).toISOString(), repository: process.env.VILLAGE_GITHUB_REPO || null, agents: readAgents(reports, now()), tasks });
       return respond(response, 200, body, 'application/json; charset=utf-8', head);
+    }
+    if (pathname === '/api/missions') {
+      let missions;
+      try { missions = await getMissions(); }
+      catch { missions = { status: 'error', updatedAt: null, items: [] }; }
+      return respond(response, 200, JSON.stringify(missions), 'application/json; charset=utf-8', head);
     }
     if (pathname.startsWith('/api/')) return respond(response, 404, 'Not found', undefined, head);
     if (pathname === '/office') {
