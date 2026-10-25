@@ -311,16 +311,35 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   await f.store.authorizeFinalFunctionalReviewRetry(f.mission.id, evidence, { operatorApproved: true });
   let visualCalls = 0;
   const blocked = await f.runner.run(f.mission.id, successfulHandlers({
-    quinn_functional: async () => { throw new Error('Quinn review did not approve (status=needs_revision)'); },
+    quinn_functional: async () => { throw new Error('Quinn review did not approve (status=blocked)'); },
     susie_visual: async () => { visualCalls++; throw new Error('Susie must not run after Quinn failure'); },
   }));
   assert.equal(blocked.status, 'blocked');
-  assert.match(blocked.error, /needs_revision/);
+  assert.match(blocked.error, /status=blocked/);
   assert.equal(blocked.attempts['0:quinn_functional'], 4);
   assert.equal(blocked.attempts['0:susie_visual'], undefined);
   assert.equal(visualCalls, 0);
   assert.equal(blocked.finalQuinnRetry.status, 'consumed');
   assert.equal(blocked.mayaIntakeCalls + Object.values(blocked.attempts).reduce((sum, attempt) => sum + attempt, 0), 8);
+  await assert.rejects(f.store.authorizeSecondFinalFunctionalReviewRetry(f.mission.id, evidence), /explicit operator approval/);
+  const authorized = await f.store.authorizeSecondFinalFunctionalReviewRetry(f.mission.id, evidence, { operatorApproved: true });
+  assert.equal(authorized.version, 11);
+  assert.equal(authorized.roleCallLimit, 10);
+  assert.deepEqual(authorized.events, blocked.events);
+  assert.equal(authorized.secondFinalQuinnRetry.retryAttempt, 5);
+  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const completed = await f.runner.run(f.mission.id, successfulHandlers({
+    susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the desktop and narrow renders.'],
+      artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
+      output: { kind: 'visual_review', decision: 'approved', findings: [] } }),
+  }));
+  assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
+  assert.equal(completed.attempts['0:quinn_functional'], 5);
+  assert.equal(completed.attempts['0:susie_visual'], 1);
+  assert.equal(completed.secondFinalQuinnRetry.status, 'consumed');
+  assert.deepEqual(completed.events.filter(event => event.stage === 'quinn_functional').map(event => event.status),
+    ['failed', 'failed', 'failed', 'failed', 'done']);
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 10);
 });
 
 test('confirmed retryable failure can resume from its durable checkpoint without replaying uncertain outcomes', async t => {

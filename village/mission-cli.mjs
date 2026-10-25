@@ -179,6 +179,10 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     await store.cancel(args[0]);
     return { id: args[0], status: 'cancellation_requested' };
   }
+  if (command === 'increase-final-review-cap-10') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-9-to-10',
+      'increase-final-review-cap-10 <mission-id> --user-approved-9-to-10 required');
+  }
   if (command === 'retry-functional-uncertain') {
     requireValue(args.length === 2 && args[1] === '--operator-approved-uncertain-outcome',
       'retry-functional-uncertain <mission-id> --operator-approved-uncertain-outcome required');
@@ -460,6 +464,54 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
       retryAttempt: authorized.finalQuinnRetry.retryAttempt };
   }
+  if (command === 'increase-final-review-cap-10') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-9-to-10',
+      'increase-final-review-cap-10 <mission-id> --user-approved-9-to-10 required');
+    const [id] = args;
+    const state = await store.get(id);
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: `validation/${id}` });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; final review authorization requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for final review authorization');
+    requireValue(state.version === 10 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.attempts['0:quinn_functional'] === 4 && state.events.at(-1)?.attempt === 4 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)',
+    'mission does not match the specifically approved one-call increase');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeSecondFinalFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+    }, { operatorApproved: true });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailuresRetained: true,
+      operatorApprovalRecorded: authorized.secondRoleCallLimitIncrease.operatorApproved,
+      previousRoleCallLimit: authorized.secondRoleCallLimitIncrease.previousLimit,
+      roleCallLimit: authorized.roleCallLimit,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.secondFinalQuinnRetry.retryAttempt };
+  }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
@@ -568,7 +620,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, retry-functional, retry-functional-uncertain, increase-final-review-cap, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, retry-functional, retry-functional-uncertain, increase-final-review-cap, increase-final-review-cap-10, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
