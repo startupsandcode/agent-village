@@ -149,17 +149,36 @@ function validateTransition(previous, next) {
     next.finalQuinnRetry.operatorApproved === true && next.currentStage === previous.currentStage &&
     next.revisions === previous.revisions && same(next.events, previous.events) &&
     same(next.attempts, previous.attempts) && next.inFlight === null && next.error === null;
+  const secondFinalFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 10 && next.version === 11 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 4 && previous.attempts['0:quinn_functional'] === 4 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.attempt === 4 &&
+    previous.events.at(-1)?.status === 'failed' && previous.events.at(-1)?.retryable === false &&
+    previous.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)' &&
+    previous.finalQuinnRetry?.status === 'consumed' && previous.finalQuinnRetry.retryAttempt === 4 &&
+    previous.roleCallLimit === 9 && roleCallsUsed(previous) === 8 &&
+    next.roleCallLimit === 10 && next.secondRoleCallLimitIncrease?.previousLimit === 9 &&
+    next.secondRoleCallLimitIncrease?.newLimit === 10 && next.secondRoleCallLimitIncrease?.operatorApproved === true &&
+    next.secondFinalQuinnRetry?.status === 'authorized' && next.secondFinalQuinnRetry.stage === 'quinn_functional' &&
+    next.secondFinalQuinnRetry.failedAttempt === 4 && next.secondFinalQuinnRetry.retryAttempt === 5 &&
+    next.secondFinalQuinnRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256 &&
+    next.secondFinalQuinnRetry.operatorApproved === true && next.currentStage === previous.currentStage &&
+    next.revisions === previous.revisions && same(next.events, previous.events) &&
+    same(next.attempts, previous.attempts) && next.inFlight === null && next.error === null;
   const immutable = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
-  if (previous.version >= 10) immutable.push('roleCallLimit', 'roleCallLimitIncrease');
+  if (previous.version >= 10) immutable.push('roleCallLimitIncrease');
+  if (previous.version >= 10 && !secondFinalFunctionalRetryGranted) immutable.push('roleCallLimit');
   if (previous.version === next.version) immutable.push('version');
-  else assert(recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted,
+  else assert(recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted || secondFinalFunctionalRetryGranted,
     'invalid mission checkpoint transition');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
-  if (recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted) return;
+  if (recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted || secondFinalFunctionalRetryGranted) return;
   const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error', 'previewDeploymentRecovery',
-    'functionalReviewRecovery', 'uncertainFunctionalRetry', 'roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry'];
+    'functionalReviewRecovery', 'uncertainFunctionalRetry', 'roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry',
+    'secondRoleCallLimitIncrease', 'secondFinalQuinnRetry'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
   const prevAttempt = previous.attempts[stageKey] ?? 0;
   const nextAttempt = next.attempts[stageKey] ?? 0;
@@ -192,16 +211,23 @@ function validateTransition(previous, next) {
       previous.finalQuinnRetry.revision === previous.revisions && previous.finalQuinnRetry.retryAttempt === nextAttempt &&
       nextAttempt === 4 && next.finalQuinnRetry?.status === 'consumed' &&
       same({ ...previous.finalQuinnRetry, status: 'consumed' }, next.finalQuinnRetry);
+    const secondFinalQuinnRetry = previous.secondFinalQuinnRetry?.status === 'authorized' &&
+      previous.secondFinalQuinnRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.secondFinalQuinnRetry.revision === previous.revisions &&
+      previous.secondFinalQuinnRetry.retryAttempt === nextAttempt && nextAttempt === 5 &&
+      next.secondFinalQuinnRetry?.status === 'consumed' &&
+      same({ ...previous.secondFinalQuinnRetry, status: 'consumed' }, next.secondFinalQuinnRetry);
     assert(['ready', 'failed'].includes(previous.status) && previous.inFlight === null &&
       next.status === 'running' && next.currentStage === previous.currentStage &&
       next.revisions === previous.revisions && same(next.events, previous.events) &&
       next.inFlight?.stage === previous.currentStage && next.inFlight.attempt === nextAttempt &&
-      (nextAttempt <= previous.maxAttempts || recoveryAttempt || functionalRetry || uncertainFunctionalRetry || finalQuinnRetry) &&
+      (nextAttempt <= previous.maxAttempts || recoveryAttempt || functionalRetry || uncertainFunctionalRetry || finalQuinnRetry || secondFinalQuinnRetry) &&
       next.error === previous.error &&
       (recoveryAttempt || same(previous.preExecutionRecovery, next.preExecutionRecovery)) &&
       (functionalRetry || same(previous.functionalReviewRecovery, next.functionalReviewRecovery)) &&
       (uncertainFunctionalRetry || same(previous.uncertainFunctionalRetry, next.uncertainFunctionalRetry)) &&
-      (finalQuinnRetry || same(previous.finalQuinnRetry, next.finalQuinnRetry)),
+      (finalQuinnRetry || same(previous.finalQuinnRetry, next.finalQuinnRetry)) &&
+      (secondFinalQuinnRetry || same(previous.secondFinalQuinnRetry, next.secondFinalQuinnRetry)),
     'invalid mission checkpoint transition');
     return;
   }
@@ -311,9 +337,10 @@ function validateState(value, id) {
   if (value?.version >= 8) stateKeys.push('functionalReviewRecovery');
   if (value?.version >= 9) stateKeys.push('uncertainFunctionalRetry');
   if (value?.version >= 10) stateKeys.push('roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry');
+  if (value?.version >= 11) stateKeys.push('secondRoleCallLimitIncrease', 'secondFinalQuinnRetry');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4, 5, 6, 7, 8, 9, 10].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -364,7 +391,9 @@ function validateState(value, id) {
           value.uncertainFunctionalRetry?.stage === match[2] && value.uncertainFunctionalRetry.revision === Number(match[1]) &&
           attempt === value.uncertainFunctionalRetry.retryAttempt ||
           value.finalQuinnRetry?.stage === match[2] && value.finalQuinnRetry.revision === Number(match[1]) &&
-          attempt === value.finalQuinnRetry.retryAttempt);
+          attempt === value.finalQuinnRetry.retryAttempt ||
+          value.secondFinalQuinnRetry?.stage === match[2] && value.secondFinalQuinnRetry.revision === Number(match[1]) &&
+          attempt === value.secondFinalQuinnRetry.retryAttempt);
     }) &&
     (value.inFlight === null || value.inFlight && Object.keys(value.inFlight).length === 2 &&
       stageNames.has(value.inFlight.stage) && Number.isSafeInteger(value.inFlight.attempt)) &&
@@ -441,7 +470,7 @@ function validateState(value, id) {
     (value.uncertainFunctionalRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
       value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 2 :
       value.attempts['0:quinn_functional'] >= 3), 'invalid uncertain functional retry record');
-  assert(value.version < 10 || value.roleCallLimit === 9 && value.roleCallLimitIncrease &&
+  assert(value.version < 10 || (value.version < 11 ? value.roleCallLimit === 9 : value.roleCallLimit === 10) && value.roleCallLimitIncrease &&
     Object.keys(value.roleCallLimitIncrease).length === 4 && value.roleCallLimitIncrease.previousLimit === 8 &&
     value.roleCallLimitIncrease.newLimit === 9 && value.roleCallLimitIncrease.operatorApproved === true &&
     Number.isFinite(Date.parse(value.roleCallLimitIncrease.authorizedAt)) && value.finalQuinnRetry &&
@@ -453,6 +482,20 @@ function validateState(value, id) {
     ['authorized', 'consumed'].includes(value.finalQuinnRetry.status) && value.uncertainFunctionalRetry?.status === 'consumed' &&
     value.attempts['0:quinn_functional'] >= (value.finalQuinnRetry.status === 'authorized' ? 3 : 4),
   'invalid final Quinn retry record');
+  assert(value.version < 11 || value.roleCallLimit === 10 && value.secondRoleCallLimitIncrease &&
+    Object.keys(value.secondRoleCallLimitIncrease).length === 4 && value.secondRoleCallLimitIncrease.previousLimit === 9 &&
+    value.secondRoleCallLimitIncrease.newLimit === 10 && value.secondRoleCallLimitIncrease.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.secondRoleCallLimitIncrease.authorizedAt)) && value.secondFinalQuinnRetry &&
+    Object.keys(value.secondFinalQuinnRetry).length === 8 && value.secondFinalQuinnRetry.stage === 'quinn_functional' &&
+    value.secondFinalQuinnRetry.revision === 0 && value.secondFinalQuinnRetry.failedAttempt === 4 &&
+    value.secondFinalQuinnRetry.retryAttempt === 5 && /^[a-f0-9]{64}$/.test(value.secondFinalQuinnRetry.evidenceSha256 ?? '') &&
+    value.secondFinalQuinnRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.secondFinalQuinnRetry.operatorApproved === true && Number.isFinite(Date.parse(value.secondFinalQuinnRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.secondFinalQuinnRetry.status) && value.finalQuinnRetry?.status === 'consumed' &&
+    (value.secondFinalQuinnRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 4 :
+      value.attempts['0:quinn_functional'] >= 5),
+  'invalid second final Quinn retry record');
   assert(value.events.every(event => {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
@@ -587,10 +630,11 @@ export class MissionStore {
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
         if (!((previous.version === 5 && value.version === 6) || (previous.version === 6 && value.version === 7) ||
           (previous.version === 7 && value.version === 8) || (previous.version === 8 && value.version === 9) ||
-          (previous.version === 9 && value.version === 10))) immutableKeys.push('version');
+          (previous.version === 9 && value.version === 10) || (previous.version === 10 && value.version === 11))) immutableKeys.push('version');
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
         if (previous.version >= 5) immutableKeys.push('previewTarget');
-        if (previous.version >= 10) immutableKeys.push('roleCallLimit', 'roleCallLimitIncrease');
+        if (previous.version >= 10) immutableKeys.push('roleCallLimitIncrease');
+        if (previous.version >= 10 && !(previous.version === 10 && value.version === 11)) immutableKeys.push('roleCallLimit');
         for (const key of immutableKeys) {
           if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) throw new Error('invalid mission checkpoint');
         }
@@ -788,6 +832,33 @@ export class MissionStore {
     return await this.save(state);
   }
 
+  async authorizeSecondFinalFunctionalReviewRetry(id, evidence, { operatorApproved = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for the 9-to-10 mission call increase');
+    assert(state.version === 10 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 4 && state.attempts['0:quinn_functional'] === 4 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 4 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)' &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.uncertainFunctionalRetry?.status === 'consumed' &&
+      state.finalQuinnRetry?.status === 'consumed' && state.roleCallLimit === 9 && roleCallsUsed(state) === 8 &&
+      !state.secondFinalQuinnRetry && !state.secondRoleCallLimitIncrease && !(await this.isCancelled(id)),
+    'mission is not eligible for the one-time approved Quinn call increase from nine to ten');
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the final Quinn review');
+    const authorizedAt = new Date().toISOString();
+    state.version = 11;
+    state.roleCallLimit = 10;
+    state.secondRoleCallLimitIncrease = { previousLimit: 9, newLimit: 10, operatorApproved: true, authorizedAt };
+    state.secondFinalQuinnRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 4, retryAttempt: 5,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized', authorizedAt };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
   async isCancelled(id) {
     try { await readFile(`${this.path(id)}.cancel`); return true; }
     catch (error) { if (error.code === 'ENOENT') return false; throw error; }
@@ -888,8 +959,11 @@ export class MissionRunner {
         const authorizedFinalQuinnRetry = state.finalQuinnRetry?.status === 'authorized' &&
           state.finalQuinnRetry.stage === stage && state.finalQuinnRetry.revision === state.revisions &&
           state.finalQuinnRetry.retryAttempt === attempt;
+        const authorizedSecondFinalQuinnRetry = state.secondFinalQuinnRetry?.status === 'authorized' &&
+          state.secondFinalQuinnRetry.stage === stage && state.secondFinalQuinnRetry.revision === state.revisions &&
+          state.secondFinalQuinnRetry.retryAttempt === attempt;
         if (attempt > state.maxAttempts && !authorizedPreExecutionRetry && !authorizedFunctionalRetry &&
-            !authorizedUncertainFunctionalRetry && !authorizedFinalQuinnRetry) {
+            !authorizedUncertainFunctionalRetry && !authorizedFinalQuinnRetry && !authorizedSecondFinalQuinnRetry) {
           state.status = 'failed';
           state.error = `attempt limit reached for ${stage}`;
           return await this.store.save(state);
@@ -899,6 +973,7 @@ export class MissionRunner {
         if (authorizedFunctionalRetry) state.functionalReviewRecovery.status = 'consumed';
         if (authorizedUncertainFunctionalRetry) state.uncertainFunctionalRetry.status = 'consumed';
         if (authorizedFinalQuinnRetry) state.finalQuinnRetry.status = 'consumed';
+        if (authorizedSecondFinalQuinnRetry) state.secondFinalQuinnRetry.status = 'consumed';
         state.status = 'running';
         state.attempts[key] = attempt;
         state.inFlight = { stage, attempt };
