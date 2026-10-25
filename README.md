@@ -64,7 +64,7 @@ The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired pro
 
 ## Host the office on Vercel
 
-The existing `agent-village` Vercel project uses `office/` as its root. Its public routes serve the synthetic team demo, workflow explainer, and setup guide. The invited workspace and its APIs use application-level authentication and authorization; public routes and private routes share the same deployment. See the [hosted office guide](office/README.md) for deployment configuration and the [deployment design](docs/office-vercel-design.md) for the route and data boundaries.
+The existing `agent-village` Vercel project uses `office/` as its root. Its public root serves the synthetic team demo, `/workflow` explains the design-led path from an agreed goal to reviewable proof, and `/setup` explains current prerequisites and repository access limits. The invited workspace at `/office` and its APIs use application-level authentication and authorization; public routes and private routes share the same deployment. See the [hosted office guide](office/README.md) for deployment configuration and the [deployment design](docs/office-vercel-design.md) for the route and data boundaries.
 
 ## Local Maya chat
 
