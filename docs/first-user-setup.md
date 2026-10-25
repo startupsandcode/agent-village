@@ -2,11 +2,13 @@
 
 This guide uses the local, single-user static-site workflow. It does not set up the private hosted office, publish a site, or connect a provider until you choose to run a project.
 
+A public clone lets you inspect and adapt the source, run deterministic tests with fake providers, and use the local interface with your own provider key. It does not grant upstream write permissions, hosted office access, or authorization to run autonomous missions in other repositories. The Codex issue-to-PR workflow in the root README is a separate path requiring Codex and GitHub authentication for write actions.
+
 ## What you need
 
 - Windows 10 or 11 with PowerShell.
 - Git and Node.js 20.12 or newer (`node --version`).
-- Access to the private `startupsandcode/agent-village` GitHub repository to clone it. GitHub CLI and a GitHub token are not needed after the clone for the local workflow.
+- A clone of the public `startupsandcode/agent-village` GitHub repository. No invitation, GitHub login, GitHub CLI, or GitHub token is required to clone it or use the local workflow.
 - Your own OpenAI or Anthropic API key for a live project. A ChatGPT subscription is not an API key. Provider API calls can incur separate charges.
 
 The normal project makes four provider calls: Maya clarification, Maya plan, Sam build, and Quinn review. If Quinn rejects the artifact, the interface allows one bounded Sam revision and a new Quinn review. A failed revision and failed re-review can each be retried once; the hard limit is eight calls per project. This is a call limit, **not a dollar spending limit**. Before a live run, set a hard spending limit with your provider. No live paid-provider calls were made during the acceptance work for this guide.
