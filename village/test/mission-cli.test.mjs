@@ -39,6 +39,11 @@ test('second final review call increase requires the explicit user-approved 9-to
     /increase-final-review-cap-10 <mission-id> --user-approved-9-to-10/);
 });
 
+test('third final review call increase requires the explicit user-approved 10-to-11 flag before loading a mission', async () => {
+  await assert.rejects(() => main(['increase-final-review-cap-11', 'mission-46'], { env: {} }),
+    /increase-final-review-cap-11 <mission-id> --user-approved-10-to-11/);
+});
+
 test('preview evidence URL comparison accepts only equivalent clean HTTP(S) locations', () => {
   assert.equal(samePreviewUrl('https://astra.example.test', 'https://astra.example.test/'), true);
   assert.equal(samePreviewUrl('https://astra.example.test/path/', 'https://astra.example.test/path'), true);
