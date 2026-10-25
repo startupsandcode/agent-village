@@ -537,7 +537,13 @@ test('local HTTP reports missing configuration and enforces host and origin', as
     assert.equal((await fetch(`${base}/office.js`)).status, 200);
     const setup = await fetch(`${base}/setup`);
     assert.match(setup.headers.get('content-type'), /^text\/html/);
-    assert.match(await setup.text(), /Start on your computer/);
+    assert.match(await setup.text(), /Explore the workflow/);
+    const workflow = await fetch(`${base}/workflow`);
+    assert.equal(workflow.status, 200);
+    assert.match(workflow.headers.get('content-security-policy'), /script-src 'self'/);
+    assert.match(await workflow.text(), /A visible path/);
+    assert.equal((await fetch(`${base}/workflow.css`)).status, 200);
+    assert.equal((await fetch(`${base}/workflow.js`)).status, 200);
     assert.match(await (await fetch(`${base}/setup.css`)).text(), /\.setup-shell/);
     assert.deepEqual(await (await fetch(`${base}/api/domain`)).json(), { audience: '', expertise: '', rules: '' });
     assert.equal((await fetch(`${base}/api/domain`, { method: 'POST', headers: { origin: 'https://wrong.example', 'content-type': 'application/json' }, body: JSON.stringify({ audience: 'Gardeners', expertise: '', rules: '' }) })).status, 403);
