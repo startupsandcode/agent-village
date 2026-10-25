@@ -327,6 +327,25 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   assert.equal(authorized.roleCallLimit, 10);
   assert.deepEqual(authorized.events, blocked.events);
   assert.equal(authorized.secondFinalQuinnRetry.retryAttempt, 5);
+  const instrumentedFailure = await f.runner.run(f.mission.id, successfulHandlers({
+    quinn_functional: async () => {
+      throw new Error('Codex stage failed (exit 1): WARNING: startup diagnostic truncated FATAL: fixture terminal failure; api_key=[redacted]');
+    },
+    susie_visual: async () => { visualCalls++; throw new Error('Susie must not run after Quinn failure'); },
+  }));
+  assert.equal(instrumentedFailure.status, 'blocked');
+  assert.match(instrumentedFailure.error, /FATAL: fixture terminal failure/);
+  assert.doesNotMatch(instrumentedFailure.error, /hidden-fixture-secret/);
+  assert.equal(instrumentedFailure.attempts['0:quinn_functional'], 5);
+  assert.equal(instrumentedFailure.attempts['0:susie_visual'], undefined);
+  assert.equal(visualCalls, 0);
+  assert.equal(instrumentedFailure.mayaIntakeCalls + Object.values(instrumentedFailure.attempts).reduce((sum, attempt) => sum + attempt, 0), 9);
+  await assert.rejects(f.store.authorizeThirdFinalFunctionalReviewRetry(f.mission.id, evidence), /explicit operator approval/);
+  const finalAuthorization = await f.store.authorizeThirdFinalFunctionalReviewRetry(f.mission.id, evidence, { operatorApproved: true });
+  assert.equal(finalAuthorization.version, 12);
+  assert.equal(finalAuthorization.roleCallLimit, 11);
+  assert.deepEqual(finalAuthorization.events, instrumentedFailure.events);
+  assert.equal(finalAuthorization.thirdFinalQuinnRetry.retryAttempt, 6);
   const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the desktop and narrow renders.'],
@@ -334,12 +353,13 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
       output: { kind: 'visual_review', decision: 'approved', findings: [] } }),
   }));
   assert.equal(completed.status, 'accepted_preview', completed.error ?? '');
-  assert.equal(completed.attempts['0:quinn_functional'], 5);
+  assert.equal(completed.attempts['0:quinn_functional'], 6);
   assert.equal(completed.attempts['0:susie_visual'], 1);
   assert.equal(completed.secondFinalQuinnRetry.status, 'consumed');
+  assert.equal(completed.thirdFinalQuinnRetry.status, 'consumed');
   assert.deepEqual(completed.events.filter(event => event.stage === 'quinn_functional').map(event => event.status),
-    ['failed', 'failed', 'failed', 'failed', 'done']);
-  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 10);
+    ['failed', 'failed', 'failed', 'failed', 'failed', 'done']);
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 11);
 });
 
 test('confirmed retryable failure can resume from its durable checkpoint without replaying uncertain outcomes', async t => {
