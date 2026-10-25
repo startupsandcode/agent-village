@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Worker } from '../worker.mjs';
 
-const dispatch = { request_id: 'emma:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
-  parent_issue: 21, first_actionable_issue: 22, brief_id: 'emma-2026-09',
+const dispatch = { request_id: 'maya:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
+  parent_issue: 21, first_actionable_issue: 22, brief_id: 'maya-2026-09',
   brief_digest: 'a'.repeat(64), candidate_id: 'b', approved_at: '2026-09-29T13:00:00Z' };
 const sha = 'abc'.padEnd(40, '0');
 const otherSha = 'def'.padEnd(40, '0');
@@ -20,9 +20,9 @@ function result(stage, status, extra = {}) {
 function fixture() {
   const comments = [comment(dispatchBody)];
   const issues = new Map([
-    [21, { number: 21, body: `<!-- emma-ticket:${dispatch.request_id}:parent -->\nApproved parent` }],
+    [21, { number: 21, body: `<!-- maya-ticket:${dispatch.request_id}:parent -->\nApproved parent` }],
     [22, { number: 22, title: 'Build smallest release for #21',
-      body: `<!-- emma-ticket:${dispatch.request_id}:build -->\nParent #21; opportunity #12.\n\nApproved implementation issue` }],
+      body: `<!-- maya-ticket:${dispatch.request_id}:build -->\nParent #21; opportunity #12.\n\nApproved implementation issue` }],
   ]);
   const gh = {
     prs: new Map(),
@@ -92,13 +92,13 @@ test('material spending or outreach question goes to John', async () => {
   assert.equal(f.comments.filter(c => c.body.includes('village-question:')).length, 1);
 });
 
-test('Emma answer resumes Maya from the durable question trail', async () => {
+test('owner answer resumes Maya from the durable question trail', async () => {
   const f = fixture();
-  f.codex.replies.push(result('maya', 'needs_emma', { question_id: 'q-7',
+  f.codex.replies.push(result('maya', 'needs_owner', { question_id: 'q-7',
     question: 'Which copy?', category: 'routine' }), result('maya', 'done'));
-  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
-  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
-  f.comments.push(comment('<!-- emma-answer:q-7 -->\n' + JSON.stringify({
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_owner');
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_owner');
+  f.comments.push(comment('<!-- owner-answer:q-7 -->\n' + JSON.stringify({
     request_id: dispatch.request_id, issue: 22, category: 'routine', brief_basis: 'Approved buyer',
     status: 'answered', answer: 'Use the approved buyer copy', question_id: 'q-7' })));
   assert.equal((await f.worker.advance(dispatch)).status, 'progress');
@@ -131,7 +131,7 @@ test('Quinn cannot approve a different current PR head than the one she reviewed
 
 test('lost question comment is reconstructed from durable stage result', async () => {
   const f = fixture();
-  f.codex.replies.push(result('maya', 'needs_emma', { question_id: 'q-7',
+  f.codex.replies.push(result('maya', 'needs_owner', { question_id: 'q-7',
     question: 'Which approved copy?', category: 'routine' }));
   const original = f.gh.comment;
   f.gh.comment = async (number, body) => {
@@ -140,7 +140,7 @@ test('lost question comment is reconstructed from durable stage result', async (
   };
   assert.equal((await f.worker.advance(dispatch)).status, 'blocked');
   f.gh.comment = original;
-  assert.equal((await f.worker.advance(dispatch)).status, 'needs_emma');
+  assert.equal((await f.worker.advance(dispatch)).status, 'needs_owner');
   assert.equal(f.comments.filter(item => item.body.includes('village-question:')).length, 1);
   assert.equal(f.codex.calls.length, 1);
 });
@@ -151,7 +151,7 @@ test('explicit John decision resumes a material question, while rejection blocks
     question: 'Change scope?', category: 'scope' }), result('maya', 'done'));
   assert.equal((await f.worker.advance(dispatch)).status, 'needs_john');
   assert.equal((await f.worker.advance(dispatch)).status, 'needs_john');
-  f.comments.push(comment('<!-- emma-john-decision:q-7 -->\n' + JSON.stringify({
+  f.comments.push(comment('<!-- owner-decision:q-7 -->\n' + JSON.stringify({
     request_id: dispatch.request_id, issue: 22,
     question_id: 'q-7', status: 'approved', answer: 'Approve smaller scope', category: 'scope' })));
   assert.equal((await f.worker.advance(dispatch)).status, 'progress');
@@ -169,10 +169,10 @@ test('host switch during Codex stage stops before result write', async () => {
 
 const stageBody = (kind, index, value) =>
   `<!-- village-stage-${kind}:${dispatch.request_id}:${index} -->\n${JSON.stringify(value)}`;
-const answerBody = (status = 'answered', extra = {}) => '<!-- emma-answer:q-7 -->\n' + JSON.stringify({
+const answerBody = (status = 'answered', extra = {}) => '<!-- owner-answer:q-7 -->\n' + JSON.stringify({
   request_id: dispatch.request_id, issue: 22, question_id: 'q-7', category: 'routine',
   status, answer: 'Use approved buyer copy', brief_basis: 'Brief buyer choice', ...extra });
-const johnBody = (extra = {}) => '<!-- emma-john-decision:q-7 -->\n' + JSON.stringify({
+const johnBody = (extra = {}) => '<!-- owner-decision:q-7 -->\n' + JSON.stringify({
   request_id: dispatch.request_id, issue: 22, question_id: 'q-7', category: 'routine',
   status: 'approved', answer: 'John approves this decision', ...extra });
 
@@ -189,9 +189,9 @@ test('progress resumes the same role for Maya, Sam and Quinn', async () => {
   assert.ok(f.codex.calls[5].prompt.includes(sha));
 });
 
-for (const direct of [true, false]) test(`routine ${direct ? 'needs_john' : 'Emma escalation'} waits for John`, async () => {
+for (const direct of [true, false]) test(`routine ${direct ? 'needs_john' : 'owner escalation'} waits for John`, async () => {
   const f = fixture();
-  f.codex.replies.push(result('maya', direct ? 'needs_john' : 'needs_emma', {
+  f.codex.replies.push(result('maya', direct ? 'needs_john' : 'needs_owner', {
     question_id: 'q-7', question: 'Which buyer copy?' }), result('maya', 'done'));
   await f.worker.advance(dispatch);
   f.comments.push(comment(answerBody(direct ? 'answered' : 'needs_john')));
@@ -218,7 +218,7 @@ test('resumed Sam receives validated answer, prior Quinn evidence and PR identit
   f.gh.prs.set(44, { number: 44, isDraft: true, headRefOid: sha, issue: 22 });
   f.codex.replies.push(result('maya', 'done'), result('sam', 'ready_for_review', { pr: 44 }),
     result('quinn', 'blocked', { pr: 44, evidence: ['Recover malformed-input handling'] }),
-    result('sam', 'needs_emma', { pr: 44, question_id: 'q-7', question: 'Use buyer copy?' }),
+    result('sam', 'needs_owner', { pr: 44, question_id: 'q-7', question: 'Use buyer copy?' }),
     result('sam', 'ready_for_review', { pr: 44 }));
   for (let i = 0; i < 4; i++) await f.worker.advance(dispatch);
   f.comments.push(comment(answerBody()));
@@ -242,7 +242,7 @@ test('cached Quinn approval is checked against the live PR on every retry', asyn
 
 test('stored results require valid schema and dispatch binding before replay', async () => {
   for (const mutation of [value => ({ ...value, issue: 99 }), value => ({ ...value, extra: true }),
-    value => ({ ...value, request_id: 'emma:12:bbbbbbbbbbbb' }),
+    value => ({ ...value, request_id: 'maya:12:bbbbbbbbbbbb' }),
     value => ({ ...value, reviewed_sha: 'abc' }), value => ({ ...value, evidence: 'unchecked' })]) {
     const f = fixture();
     f.comments.push(comment(stageBody('start', 0, { stage: 'maya', issue: 22, host: null })),
@@ -281,7 +281,7 @@ test('dispatch and actionable issue are revalidated before a new stage', async (
 test('forged or mismatched answer, decision and stage records fail closed', async () => {
   for (const entry of [
     { ...comment(johnBody()), author: { login: 'someone-else' } },
-    comment(johnBody({ request_id: 'emma:99:aaaaaaaaaaaa' })),
+    comment(johnBody({ request_id: 'maya:99:aaaaaaaaaaaa' })),
     comment(johnBody({ answer: '' })), comment(johnBody({ issue: 99 })),
     comment(johnBody({ extra: 'fake' })),
     { ...comment(johnBody()), url: 'https://github.com/other/repo/issues/21#issuecomment-1' },
@@ -302,12 +302,12 @@ test('forged or mismatched answer, decision and stage records fail closed', asyn
 });
 
 test('stored Quinn results cannot switch the PR that Sam handed off', async () => {
-  for (const status of ['done', 'progress', 'needs_emma', 'needs_john', 'blocked']) {
+  for (const status of ['done', 'progress', 'needs_owner', 'needs_john', 'blocked']) {
     const f = fixture();
     f.gh.prs.set(45, { number: 45, isDraft: true, headRefOid: sha, issue: 22 });
     const quinn = result('quinn', status, { pr: 45,
       ...(status === 'done' ? { reviewed_sha: sha } : {}),
-      ...(['needs_emma', 'needs_john'].includes(status) ?
+      ...(['needs_owner', 'needs_john'].includes(status) ?
         { question_id: 'q-7', question: 'Choose copy' } : {}) });
     f.comments.push(
       comment(stageBody('start', 0, { stage: 'maya', issue: 22, host: null })),
@@ -322,12 +322,12 @@ test('stored Quinn results cannot switch the PR that Sam handed off', async () =
 });
 
 test('fresh Quinn progress and questions keep the handed-off PR identity', async () => {
-  for (const status of ['progress', 'needs_emma', 'needs_john']) {
+  for (const status of ['progress', 'needs_owner', 'needs_john']) {
     const f = fixture();
     for (const number of [44, 45]) f.gh.prs.set(number, { number, isDraft: true, headRefOid: sha, issue: 22 });
     f.codex.replies.push(result('maya', 'done'), result('sam', 'ready_for_review', { pr: 44 }),
       result('quinn', status, { pr: 45,
-        ...(['needs_emma', 'needs_john'].includes(status) ? { question_id: 'q-7', question: 'Choose copy' } : {}) }));
+        ...(['needs_owner', 'needs_john'].includes(status) ? { question_id: 'q-7', question: 'Choose copy' } : {}) }));
     await f.worker.advance(dispatch);
     await f.worker.advance(dispatch);
     assert.match((await f.worker.advance(dispatch)).reason, /Quinn changed review target PR/);
@@ -338,12 +338,12 @@ test('fresh Quinn progress and questions keep the handed-off PR identity', async
 
 test('resumed stage rechecks John approval after authorization before it starts', async () => {
   for (const mutate of [
-    f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+    f => { const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
       item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' }); },
-    f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- emma-john-decision:'));
+    f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- owner-decision:'));
       f.comments.splice(index, 1); },
     f => { f.comments.push(comment(johnBody({ status: 'rejected', answer: 'Conflicting decision' }))); },
-    f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+    f => { const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
       item.body = johnBody({ answer: 'Changed approved conditions' }); },
   ]) {
     const f = fixture();
@@ -367,7 +367,7 @@ test('approval revoked after role execution prevents the result from advancing',
   let authorizations = 0;
   f.worker.authorize = async () => {
     if (++authorizations === 2) {
-      const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
       item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' });
     }
   };
@@ -386,7 +386,7 @@ test('last confirmed comments are checked again before launching a resumed role'
   f.gh.comment = async (number, body) => {
     await write(number, body);
     if (body.startsWith(`<!-- village-stage-start:${dispatch.request_id}:1`)) {
-      const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+      const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
       item.body = johnBody({ status: 'rejected', answer: 'John withdrew approval' });
     }
   };
@@ -406,11 +406,11 @@ async function resolvedEarlierEscalation() {
 }
 
 const earlierDecisionChanges = [
-  f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+  f => { const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
     item.body = johnBody({ status: 'rejected', answer: 'John withdrew earlier approval' }); },
-  f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- emma-john-decision:'));
+  f => { const index = f.comments.findIndex(item => item.body.startsWith('<!-- owner-decision:'));
     f.comments.splice(index, 1); },
-  f => { const item = f.comments.find(item => item.body.startsWith('<!-- emma-john-decision:'));
+  f => { const item = f.comments.find(item => item.body.startsWith('<!-- owner-decision:'));
     item.body = johnBody({ answer: 'Changed earlier approved conditions' }); },
 ];
 

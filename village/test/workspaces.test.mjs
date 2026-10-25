@@ -46,12 +46,12 @@ test('fresh host resumes the remote implementation branch instead of main', asyn
     git('remote', 'add', 'origin', 'git@github.com:startupsandcode/astra-lab.git');
     git('config', `url.file://${remote}/.insteadOf`, 'git@github.com:startupsandcode/astra-lab.git');
     git('push', '-q', 'origin', 'main');
-    git('checkout', '-q', '-b', 'emma/issue-22');
+    git('checkout', '-q', '-b', 'maya/issue-22');
     git('commit', '--allow-empty', '-q', '-m', 'Sam implementation');
     const implemented = git('rev-parse', 'HEAD');
-    git('push', '-q', 'origin', 'emma/issue-22');
+    git('push', '-q', 'origin', 'maya/issue-22');
     git('checkout', '-q', 'main');
-    git('branch', '-D', 'emma/issue-22');
+    git('branch', '-D', 'maya/issue-22');
     const manager = new GitWorkspaces({ root });
     const path = await manager.ensure(22);
     assert.equal(await manager.head(path), implemented);

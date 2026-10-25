@@ -56,7 +56,9 @@ Use the agent's own name and a short task summary; the issue number is optional.
 
 ## Maya and the Astra Lab handoff
 
-For an approved Astra Lab request, Maya coordinates the delivery, Sam implements it, and Quinn reviews the exact pull request commit. The worker records progress on the parent issue, uses an isolated worktree, and stops for recovery if the checkout is dirty or an operation is interrupted. It can open a draft pull request, but it does not merge or release. This integration requires the Astra Lab repository's own rules and tools; it is not a general unattended project builder.
+For approved Astra Lab requests, Maya coordinates delivery, Sam implements the change, and Quinn reviews the exact pull request commit. Configure `ASTRA_LAB_ROOT`, `MAYA_HOST_ID`, and `MAYA_ATTEMPT_ID` on the active computer before launching the worker. It validates its dispatch and host/attempt identity before acting, uses an isolated worktree, and records progress on the parent issue. It can prepare a draft pull request, but it does not merge or release. The integration uses Astra Lab's own repository rules and tools; it is not a general unattended project builder.
+
+The Astra Lab and Agent Village checkouts and authenticated GitHub and Codex CLIs are required on the active computer. Only one machine should run the worker at a time. Rehearsal uses in-memory fake clients and cannot change production.
 
 ## Reuse for a client
 

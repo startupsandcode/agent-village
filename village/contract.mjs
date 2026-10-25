@@ -1,7 +1,7 @@
-const statuses = new Set(['progress', 'needs_emma', 'needs_john', 'ready_for_review', 'blocked', 'done']);
+const statuses = new Set(['progress', 'needs_owner', 'needs_john', 'ready_for_review', 'blocked', 'done']);
 const categories = new Set(['routine', 'scope', 'spend', 'outreach', 'data', 'access', 'release_blocker']);
 const stages = new Set(['maya', 'sam', 'quinn']);
-const requestPattern = /^emma:[1-9]\d*:[0-9a-f]{12}$/;
+const requestPattern = /^maya:[1-9]\d*:[0-9a-f]{12}$/;
 export const REPO = 'startupsandcode/astra-lab';
 const resultKeys = ['request_id', 'stage', 'status', 'issue', 'pr', 'question_id',
   'question', 'category', 'evidence', 'reviewed_sha'];
@@ -46,7 +46,7 @@ export function parseDispatch(issue) {
   if (marked.length !== 1) throw new Error('duplicate dispatch markers');
   trustedComment(marked[0], issue.number);
   const body = marked[0].body;
-  const match = body.match(/^<!-- dispatch-ready:(emma:[1-9]\d*:[0-9a-f]{12}) -->\n```json\n([^\n]+)\n```\s*$/);
+  const match = body.match(/^<!-- dispatch-ready:(maya:[1-9]\d*:[0-9a-f]{12}) -->\n```json\n([^\n]+)\n```\s*$/);
   if (!match) throw new Error('invalid dispatch format or request_id');
   let data;
   try { data = JSON.parse(match[2]); } catch { throw new Error('invalid dispatch JSON'); }
@@ -90,7 +90,7 @@ export function validateResult(data) {
   if (!Array.isArray(data.evidence) || data.evidence.some(value => typeof value !== 'string')) {
     throw new Error('invalid evidence');
   }
-  if (['needs_emma', 'needs_john'].includes(data.status)) {
+  if (['needs_owner', 'needs_john'].includes(data.status)) {
     if (typeof data.question_id !== 'string' || !/^[A-Za-z0-9_-]{2,80}$/.test(data.question_id)) {
       throw new Error('question_id required');
     }
