@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="What Agent Village offers publicly, what a real start requires, and the current repository access limit.">
+  <meta name="description" content="Clone Agent Village publicly, start a local project, and understand restricted hosted office access.">
   <meta name="referrer" content="no-referrer">
   <title>Access and setup | Agent Village</title>
   <link rel="canonical" href="https://agent-village.startupsandcode.com/setup">
@@ -12,34 +12,39 @@
 <body>
   <div class="setup-shell">
     <header>
-      <a class="brand" href="/" aria-label="Agent Village home">Agent Village</a>
-      <nav aria-label="Page navigation"><a href="/">Team demo</a><a href="/workflow">Workflow</a></nav>
+      <a class="brand" href="https://agent-village.startupsandcode.com/" aria-label="Agent Village public demo">Agent Village</a>
+      <nav aria-label="Page navigation"><a href="https://agent-village.startupsandcode.com/">Team demo</a><a href="/workflow">Workflow</a></nav>
     </header>
     <main>
       <p class="eyebrow">Access and setup</p>
       <h1>Explore the workflow. Know what it takes to start.</h1>
       <p class="lede">Agent Village's public pages introduce the team and explain a design-led route from an agreed goal to reviewable proof. The Workflow controls are a demonstration; they do not launch agents or publish a site.</p>
 
-      <div class="callout"><strong>Real work requires repository access.</strong> The Agent Village GitHub repository and issue queue are private. This public website cannot start a mission or grant repository access.</div>
+      <div class="callout"><strong>Public source. Restricted hosted office.</strong> The Agent Village GitHub repository and issue queue are public. Anyone can read or clone the source without an invitation. A public clone does not grant hosted office access or authorize autonomous missions.</div>
 
       <section id="public">
         <div class="section-title"><span>01</span><h2>What you can explore here</h2></div>
-        <p>The <a href="/">team demo</a> uses sample activity to introduce the Village. The <a href="/workflow">Workflow page</a> explains the intended Maya, Susie, Sam, and Quinn handoffs. Its buttons only illustrate retry, cancellation, and reset behavior.</p>
+        <p>The <a href="https://agent-village.startupsandcode.com/">team demo</a> uses sample activity to introduce the Village. The <a href="/workflow">Workflow page</a> explains the intended Maya, Susie, Sam, and Quinn handoffs. Its buttons only illustrate retry, cancellation, and reset behavior.</p>
       </section>
 
       <section id="prerequisites">
-        <div class="section-title"><span>02</span><h2>What a real start requires</h2></div>
+        <div class="section-title"><span>02</span><h2>Start with a public clone</h2></div>
+        <p>Browse the <a href="https://github.com/startupsandcode/agent-village">source and README</a> and <a href="https://github.com/startupsandcode/agent-village/issues">public issue queue</a>, or clone it locally:</p>
+        <pre><code>git clone https://github.com/startupsandcode/agent-village.git</code></pre>
+        <p>A clone lets you inspect and adapt the source, run deterministic tests with fake providers, and run the local single-user interface. Follow the <a href="https://github.com/startupsandcode/agent-village/blob/main/docs/first-user-setup.md">Windows and local setup guide</a> or <a href="https://github.com/startupsandcode/agent-village/blob/main/local/README.md">local interface guide</a>.</p>
         <ul>
-          <li>Access to the private <code>startupsandcode/agent-village</code> repository.</li>
-          <li>A local checkout open in VS Code with Codex, plus GitHub access for the issue and pull request workflow.</li>
-          <li>An agreed GitHub Issue and acceptance criteria before implementation begins.</li>
+          <li>The local interface needs Node.js 20.12 or newer. It does not require GitHub login or a GitHub token.</li>
+          <li>Live local projects require your own OpenAI or Anthropic API key and can incur provider charges. A ChatGPT subscription is not an API key. Set a provider spending limit before a live run.</li>
+          <li>The supported local flow clarifies a goal, plans, builds a bounded static website, reviews the files, and exports approved files. Submitting a goal starts a provider call; building requires a separate explicit action.</li>
+          <li>Export does not publish. GitHub and Vercel publication require separate credentials, target checks, and explicit actions.</li>
         </ul>
-        <p>Available automation and provider setup depend on the authorized environment. This public site does not offer self-service agent runs, repository invitations, or deployment access.</p>
+        <p>For the Codex issue-to-PR workflow, use VS Code with Codex and authenticate to GitHub for issue or pull request actions. Work in your own fork or an authorized repository; public read access does not grant upstream push or merge permission. Agree on an issue and acceptance criteria before implementation.</p>
       </section>
 
       <section id="access">
-        <div class="section-title"><span>03</span><h2>Access is not self-service</h2></div>
-        <p>There is no public request-access form or published contact route on this site. If you do not already have repository access, these pages do not provide a way to start a real mission.</p>
+        <div class="section-title"><span>03</span><h2>The hosted office remains restricted</h2></div>
+        <p>The hosted <code>/office</code> workspace and its private APIs require Vercel sign-in and an invited, verified email. Hosted runs additionally require operator authorization, server-side configuration, and explicit feature activation. Cloning the source, opening a public issue, or supplying a provider key grants none of these permissions.</p>
+        <p>This public site does not offer self-service hosted access or launch missions. Authorized operators should use the <a href="https://github.com/startupsandcode/agent-village/blob/main/office/README.md">hosted office guide</a>. Running your own local copy does not connect you to the hosted workspace or authorize work in another repository.</p>
       </section>
     </main>
     <footer><a href="/workflow">Return to Workflow</a><span>Public explainer and sample demo.</span></footer>

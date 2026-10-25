@@ -80,7 +80,7 @@ test('public Workflow explainer is a separate route linked from the unchanged te
   assert.match(page, /the public pages explain the intended route; they do not launch a mission/i);
   assert.doesNotMatch(page, /github\.com\/startupsandcode\/agent-village/);
   assert.match(await read('../../README.md'), /`\/workflow` explains the design-led path/);
-  assert.match(await read('../../README.md'), /`\/setup` explains current prerequisites and repository access limits/);
+  assert.match(await read('../../README.md'), /`\/setup` explains public cloning, local prerequisites, and restricted hosted office access/);
   assert.match(await read('../README.md'), /public \[Workflow: Design-Led Autonomy\]\(\/workflow\)/);
   assert.match(await read('../README.md'), /public access\/setup guidance at `\/setup`/);
   assert.doesNotMatch(page, /village-preview-20261024|Internal concept|astra-4idr0wopp/);
@@ -88,10 +88,12 @@ test('public Workflow explainer is a separate route linked from the unchanged te
   await stat(new URL('../public/workflow.js', import.meta.url));
   const setup = await read('../public/setup.html');
   assert.match(setup, /<title>Access and setup \| Agent Village<\/title>/);
-  assert.match(setup, /The Agent Village GitHub repository and issue queue are private/);
-  assert.match(setup, /There is no public request-access form or published contact route/);
+  assert.match(setup, /The Agent Village GitHub repository and issue queue are public/);
+  assert.match(setup, /A public clone does not grant hosted office access or authorize autonomous missions/);
+  assert.match(setup, /href="https:\/\/github.com\/startupsandcode\/agent-village\/blob\/main\/docs\/first-user-setup.md"/);
+  assert.match(setup, /href="https:\/\/agent-village.startupsandcode.com\/">Team demo/);
   assert.match(setup, /href="\/workflow"/);
-  assert.doesNotMatch(setup, /village-interface-20261011-01|git clone|github\.com\/startupsandcode\/agent-village|<form\b|mailto:/i);
+  assert.doesNotMatch(setup, /village-interface-20261011-01|repository and issue queue are private|<form\b|mailto:/i);
 });
 
 test('hosted publisher runtime ends before a stale attempt can be reconciled', async () => {

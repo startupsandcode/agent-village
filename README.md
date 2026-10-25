@@ -6,6 +6,8 @@ The workflow runs in VS Code with Codex and GitHub access. The [Village Office](
 
 ## Start here
 
+The source repository and issue queue are public. Anyone can clone, inspect, test, and adapt the code. Public read access does not grant upstream write permissions, access to the hosted `/office`, or authorization to launch autonomous missions. For issue and PR work, use your own fork or a repository where you are authorized to work.
+
 For the supported local first-user path on Windows, see the [Windows and local setup guide](docs/first-user-setup.md). It distinguishes the local single-user workflow from the separate hosted office.
 
 1. Open this repository in VS Code with the Codex extension.
@@ -36,7 +38,7 @@ For substantive code issues, Maya delegates a bounded implementation task to Sam
 
 ## Village Office
 
-The office is a website on your own machine. It needs Node.js 20 or later and a GitHub CLI login with access to this private repository (`gh auth status`). From the repository root, run:
+The office is a website on your own machine. It needs Node.js 20 or later and a GitHub CLI login with read access to the configured repository (`gh auth status`). From the repository root, run:
 
 ```bash
 export VILLAGE_GITHUB_REPO=startupsandcode/agent-village
@@ -68,7 +70,7 @@ The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired pro
 
 ## Host the office on Vercel
 
-The existing `agent-village` Vercel project uses `office/` as its root. Its public root serves the synthetic team demo, `/workflow` explains the design-led path from an agreed goal to reviewable proof, and `/setup` explains current prerequisites and repository access limits. The invited workspace at `/office` and its APIs use application-level authentication and authorization; public routes and private routes share the same deployment. See the [hosted office guide](office/README.md) for deployment configuration and the [deployment design](docs/office-vercel-design.md) for the route and data boundaries.
+The existing `agent-village` Vercel project uses `office/` as its root. Its public root serves the synthetic team demo, `/workflow` explains the design-led path from an agreed goal to reviewable proof, and `/setup` explains public cloning, local prerequisites, and restricted hosted office access. The invited workspace at `/office` and its APIs use application-level authentication and authorization; public routes and private routes share the same deployment. See the [hosted office guide](office/README.md) for deployment configuration and the [deployment design](docs/office-vercel-design.md) for the route and data boundaries.
 
 ## Local Maya chat
 
