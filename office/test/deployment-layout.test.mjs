@@ -4,6 +4,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RECONCILE_MIN_AGE_MS } from '../lib/hosted-publish.mjs';
+import { resolvePublicRoute } from '../server.mjs';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
 
@@ -36,6 +37,7 @@ test('one deployment serves synthetic home and keeps private HTML outside public
   assert.equal(config.outputDirectory, 'public');
   assert.ok(config.rewrites.some(rule => rule.source === '/office' && rule.destination === '/api/private-page'));
   const home = await read('../public/index.html');
+  const homeStyles = await read('../public/styles.css');
   assert.match(home, /Public demo/i);
   assert.match(home, /href="\/office"/);
   assert.match(home, /href="#office">Demo office/);
@@ -52,6 +54,33 @@ test('one deployment serves synthetic home and keeps private HTML outside public
   await assert.rejects(stat(new URL('../public/office', import.meta.url)));
   await stat(new URL('../public/office-assets/app.js', import.meta.url));
   await stat(new URL('../public/office-assets/styles.css', import.meta.url));
+});
+
+test('public Workflow explainer is a separate route linked from the unchanged team demo', async () => {
+  const config = JSON.parse(await read('../vercel.json'));
+  assert.ok(config.rewrites.some(rule => rule.source === '/workflow' && rule.destination === '/workflow.html'));
+  assert.equal(resolvePublicRoute('/workflow'), '/workflow.html');
+  assert.equal(resolvePublicRoute('/'), '/');
+  const home = await read('../public/index.html');
+  const homeStyles = await read('../public/styles.css');
+  assert.match(home, /href="\/workflow">Workflow<\/a>/);
+  assert.match(home, /class="mobile-workflow" href="\/workflow">Workflow<\/a>/);
+  assert.match(homeStyles, /\.site-header nav \{ display: none; \}/);
+  assert.match(homeStyles, /\.mobile-workflow \{ display: inline-flex;/);
+  assert.match(home, /href="#office">Demo office<\/a>/);
+  assert.match(home, /href="\/setup">Setup guide<\/a>/);
+  const page = await read('../public/workflow.html');
+  assert.match(page, /<title>Agent Village \| Design-Led Autonomy<\/title>/);
+  assert.match(page, /<h1 id="title">A visible path<br>to <span>proof\.<\/span><\/h1>/);
+  assert.match(page, /href="https:\/\/agent-village\.startupsandcode\.com\/workflow"/);
+  assert.match(page, /href="https:\/\/github\.com\/startupsandcode\/agent-village#start-here"/);
+  assert.match(page, /This page explains the intended route; it does not launch a mission/);
+  assert.match(page, /the repository guide for opening a Codex session/);
+  assert.match(await read('../../README.md'), /`\/workflow` explains the design-led path/);
+  assert.match(await read('../README.md'), /public \[Workflow: Design-Led Autonomy\]\(\/workflow\)/);
+  assert.doesNotMatch(page, /village-preview-20261024|Internal concept|astra-4idr0wopp/);
+  await stat(new URL('../public/workflow.css', import.meta.url));
+  await stat(new URL('../public/workflow.js', import.meta.url));
 });
 
 test('hosted publisher runtime ends before a stale attempt can be reconciled', async () => {
