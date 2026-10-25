@@ -8,17 +8,26 @@ import { validateResult } from './contract.mjs';
 
 const execFileAsync = promisify(execFile);
 const schema = fileURLToPath(new URL('./role-result.schema.json', import.meta.url));
-const MAX_CODEX_STDERR_BYTES = 8192;
+const MAX_CODEX_STDERR_CHARS = 8192;
+const CODEX_STDERR_HEAD_CHARS = MAX_CODEX_STDERR_CHARS / 2;
+const CODEX_STDERR_TAIL_CHARS = MAX_CODEX_STDERR_CHARS - CODEX_STDERR_HEAD_CHARS;
+const MAX_CODEX_DIAGNOSTIC_CHARS = 240;
 
 export function sanitizeCodexDiagnostic(value) {
-  return String(value ?? '')
+  const redacted = String(value ?? '')
     .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
     .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/gi, '[redacted-token]')
     .replace(/\b[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{24,}\b/g, '[redacted-token]')
     .replace(/\b(authorization|api[_-]?key|token)\s*[:=]\s*\S+/gi, '$1=[redacted]')
     .replace(/https?:\/\/[^\s]+/gi, '[url]')
     .replace(/\b[A-Za-z]:\\[^\s"']+/g, '[local-path]')
-    .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+    .replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (redacted.length <= MAX_CODEX_DIAGNOSTIC_CHARS) return redacted;
+  const marker = ' …[diagnostic truncated]… ';
+  const contentLength = MAX_CODEX_DIAGNOSTIC_CHARS - marker.length;
+  const headLength = Math.ceil(contentLength / 2);
+  const tailLength = contentLength - headLength;
+  return `${redacted.slice(0, headLength)}${marker}${redacted.slice(-tailLength)}`;
 }
 
 export function roleCommand(codex, cwd, schemaPath, output, readOnly, images = []) {
@@ -53,9 +62,26 @@ async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }, { spawn
   const [executable, ...rest] = await resolveCommand(args);
   return await new Promise((resolve, reject) => {
     const child = spawnProcess(executable, rest, { cwd, env, stdio: ['pipe', 'ignore', 'pipe'] });
-    let errors = '';
+    let stderrBuffer = '';
+    let stderrHead = '';
+    let stderrTail = '';
+    let stderrTruncated = false;
     child.stderr.on('data', chunk => {
-      if (errors.length < MAX_CODEX_STDERR_BYTES) errors += String(chunk).slice(0, MAX_CODEX_STDERR_BYTES - errors.length);
+      const text = String(chunk);
+      if (!stderrTruncated && stderrBuffer.length + text.length <= MAX_CODEX_STDERR_CHARS) {
+        stderrBuffer += text;
+        return;
+      }
+      if (!stderrTruncated) {
+        const prefix = stderrBuffer.slice(0, CODEX_STDERR_HEAD_CHARS);
+        stderrHead = prefix + text.slice(0, CODEX_STDERR_HEAD_CHARS - prefix.length);
+        stderrTail = (stderrBuffer.slice(-CODEX_STDERR_TAIL_CHARS) + text.slice(-CODEX_STDERR_TAIL_CHARS))
+          .slice(-CODEX_STDERR_TAIL_CHARS);
+        stderrBuffer = '';
+        stderrTruncated = true;
+        return;
+      }
+      stderrTail = (stderrTail + text.slice(-CODEX_STDERR_TAIL_CHARS)).slice(-CODEX_STDERR_TAIL_CHARS);
     });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Codex stage timed out')); }, timeoutSeconds * 1000);
     child.on('error', error => {
@@ -66,7 +92,8 @@ async function defaultLaunch(args, { cwd, env, prompt, timeoutSeconds }, { spawn
     child.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
-        const diagnostic = sanitizeCodexDiagnostic(errors);
+        const captured = stderrTruncated ? `${stderrHead} [stderr middle omitted] ${stderrTail}` : stderrBuffer;
+        const diagnostic = sanitizeCodexDiagnostic(captured);
         reject(new Error(`Codex stage failed (exit ${code})${diagnostic ? `: ${diagnostic}` : ''}`));
       }
       else resolve(null);
