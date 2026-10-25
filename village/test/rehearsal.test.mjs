@@ -2,17 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { rehearse } from '../rehearsal.mjs';
 
-const dispatch = { request_id: 'emma:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
-  parent_issue: 21, first_actionable_issue: 22, brief_id: 'emma-2026-09',
+const dispatch = { request_id: 'maya:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
+  parent_issue: 21, first_actionable_issue: 22, brief_id: 'maya-2026-09',
   brief_digest: 'a'.repeat(64), candidate_id: 'b', approved_at: '2026-09-29T13:00:00Z' };
 
 test('offline rehearsal emits the trusted worker trail with zero-based synthetic-host starts', async () => {
-  const priorHost = process.env.EMMA_HOST_ID;
+  const priorHost = process.env.MAYA_HOST_ID;
   try {
-    process.env.EMMA_HOST_ID = 'existing-host';
+    process.env.MAYA_HOST_ID = 'existing-host';
     const output = await rehearse(dispatch);
-    assert.equal(process.env.EMMA_HOST_ID, 'existing-host');
-    assert.deepEqual(output.statuses, ['needs_emma', 'needs_emma', 'progress',
+    assert.equal(process.env.MAYA_HOST_ID, 'existing-host');
+    assert.deepEqual(output.statuses, ['needs_owner', 'needs_owner', 'progress',
       'ready_for_review', 'blocked', 'ready_for_review', 'ready_for_review']);
     assert.equal(output.duplicate_question_count, 1);
     assert.equal(output.interrupted_state, 'blocked');
@@ -27,11 +27,11 @@ test('offline rehearsal emits the trusted worker trail with zero-based synthetic
     });
     const result = output.comments.findLast(item => item.body.startsWith('<!-- village-stage-result:'));
     assert.equal(JSON.parse(result.body.split('\n')[1]).reviewed_sha, output.reviewed_sha);
-    delete process.env.EMMA_HOST_ID;
+    delete process.env.MAYA_HOST_ID;
     await rehearse(dispatch);
-    assert.equal(process.env.EMMA_HOST_ID, undefined);
+    assert.equal(process.env.MAYA_HOST_ID, undefined);
   } finally {
-    if (priorHost === undefined) delete process.env.EMMA_HOST_ID;
-    else process.env.EMMA_HOST_ID = priorHost;
+    if (priorHost === undefined) delete process.env.MAYA_HOST_ID;
+    else process.env.MAYA_HOST_ID = priorHost;
   }
 });

@@ -10,7 +10,7 @@ import { GitWorkspaces, Worker } from './worker.mjs';
 export async function authorizeDispatch(gh, dispatch, { env = process.env,
   astraRoot = process.env.ASTRA_LAB_ROOT,
   day = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/New_York' }) } = {}) {
-  if (!astraRoot || !env.EMMA_HOST_ID || !env.EMMA_ATTEMPT_ID) {
+  if (!astraRoot || !env.MAYA_HOST_ID || !env.MAYA_ATTEMPT_ID) {
     throw new Error('active host and attempt identity required');
   }
   try { await access(join(astraRoot, 'PAUSE')); throw new Error('Astra PAUSE is active'); }
@@ -21,15 +21,15 @@ export async function authorizeDispatch(gh, dispatch, { env = process.env,
   if (config?.enabled !== true) throw new Error('Astra worker is paused');
   const control = await gh.getIssue(5);
   const comments = control.comments;
-  const hosts = comments.filter(item => item.body?.startsWith('<!-- emma-active-host:'));
+  const hosts = comments.filter(item => item.body?.startsWith('<!-- maya-active-host:'));
   for (const item of hosts) {
     trustedComment(item, 5);
-    const match = item.body.match(/^<!-- emma-active-host:([A-Za-z0-9_-]{1,80}) -->\nActive Emma host: ([A-Za-z0-9_-]{1,80})$/);
+    const match = item.body.match(/^<!-- maya-active-host:([A-Za-z0-9_-]{1,80}) -->\nActive Maya host: ([A-Za-z0-9_-]{1,80})$/);
     if (!match || match[1] !== match[2]) throw new Error('malformed active host record');
   }
-  const host = hosts.at(-1)?.body.match(/^<!-- emma-active-host:([A-Za-z0-9_-]+) -->/);
-  if (!host || host[1] !== env.EMMA_HOST_ID) throw new Error('active host mismatch');
-  const marker = `<!-- emma-attempt:${day}:${env.EMMA_ATTEMPT_ID} -->\n`;
+  const host = hosts.at(-1)?.body.match(/^<!-- maya-active-host:([A-Za-z0-9_-]+) -->/);
+  if (!host || host[1] !== env.MAYA_HOST_ID) throw new Error('active host mismatch');
+  const marker = `<!-- maya-attempt:${day}:${env.MAYA_ATTEMPT_ID} -->\n`;
   const attempts = comments.filter(item => item.body?.startsWith(marker));
   if (attempts.length !== 1) throw new Error('matching shared attempt required');
   let claim;
@@ -42,9 +42,9 @@ export async function authorizeDispatch(gh, dispatch, { env = process.env,
       typeof claim.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(claim.day) ||
       !Number.isFinite(Date.parse(`${claim.day}T00:00:00Z`)) ||
       new Date(`${claim.day}T00:00:00Z`).toISOString().slice(0, 10) !== claim.day ||
-      !/^emma:[1-9]\d*:[0-9a-f]{12}$/.test(claim.request_id)) throw new Error('invalid shared attempt');
-  if (claim.request_id !== dispatch.request_id || claim.host_id !== env.EMMA_HOST_ID ||
-      claim.day !== day || claim.attempt_id !== env.EMMA_ATTEMPT_ID) {
+      !/^maya:[1-9]\d*:[0-9a-f]{12}$/.test(claim.request_id)) throw new Error('invalid shared attempt');
+  if (claim.request_id !== dispatch.request_id || claim.host_id !== env.MAYA_HOST_ID ||
+      claim.day !== day || claim.attempt_id !== env.MAYA_ATTEMPT_ID) {
     throw new Error('matching shared attempt required');
   }
 }

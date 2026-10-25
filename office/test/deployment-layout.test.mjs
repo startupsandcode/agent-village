@@ -59,7 +59,9 @@ test('one deployment serves synthetic home and keeps private HTML outside public
 test('public Workflow explainer is a separate route linked from the unchanged team demo', async () => {
   const config = JSON.parse(await read('../vercel.json'));
   assert.ok(config.rewrites.some(rule => rule.source === '/workflow' && rule.destination === '/workflow.html'));
+  assert.ok(config.rewrites.some(rule => rule.source === '/setup' && rule.destination === '/setup.html'));
   assert.equal(resolvePublicRoute('/workflow'), '/workflow.html');
+  assert.equal(resolvePublicRoute('/setup'), '/setup.html');
   assert.equal(resolvePublicRoute('/'), '/');
   const home = await read('../public/index.html');
   const homeStyles = await read('../public/styles.css');
@@ -73,14 +75,23 @@ test('public Workflow explainer is a separate route linked from the unchanged te
   assert.match(page, /<title>Agent Village \| Design-Led Autonomy<\/title>/);
   assert.match(page, /<h1 id="title">A visible path<br>to <span>proof\.<\/span><\/h1>/);
   assert.match(page, /href="https:\/\/agent-village\.startupsandcode\.com\/workflow"/);
-  assert.match(page, /href="https:\/\/github\.com\/startupsandcode\/agent-village#start-here"/);
+  assert.match(page, /href="\/setup">Check access and setup requirements/);
   assert.match(page, /This page explains the intended route; it does not launch a mission/);
-  assert.match(page, /the repository guide for opening a Codex session/);
+  assert.match(page, /the public pages explain the intended route; they do not launch a mission/i);
+  assert.doesNotMatch(page, /github\.com\/startupsandcode\/agent-village/);
   assert.match(await read('../../README.md'), /`\/workflow` explains the design-led path/);
+  assert.match(await read('../../README.md'), /`\/setup` explains current prerequisites and repository access limits/);
   assert.match(await read('../README.md'), /public \[Workflow: Design-Led Autonomy\]\(\/workflow\)/);
+  assert.match(await read('../README.md'), /public access\/setup guidance at `\/setup`/);
   assert.doesNotMatch(page, /village-preview-20261024|Internal concept|astra-4idr0wopp/);
   await stat(new URL('../public/workflow.css', import.meta.url));
   await stat(new URL('../public/workflow.js', import.meta.url));
+  const setup = await read('../public/setup.html');
+  assert.match(setup, /<title>Access and setup \| Agent Village<\/title>/);
+  assert.match(setup, /The Agent Village GitHub repository and issue queue are private/);
+  assert.match(setup, /There is no public request-access form or published contact route/);
+  assert.match(setup, /href="\/workflow"/);
+  assert.doesNotMatch(setup, /village-interface-20261011-01|git clone|github\.com\/startupsandcode\/agent-village|<form\b|mailto:/i);
 });
 
 test('hosted publisher runtime ends before a stale attempt can be reconciled', async () => {

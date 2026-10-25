@@ -4,13 +4,13 @@ import { pathToFileURL } from 'node:url';
 import { Worker } from './worker.mjs';
 
 export async function rehearse(dispatch) {
-  const priorHost = process.env.EMMA_HOST_ID;
+  const priorHost = process.env.MAYA_HOST_ID;
   try {
-    process.env.EMMA_HOST_ID = 'synthetic-host';
+    process.env.MAYA_HOST_ID = 'synthetic-host';
     return await runRehearsal(dispatch);
   } finally {
-    if (priorHost === undefined) delete process.env.EMMA_HOST_ID;
-    else process.env.EMMA_HOST_ID = priorHost;
+    if (priorHost === undefined) delete process.env.MAYA_HOST_ID;
+    else process.env.MAYA_HOST_ID = priorHost;
   }
 }
 
@@ -27,7 +27,7 @@ async function runRehearsal(dispatch) {
     stage, status, issue, pr: null, question_id: null, question: null,
     category: 'routine', evidence: [], reviewed_sha: null, ...extra });
   const replies = [
-    reply('maya', 'needs_emma', { question_id: answerId,
+    reply('maya', 'needs_owner', { question_id: answerId,
       question: 'Which approved buyer copy?', category: 'routine' }),
     reply('maya', 'done'),
     reply('sam', 'ready_for_review', { pr: 44 }),
@@ -38,9 +38,9 @@ async function runRehearsal(dispatch) {
   ];
   const gh = {
     getIssue: async number => number === dispatch.parent_issue ? { number,
-      body: `<!-- emma-ticket:${dispatch.request_id}:parent -->\nSynthetic approved parent` } : { number,
+      body: `<!-- maya-ticket:${dispatch.request_id}:parent -->\nSynthetic approved parent` } : { number,
       title: `Build smallest release for #${dispatch.parent_issue}`,
-      body: `<!-- emma-ticket:${dispatch.request_id}:build -->\n` +
+      body: `<!-- maya-ticket:${dispatch.request_id}:build -->\n` +
         `Parent #${dispatch.parent_issue}; opportunity #${dispatch.request_id.split(':')[1]}.\n\nSynthetic implementation` },
     listComments: async () => [...comments],
     comment: async (_number, body) => { comments.push(comment(body)); },
@@ -53,8 +53,8 @@ async function runRehearsal(dispatch) {
   const worker = new Worker({ gh, codex, workspaces });
   const statuses = [];
   statuses.push((await worker.advance(dispatch)).status);
-  statuses.push((await worker.advance(dispatch)).status); // no duplicate while awaiting Emma
-  comments.push(comment(`<!-- emma-answer:${answerId} -->\n${JSON.stringify({
+  statuses.push((await worker.advance(dispatch)).status); // no duplicate while awaiting Maya
+  comments.push(comment(`<!-- owner-answer:${answerId} -->\n${JSON.stringify({
     request_id: dispatch.request_id, issue, category: 'routine', brief_basis: 'Small team',
     question_id: answerId, status: 'answered', answer: 'Approved buyer copy' })}`));
   for (let i = 0; i < 5; i += 1) statuses.push((await worker.advance(dispatch)).status);

@@ -6,6 +6,8 @@ The workflow runs in VS Code with Codex and GitHub access. The [Village Office](
 
 ## Start here
 
+For the supported local first-user path on Windows, see the [Windows and local setup guide](docs/first-user-setup.md). It distinguishes the local single-user workflow from the separate hosted office.
+
 1. Open this repository in VS Code with the Codex extension.
 2. Connect to GitHub for issue and pull request work. If you use the GitHub CLI, sign in with `gh auth login`.
 3. Start a Codex chat in this repository and talk to Maya directly. Ask her to draft a GitHub Issue from the [work item template](.github/ISSUE_TEMPLATE/work-item.md).
@@ -52,11 +54,11 @@ node office/checkin.mjs finish Maya
 
 Use the agent's own name and a short task summary; the issue number is optional. Each start report lasts 90 minutes. Repeat `start` if work continues, and use `finish` when it ends. The office labels every report with its update time and marks expired reports as last reported. An open issue does not mean anyone is active. Reports live only in ignored local files under `office/.local/`; opening the site from another computer is not supported. See [the office design](docs/office-design.md) for the data and privacy boundaries.
 
-## Emma handoff from Astra Lab
+## Maya and the Astra Lab handoff
 
-After John selects an Astra project, Emma records a dispatch on its parent issue and invokes `node village/cli.mjs run --repo startupsandcode/astra-lab --issue <parent-issue> --request-id <request-id>` on the active computer. The caller sets `ASTRA_LAB_ROOT`, `EMMA_HOST_ID`, and the claimed `EMMA_ATTEMPT_ID`. The entrypoint checks the shared host and attempt record in Astra issue #5, Astra's PAUSE/config controls, and the approved dispatch before a stage can write. The worker creates or resumes a separate worktree for the first actionable issue, fetching an existing remote implementation branch after a host switch. Maya, Sam, and Quinn run as bounded stages. Sam opens a draft PR linked with `Closes #<issue>`; Quinn reviews the exact checked-out PR commit in read-only mode. Stage starts, results, questions, and answers live on the Astra parent issue. A dirty or interrupted worktree stops for recovery. The worker never merges or releases.
+For approved Astra Lab requests, Maya coordinates delivery, Sam implements the change, and Quinn reviews the exact pull request commit. Configure `ASTRA_LAB_ROOT`, `MAYA_HOST_ID`, and `MAYA_ATTEMPT_ID` on the active computer before launching the worker. It validates its dispatch and host/attempt identity before acting, uses an isolated worktree, and records progress on the parent issue. It can prepare a draft pull request, but it does not merge or release. The integration uses Astra Lab's own repository rules and tools; it is not a general unattended project builder.
 
-Both checkouts and authenticated `gh` and `codex` CLIs are required on the active Mac or Windows machine. Only one machine should run Emma's schedule. For an offline rehearsal, use the Astra command `python3 -m tests.emma_rehearsal --village-root /path/to/agent-village`; the Village half uses only in-memory fake clients and cannot change production.
+The Astra Lab and Agent Village checkouts and authenticated GitHub and Codex CLIs are required on the active computer. Only one machine should run the worker at a time. Rehearsal uses in-memory fake clients and cannot change production.
 
 ## Reuse for a client
 
@@ -66,12 +68,8 @@ The active instructions are in `AGENTS.md` and `.codex/agents/`. The retired pro
 
 ## Host the office on Vercel
 
-The `agent-village` Vercel project uses Root Directory `office`. Its public root is a synthetic demo, `/workflow` explains the design-led path from an agreed goal to reviewable proof, and `/office` and `/api/office` require Sign in with Vercel and an invited, verified email through application-level checks. Project-wide Vercel Authentication is disabled so visitors can see the public pages. See the [hosted office setup](office/README.md) for OAuth configuration and access checks.
-
-The existing `agent-village` project can use its `GITHUB_AGENT_TOKEN` environment variable if that token can read Issues in `startupsandcode/agent-village`. The function prefers `GITHUB_ISSUES_TOKEN` when both variables exist. If a new credential is needed, create a **fine-grained personal access token** with access to **only** that repository, **Issues: Read-only**, and the required Metadata read permission. Enter it directly in the Vercel project's **Secret** environment variable form as `GITHUB_ISSUES_TOKEN` for each deployment environment you will use. Do not paste either token into source files, chat, or the public demo. Redeploy after changing the environment variable. A GitHub App is useful later when multiple customers or repositories need their own installations and short-lived credentials; the Vercel viewer sign-in does not replace the server's GitHub credential. See [GitHub's endpoint permission](https://docs.github.com/en/rest/issues/issues#fine-grained-access-tokens-for-list-repository-issues), [Vercel environment variables](https://vercel.com/docs/environment-variables), and [Vercel's All Deployments announcement](https://vercel.com/changelog/protect-production-deployments-for-free-on-every-plan).
-
-Before inviting viewers, test unauthenticated `/office` and `/api/office`; both must deny access through the app guards. Then sign in with an invited account and verify the issue board loads. The browser receives only selected issue fields and status, never the token. On the draft interface branch, hosted project activity comes from owner-scoped project records; local check-in files still do not persist to Vercel. The local office and `checkin.mjs` continue to work on your machine. See [the deployment design](docs/office-vercel-design.md) for the security boundary.
+The existing `agent-village` Vercel project uses `office/` as its root. Its public root serves the synthetic team demo, `/workflow` explains the design-led path from an agreed goal to reviewable proof, and `/setup` explains current prerequisites and repository access limits. The invited workspace at `/office` and its APIs use application-level authentication and authorization; public routes and private routes share the same deployment. See the [hosted office guide](office/README.md) for deployment configuration and the [deployment design](docs/office-vercel-design.md) for the route and data boundaries.
 
 ## Local Maya chat
 
-For a plain-language project goal, provider-backed clarification, a bounded website build, an illustrated office with recorded Maya/Sam/Quinn activity, and a reviewed-file export, see [the local interface setup](local/README.md). It runs alongside the existing office and Astra worker without changing their configuration. The export includes a repeatable receipt test and user-operated GitHub/Vercel publication steps. The draft branch also has a hosted, owner-scoped static-site path that requires an operator allowlist, a dedicated database, a provider key, and explicit activation. A prior protected Preview completed one bounded live OpenAI build and review; a fresh learner setup and Anthropic live run remain unverified. Broader code execution would need a separately bounded executor.
+For the local project workflow, bounded website build, Maya/Sam/Quinn activity, and reviewed-file export, see [the local interface setup](local/README.md). It runs alongside the existing office and Astra integration. Broader code execution and hosted project workflows have additional setup and safety requirements described in the relevant guides; a configured key or database alone does not mean hosted runs are enabled.

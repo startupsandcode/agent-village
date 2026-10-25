@@ -16,7 +16,9 @@ function respond(response, status, body, type = 'text/plain; charset=utf-8', hea
 }
 
 export function resolvePublicRoute(pathname) {
-  return pathname === '/workflow' ? '/workflow.html' : pathname;
+  if (pathname === '/workflow') return '/workflow.html';
+  if (pathname === '/setup') return '/setup.html';
+  return pathname;
 }
 
 async function serveStatic(pathname, response, publicDir, head) {

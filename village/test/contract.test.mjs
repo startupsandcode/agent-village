@@ -5,8 +5,8 @@ import { parseDispatch, validateResult } from '../contract.mjs';
 
 function validIssue() {
   const dispatch = {
-    request_id: 'emma:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
-    parent_issue: 21, brief_id: 'emma-2026-09', brief_digest: 'a'.repeat(64),
+    request_id: 'maya:12:aaaaaaaaaaaa', repo: 'startupsandcode/astra-lab',
+    parent_issue: 21, brief_id: 'maya-2026-09', brief_digest: 'a'.repeat(64),
     candidate_id: 'b', approved_at: '2026-09-29T13:00:00+00:00',
     first_actionable_issue: 22,
   };
@@ -17,7 +17,7 @@ function validIssue() {
 }
 
 function validResult() {
-  return { request_id: 'emma:12:aaaaaaaaaaaa', stage: 'maya', status: 'progress',
+  return { request_id: 'maya:12:aaaaaaaaaaaa', stage: 'maya', status: 'progress',
     issue: 22, pr: null, question_id: null, question: null, category: 'routine', evidence: [], reviewed_sha: null };
 }
 
@@ -51,12 +51,12 @@ test('rejects issue number mismatch and malformed request ID', () => {
 });
 
 test('question requires stable id', () => {
-  const result = { ...validResult(), status: 'needs_emma', question: 'Which copy?', question_id: '' };
+  const result = { ...validResult(), status: 'needs_owner', question: 'Which copy?', question_id: '' };
   assert.throws(() => validateResult(result), /question_id/);
 });
 
-test('non-routine question cannot be answered by Emma alone', () => {
-  const result = { ...validResult(), status: 'needs_emma', question: 'Buy API?',
+test('non-routine questions require the human owner', () => {
+  const result = { ...validResult(), status: 'needs_owner', question: 'Buy API?',
     question_id: 'q-7', category: 'spend' };
   assert.throws(() => validateResult(result), /needs_john|blocked/);
 });

@@ -1,21 +1,21 @@
-# Village Office on Vercel
+# Village Office deployment design
 
-## Release boundary
+## Current deployment
 
-Use the existing `agent-village` Vercel project for the private office with root directory `office`. It uses Vercel Authentication with **All Deployments** protection before any GitHub credential is configured or a deployment is shared. Vercel project protection applies to the entire private deployment, including `/api/office`. A separate public project has root directory `demo` and contains only synthetic, static content.
+The `agent-village` Vercel project uses `office/` as its root directory. One project serves the public synthetic demo at `/`, the public design-led workflow explainer at `/workflow`, the public setup guide at `/setup`, and the invited workspace at `/office`. The obsolete `agent-village-demo` project is no longer part of the deployment.
 
-This release serves John's single private Agent Village repository. It does not provide customer accounts, tenant separation, or a public API for real issue data. Those need a separate product design.
+Vercel project-wide Authentication is disabled so the public pages remain reachable. Private routes enforce access in the application: `/office` is served by a guarded function, and private APIs such as `/api/office` authorize a signed office session before returning data. Authentication uses the configured Vercel OAuth app and an exact invited-email list. Missing or invalid authentication configuration fails closed. The current route behavior and setup requirements are documented in [the hosted office guide](../office/README.md).
 
-## Private data flow
+## Data boundaries
 
-The office browser fetches only `/api/office`. A Node.js Vercel Function reads `GITHUB_ISSUES_TOKEN`, or the existing `GITHUB_AGENT_TOKEN` as a fallback, from the server environment and requests open issues from `startupsandcode/agent-village`. It filters pull requests and returns only issue number, title, URL, and update time. The token is never serialized, logged, or placed in a public asset. Failed or missing credentials produce an unavailable task state without echoing errors.
+The public demo and workflow pages use static, synthetic content. They do not expose the private issue board. The private issue API reads GitHub Issues server-side using a server-only token and returns selected issue fields; credentials are not sent to browser code. Hosted project activity is available only to an authenticated owner when its database is configured. Local desk check-ins and local mission records remain on the local machine and are not synchronized to the hosted office.
 
-The local server and CLI check-in flow remain available for local use. Hosted desk reports are explicitly unavailable until a durable report store and authenticated write path are designed. This avoids pretending that local files are shared with Vercel or that an open issue proves an agent is active.
+## Operational limits
 
-## Credential choice
+The hosted office is a single-owner workspace, not a multi-tenant service. A signed-in viewer is not automatically authorized to incur provider charges or publish externally. Hosted runs and publishing require separately configured server-side credentials, explicit operator authorization, bounded destinations, and durable receipts. Static demo content and preview deployments do not prove that a hosted run or publishing integration is enabled.
 
-The existing `GITHUB_AGENT_TOKEN` in the private `agent-village` Vercel project works if it can read Issues in that repository. For a new credential, use a fine-grained personal access token restricted to the single repository, with **Issues: Read-only** and GitHub's required Metadata read permission. No Contents, Pull requests, or write permission is required for the issue board. Store the new token as a Secret project environment variable named `GITHUB_ISSUES_TOKEN` in the private project only; it takes precedence over `GITHUB_AGENT_TOKEN`. Do not put either token in the public demo project or a file in this repository. A GitHub App can replace the token when there are multiple repositories, customers, or an operational need for short-lived installation tokens.
+Do not rely on Vercel project-wide protection to secure the private office: public and private routes share one deployment. Keep authorization checks on every private page and API route, and verify anonymous denial plus invited and uninvited account behavior after changes. See [the hosted office guide](../office/README.md) for the maintained operational checklist.
 
-## Release checks
+## Future architecture
 
-Before using the Vercel credential, verify private project Deployment Protection is set to Vercel Authentication, All Deployments. Verify unauthenticated requests to both `/` and `/api/office` are blocked. Then verify that the existing token has Issues read access or configure a new token, deploy, and confirm that the browser bundle and API response contain no token, the authorized issue board loads, and GitHub errors reveal no secret. The public demo must contain only synthetic data and make no request to the private API.
+Supporting multiple organizations, projects, or independently coordinated teams requires a separate design for tenant isolation, per-owner data stores, credential scope, budgets, and deployment boundaries. The current single-project application does not provide those guarantees.

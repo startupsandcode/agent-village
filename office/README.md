@@ -1,6 +1,6 @@
 # Hosted Agent Village office
 
-The Vercel `agent-village` project uses `office` as its Root Directory. It serves the [synthetic team demo](https://agent-village.startupsandcode.com/) at `/`, the public [Workflow: Design-Led Autonomy](/workflow) explainer at `/workflow`, and the invited office at `/office`. `/api/office` is also private. Project-wide Vercel Authentication is disabled; the application enforces office access. The old `agent-village-demo` project has been deleted.
+The Vercel `agent-village` project uses `office` as its Root Directory. It serves the [synthetic team demo](https://agent-village.startupsandcode.com/) at `/`, the public [Workflow: Design-Led Autonomy](/workflow) explainer at `/workflow`, public access/setup guidance at `/setup`, and the invited office at `/office`. `/api/office` is also private. Project-wide Vercel Authentication is disabled; the application enforces office access. The old `agent-village-demo` project has been deleted.
 
 An anonymous visit to `/office` shows a minimal sign-in page. The viewer must choose **Sign in with Vercel** to start OAuth. **Sign out of office** clears the office session and returns to the demo; returning to `/office` shows the sign-in page even if the viewer is still signed in to Vercel. An uninvited account receives an access-denied response.
 
