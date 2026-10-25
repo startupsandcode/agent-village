@@ -96,12 +96,17 @@ test('local server serves private office at /office after the public demo become
   const { mkdir } = await import('node:fs/promises');
   await mkdir(publicDir);
   await writeFile(join(publicDir, 'index.html'), '<h1>Synthetic demo</h1>');
+  await writeFile(join(publicDir, 'workflow.html'), '<h1>Design-Led Autonomy</h1>');
   await writeFile(privatePageFile, '<h1>Local office</h1>');
   const server = createOfficeServer({ publicDir, privatePageFile });
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     assert.equal(await (await fetch(`${base}/`)).text(), '<h1>Synthetic demo</h1>');
+    const workflow = await fetch(`${base}/workflow`);
+    assert.equal(workflow.status, 200);
+    assert.match(workflow.headers.get('content-type'), /^text\/html/);
+    assert.equal(await workflow.text(), '<h1>Design-Led Autonomy</h1>');
     const office = await fetch(`${base}/office`);
     assert.equal(office.status, 200);
     assert.equal(await office.text(), '<h1>Local office</h1>');
