@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { MissionCodexHandlers } from '../mission-codex.mjs';
@@ -100,7 +101,7 @@ test('Quinn receives the approved criteria, local artifact path, read-only works
     output: { kind: 'implementation', previewUrl: mission.destination } };
   await assert.rejects(handlers.quinn_functional({ mission: { ...reviewedMission,
     events: [...mission.events, implementation] }, stage: 'quinn_functional', revision: 0, attempt: 4 }));
-  assert.equal(received.cwd, 'C:\\approved\\worktree');
+  assert.equal(received.cwd, resolve('C:/approved/worktree'));
   assert.equal(received.readOnly, true);
   assert.match(received.prompt, /validation\/mission-46\/dist/);
   assert.match(received.prompt, /Signup works on mobile/);
