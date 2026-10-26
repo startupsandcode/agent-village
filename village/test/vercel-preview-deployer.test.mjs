@@ -332,7 +332,7 @@ test('reconciles an existing READY mission deployment when Vercel omitted the ID
         villageArtifactSha256: fingerprint } }];
     },
     async inspect(value) {
-      assert.equal(value, bareUrl);
+      assert.ok([bareUrl, 'dpl_1234567890abcdef'].includes(value));
       return { id: 'dpl_1234567890abcdef', url: bareUrl, projectId, teamId, target: 'preview', readyState: 'READY',
         meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
           villageArtifactSha256: fingerprint } };
@@ -348,8 +348,50 @@ test('reconciles an existing READY mission deployment when Vercel omitted the ID
   assert.equal(recovered.url, previewUrl);
   assert.equal(recovered.attempts, 2);
   assert.equal(recovered.reconciliation.matchingDeployments, 1);
+  const resumed = await f.deployer.reconcileExistingSubmission({ mission: f.mission, artifactRoot: f.artifactRoot });
+  assert.equal(resumed.status, 'ready');
+  assert.equal(resumed.deploymentId, recovered.deploymentId);
+  assert.equal(listCalls, 2, 'ready checkpoint recovery inspects the recorded deployment without listing or submitting again');
   assert.equal(submissions, 2, 'reconciliation did not submit another deployment');
-  assert.equal(listCalls, 2);
+});
+
+test('reconciles a missing deployment ID on the first submission attempt without resubmitting', async t => {
+  let submissions = 0;
+  let listings = 0;
+  const bareUrl = 'agent-village-first-attempt-abc-jmanns-projects.vercel.app';
+  let fingerprint;
+  const f = await fixture(t, { cliOverride: {
+    async whoami() { return 'test-user'; },
+    async deploy(options) {
+      submissions++;
+      fingerprint = options.meta.villageArtifactSha256;
+      return { url: bareUrl };
+    },
+    async listMissionDeployments({ missionId, target }) {
+      listings++;
+      assert.equal(missionId, f.mission.id);
+      assert.equal(target.projectId, projectId);
+      return [{ url: bareUrl, meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
+        villageArtifactSha256: fingerprint } }];
+    },
+    async inspect(value) {
+      assert.equal(value, bareUrl);
+      return { id: 'dpl_firstattempt123456', url: bareUrl, projectId, teamId, target: 'preview', readyState: 'READY',
+        meta: { villageMissionId: f.mission.id, villageArtifactId: f.mission.artifactId,
+          villageArtifactSha256: fingerprint } };
+    },
+  } });
+  await assert.rejects(f.deployer.deploy({ mission: f.mission, artifactRoot: f.artifactRoot }), /uncertain.*reconcile/i);
+  const initial = JSON.parse(await readFile(join(f.stateRoot, `${f.mission.id}.json`), 'utf8'));
+  assert.equal(initial.attempts, 1);
+  assert.equal(initial.status, 'uncertain');
+  const recovered = await f.deployer.reconcileExistingSubmission({ mission: f.mission, artifactRoot: f.artifactRoot });
+  assert.equal(recovered.status, 'ready');
+  assert.equal(recovered.attempts, 1);
+  assert.equal(recovered.deploymentId, 'dpl_firstattempt123456');
+  assert.equal(recovered.reconciliation.matchingDeployments, 1);
+  assert.equal(submissions, 1, 'reconciliation did not submit a second deployment');
+  assert.equal(listings, 1);
 });
 
 test('rejects successful submission if Vercel reports production, a different project, or an unapproved host', async t => {

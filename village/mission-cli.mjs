@@ -238,7 +238,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
     'stopped workspace reservation must match the mission before preview recovery');
     requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
-      state.currentStage === 'sam_implementation' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 &&
+      Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
       state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
       state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
       state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
@@ -283,7 +284,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
     'stopped workspace reservation must match the mission before preview reconciliation');
     requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
-      state.currentStage === 'sam_implementation' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 &&
+      Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
       state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
       state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
       state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
@@ -291,10 +293,12 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     'mission is not eligible for existing-submission preview reconciliation');
     const journalPath = join(paths.root, '.preview-deployments', `${id}.json`);
     const journal = JSON.parse(await readFile(journalPath, 'utf8'));
-    requireValue(journal.status === 'uncertain' && journal.missionId === id && journal.artifactId === state.artifactId &&
-      journal.projectId === state.previewTarget.projectId && journal.teamId === state.previewTarget.teamId &&
-      journal.target === 'preview' && journal.deploymentId === null && journal.url === null &&
-      journal.attempts === 2 && journal.error === 'Vercel response did not include a deployment ID',
+    requireValue(['uncertain', 'ready'].includes(journal.status) && journal.missionId === id &&
+      journal.artifactId === state.artifactId && journal.projectId === state.previewTarget.projectId &&
+      journal.teamId === state.previewTarget.teamId && journal.target === 'preview' &&
+      Number.isSafeInteger(journal.attempts) && journal.attempts >= 1 && journal.attempts <= 2 &&
+      (journal.status === 'ready' || journal.deploymentId === null && journal.url === null &&
+        journal.error === 'Vercel response did not include a deployment ID'),
     'preview journal does not contain the exact missing-ID response checkpoint');
     const runtime = previewDeployer ? { previewDeployer } : createMissionRuntime({ storeRoot: paths.root,
       evidenceRoot: paths.evidence, workspacePath: workspace.root, codex, env });

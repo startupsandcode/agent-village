@@ -502,8 +502,31 @@ export class VercelPreviewDeployer {
         journal.artifactId === mission.artifactId && journal.artifactFingerprint === fingerprint &&
         journal.projectId === target.projectId && journal.teamId === target.teamId &&
         journal.projectSlug === target.projectSlug && journal.teamSlug === target.teamSlug && journal.target === 'preview' &&
-        journal.status === 'uncertain' && journal.deploymentId === null && journal.url === null &&
-        journal.attempts === 2 && journal.error === 'Vercel response did not include a deployment ID',
+        Number.isSafeInteger(journal.attempts) && journal.attempts >= 1 && journal.attempts <= 2,
+      'preview journal is not eligible for existing-submission reconciliation');
+      if (journal.status === 'ready') {
+        requireValue(/^dpl_[A-Za-z0-9]{8,}$/.test(journal.deploymentId ?? '') &&
+          vercelPreviewOrigin(journal.url, target) === journal.url &&
+          journal.reconciliation?.method === 'vercel-list-mission-metadata' &&
+          journal.reconciliation.matchingDeployments === 1 &&
+          journal.reconciliation.deploymentId === journal.deploymentId &&
+          journal.verified?.id === journal.deploymentId && journal.verified.projectId === target.projectId &&
+          journal.verified.readyState === 'READY' && journal.verified.url === journal.url &&
+          journal.verified.artifactFingerprint === fingerprint,
+        'ready preview journal does not contain exact reconciliation evidence');
+        const details = await this.cli.inspect(journal.deploymentId, { teamId: target.teamId });
+        const meta = details?.meta ?? details?.metadata ?? {};
+        requireValue(details?.id === journal.deploymentId && details.projectId === target.projectId &&
+          details.teamId === target.teamId && details.readyState === 'READY' &&
+          ['preview', null, undefined].includes(details.target) &&
+          vercelPreviewOrigin(details.url, target) === journal.url &&
+          meta.villageMissionId === mission.id && meta.villageArtifactId === mission.artifactId &&
+          meta.villageArtifactSha256 === fingerprint,
+        'reconciled Vercel deployment no longer matches the accepted artifact');
+        return journal;
+      }
+      requireValue(journal.status === 'uncertain' && journal.deploymentId === null && journal.url === null &&
+        journal.error === 'Vercel response did not include a deployment ID',
       'preview journal is not eligible for existing-submission reconciliation');
       requireValue(typeof this.cli.listMissionDeployments === 'function', 'read-only Vercel deployment reconciliation is unavailable');
       const deployments = await this.cli.listMissionDeployments({ missionId: mission.id, target, cwd: this.workspaceRoot });

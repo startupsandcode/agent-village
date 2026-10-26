@@ -86,7 +86,8 @@ function validateTransition(previous, next) {
     previous.events.at(-1)?.error === 'Codex stage failed';
   const previewRecoveryGranted = previous.status === 'blocked' && next.status === 'ready' &&
     previous.version === 6 && next.version === 7 && previous.currentStage === 'sam_implementation' &&
-    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'sam_implementation' &&
+    previous.revisions === 0 && Number.isSafeInteger(previous.maxAttempts) && previous.maxAttempts >= 1 &&
+    previous.maxAttempts <= 2 && previous.inFlight?.stage === 'sam_implementation' &&
     previous.inFlight.attempt === 1 && previous.attempts['0:sam_implementation'] === 1 &&
     previous.events.at(-1)?.stage === 'sam_implementation' && previous.events.at(-1)?.attempt === 1 &&
     previous.events.at(-1)?.status === 'failed' && next.currentStage === 'quinn_functional' &&
@@ -784,7 +785,8 @@ export class MissionStore {
   async recordPreviewDeploymentRecovery(id, deployment) {
     const state = await this.get(id);
     assert(state.version === 6 && state.status === 'blocked' && state.currentStage === 'sam_implementation' &&
-      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'sam_implementation' &&
+      state.revisions === 0 && Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
+      state.inFlight?.stage === 'sam_implementation' &&
       state.inFlight.attempt === 1 && state.attempts['0:sam_implementation'] === 1 &&
       state.events.at(-1)?.stage === 'sam_implementation' && state.events.at(-1)?.revision === 0 &&
       state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.status === 'failed' &&

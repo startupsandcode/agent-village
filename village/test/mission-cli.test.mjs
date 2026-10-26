@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -92,10 +93,10 @@ test('retry-preflight requires exact local provider evidence and resumes the sam
   assert.equal(failed.status, 'blocked');
 
   const codexHome = join(root, '.codex');
-  const sessionId = '01a16ed9-f8cb-73f2-836b-61c8445aa29e';
-  const sessionDirectory = join(codexHome, 'sessions', '2026', '10', '24');
+  const sessionId = randomUUID();
+  const sessionDirectory = join(codexHome, 'sessions', 'test');
   await mkdir(sessionDirectory, { recursive: true });
-  const sessionPath = join(sessionDirectory, `rollout-2026-10-24T12-59-01-${sessionId}.jsonl`);
+  const sessionPath = join(sessionDirectory, `rollout-${sessionId}.jsonl`);
   const providerError = { error: { code: 'invalid_json_schema', param: 'text.format.schema',
     message: "Invalid schema for response_format 'codex_output_schema': 'schema.required' is required to include every key in properties. Missing 'artifactPath'." }, status: 400 };
   const session = [
@@ -158,7 +159,7 @@ test('recover-preview deploys only the accepted mission output after the exact p
   const store = new MissionStore(storeRoot);
   const state = await store.create({ id: missionId, repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preview-recovery',
     goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId,
-    constraints, team: roleTeam, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 1,
+    constraints, team: roleTeam, mayaIntakeCalls: 1, maxAttempts: 2, maxRevisions: 1,
     mayaAgreement: { proposalId: 'maya-preview-recovery', summary: 'One bounded preview.', acceptedByUser: true,
       acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-preview-recovery',
       goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId, constraints, team: roleTeam } });
@@ -218,6 +219,111 @@ test('recover-preview deploys only the accepted mission output after the exact p
   assert.equal(recovered.events.at(-1).output.previewUrl, previewUrl);
 });
 
+test('reconcile-preview resumes a READY adapter checkpoint when recording the mission recovery was interrupted', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-mission-reconcile-checkpoint-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  await execFileAsync('git', ['init', '-b', 'mission-reconcile-checkpoint'], { cwd: workspace });
+  await execFileAsync('git', ['config', 'remote.origin.url', 'https://github.com/startupsandcode/agent-village.git'], { cwd: workspace });
+  const missionId = 'reconcile-checkpoint-cli';
+  const artifactDir = join(workspace, 'validation', missionId, 'dist');
+  await mkdir(artifactDir, { recursive: true });
+  await writeFile(join(artifactDir, 'index.html'), `<meta name="village-artifact-id" content="${artifactId}">`);
+  const home = join(root, 'mission-home');
+  const storeRoot = join(home, 'missions');
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
+  const missionGoal = 'Build a bounded design-led preview demo.';
+  const criteria = ['Keep output inside the mission folder.', 'Use a clear responsive hierarchy.', 'Verify the rendered preview.'];
+  const roleTeam = { id: 'design-led-single-team', roles: { design: 'susie', build: 'sam', functional_review: 'quinn', visual_review: 'susie' } };
+  const constraints = ['No paid services'];
+  const store = new MissionStore(storeRoot);
+  const state = await store.create({ id: missionId, repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-reconcile-checkpoint',
+    goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId,
+    constraints, team: roleTeam, mayaIntakeCalls: 1, maxAttempts: 2, maxRevisions: 1,
+    mayaAgreement: { proposalId: 'maya-reconcile-checkpoint', summary: 'One bounded preview.', acceptedByUser: true,
+      acceptedAt: '2026-10-24T10:00:00.000Z', repo: 'startupsandcode/agent-village', workspaceBranch: 'mission-reconcile-checkpoint',
+      goal: missionGoal, acceptanceCriteria: criteria, destination, previewTarget: target, artifactId, constraints, team: roleTeam } });
+  const guideOutput = { kind: 'design_guide', guide };
+  let checkpoint = { ...state, status: 'running', attempts: { '0:susie_design': 1 }, inFlight: { stage: 'susie_design', attempt: 1 } };
+  await store.save(checkpoint);
+  checkpoint = { ...checkpoint, status: 'ready', currentStage: 'sam_implementation', inFlight: null,
+    events: [{ stage: 'susie_design', revision: 0, attempt: 1, status: 'done', evidence: ['Susie supplied a structured guide.'], artifactId,
+      output: guideOutput }] };
+  await store.save(checkpoint);
+  checkpoint = { ...checkpoint, status: 'running', attempts: { ...checkpoint.attempts, '0:sam_implementation': 1 },
+    inFlight: { stage: 'sam_implementation', attempt: 1 } };
+  await store.save(checkpoint);
+  checkpoint = { ...checkpoint, status: 'blocked', inFlight: { stage: 'sam_implementation', attempt: 1 }, error: 'Codex stage failed',
+    events: [...checkpoint.events, { stage: 'sam_implementation', revision: 0, attempt: 1, status: 'failed', evidence: [],
+      error: 'Codex stage failed', retryable: false }] };
+  await store.save(checkpoint);
+
+  const journalRoot = join(storeRoot, '.preview-deployments');
+  await mkdir(journalRoot, { recursive: true });
+  const journalPath = join(journalRoot, `${missionId}.json`);
+  await writeFile(journalPath, JSON.stringify({ version: 2, revision: 0, missionId, artifactId,
+    artifactFingerprint: 'a'.repeat(64), projectId: target.projectId, teamId: target.teamId,
+    projectSlug: target.projectSlug, teamSlug: target.teamSlug, target: 'preview', status: 'uncertain',
+    createdAt: new Date().toISOString(), deploymentId: null, url: null, attempts: 1,
+    error: 'Vercel response did not include a deployment ID' }));
+  const lockRoot = workspaceStateRoot(home, await realpath(workspace));
+  const reservation = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-reconcile-checkpoint' });
+  const lease = await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: reservation.token, pid: process.pid });
+  const inspectStoppedWorkspace = async () => ({ worker: null, reservation: { missionId, storeRoot,
+    branch: 'mission-reconcile-checkpoint', pid: lease.pid, processAlive: false } });
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
+  const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace };
+  let adapterCalls = 0;
+  let submissions = 0;
+  const previewDeployer = {
+    async deploy() { submissions++; throw new Error('reconciliation must not submit a deployment'); },
+    async reconcileExistingSubmission({ mission, artifactRoot }) {
+      adapterCalls++;
+      assert.equal(mission.id, missionId);
+      assert.equal(artifactRoot, join(workspace, 'validation', missionId, 'dist'));
+      const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+      if (adapterCalls === 1) {
+        assert.equal(journal.status, 'uncertain');
+        Object.assign(journal, { status: 'ready', deploymentId: 'dpl_1234567890', url: previewUrl, readyAt: new Date().toISOString(),
+          error: null, reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 1,
+            deploymentId: 'dpl_1234567890', checkedAt: new Date().toISOString() },
+          verified: { id: 'dpl_1234567890', projectId: target.projectId, target: 'preview', readyState: 'READY',
+            url: previewUrl, artifactFingerprint: 'a'.repeat(64) } });
+        await writeFile(journalPath, JSON.stringify(journal));
+      } else {
+        assert.equal(journal.status, 'ready', 'the retry must resume the durable READY journal');
+        assert.equal(journal.deploymentId, 'dpl_1234567890');
+      }
+      return { status: 'ready', missionId, artifactId, projectId: target.projectId, teamId: target.teamId,
+        target: 'preview', deploymentId: 'dpl_1234567890', url: previewUrl, artifactFingerprint: 'a'.repeat(64),
+        reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 1, deploymentId: 'dpl_1234567890' } };
+    },
+  };
+  const originalRecordRecovery = MissionStore.prototype.recordPreviewDeploymentRecovery;
+  let interruptRecord = true;
+  MissionStore.prototype.recordPreviewDeploymentRecovery = async function (...args) {
+    if (interruptRecord) { interruptRecord = false; throw new Error('simulated interruption after adapter checkpoint'); }
+    return originalRecordRecovery.apply(this, args);
+  };
+  t.after(() => { MissionStore.prototype.recordPreviewDeploymentRecovery = originalRecordRecovery; });
+
+  await assert.rejects(main(['reconcile-preview', missionId], { env, processCheck: async () => false,
+    inspectBackgroundStatus: inspectStoppedWorkspace, previewDeployer }), /simulated interruption after adapter checkpoint/);
+  assert.equal((await store.get(missionId)).status, 'blocked');
+  const resumed = await main(['reconcile-preview', missionId], { env, processCheck: async () => false,
+    inspectBackgroundStatus: inspectStoppedWorkspace, previewDeployer });
+  assert.equal(resumed.status, 'ready');
+  assert.equal(resumed.previewUrl, previewUrl);
+  assert.equal(adapterCalls, 2);
+  assert.equal(submissions, 0, 'reconciliation resume does not submit a deployment');
+  const recovered = await store.get(missionId);
+  assert.equal(recovered.previewDeploymentRecovery.status, 'consumed');
+  assert.equal(recovered.events.at(-1).output.deploymentId, 'dpl_1234567890');
+});
+
 test('mission process probe parses a matching Windows process row through its test adapter', async () => {
   let requestedPid;
   const alive = await isMissionProcessAlive(4321, { runTasklist: async pid => {
@@ -232,7 +338,7 @@ test('mission process probe parses a matching Windows process row through its te
 test('start runs mocked roles in order and accepts preview evidence from its verifier adapter', async t => {
   const root = await mkdtemp(join(tmpdir(), 'village-mission-cli-'));
   const priorBrowserPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  process.env.PLAYWRIGHT_BROWSERS_PATH = 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright';
+  process.env.PLAYWRIGHT_BROWSERS_PATH = join(root, 'playwright-browsers');
   t.after(() => { if (priorBrowserPath === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH;
     else process.env.PLAYWRIGHT_BROWSERS_PATH = priorBrowserPath; });
   const workspace = join(root, 'workspace');
@@ -301,7 +407,7 @@ test('start runs mocked roles in order and accepts preview evidence from its ver
   const result = await main(['start', inputPath], { env: { VILLAGE_MISSION_WORKSPACE: workspace,
     VILLAGE_MISSION_ROOT: missions, VILLAGE_MISSION_EVIDENCE_ROOT: evidence,
     VILLAGE_MISSION_HOME: join(root, 'mission-home'),
-    PLAYWRIGHT_BROWSERS_PATH: 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright' }, codex,
+    PLAYWRIGHT_BROWSERS_PATH: join(root, 'playwright-browsers') }, codex,
     background: false, browserVerifier,
     confirm: async (_proposalId, summary, criteria) => {
       assert.match(summary, /approved local destination/);
