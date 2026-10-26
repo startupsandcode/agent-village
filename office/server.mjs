@@ -15,6 +15,12 @@ function respond(response, status, body, type = 'text/plain; charset=utf-8', hea
   response.end(head ? undefined : body);
 }
 
+export function resolvePublicRoute(pathname) {
+  if (pathname === '/workflow') return '/workflow.html';
+  if (pathname === '/setup') return '/setup.html';
+  return pathname;
+}
+
 async function serveStatic(pathname, response, publicDir, head) {
   let decoded;
   try { decoded = decodeURIComponent(pathname); } catch { return respond(response, 400, 'Bad path', undefined, head); }
@@ -47,6 +53,7 @@ export function createOfficeServer({
     if (request.method !== 'GET' && !head) return respond(response, 405, 'Method not allowed');
     let pathname;
     try { pathname = new URL(request.url, 'http://localhost').pathname; } catch { return respond(response, 400, 'Bad path', undefined, head); }
+    pathname = resolvePublicRoute(pathname);
     if (pathname === '/api/office') {
       let reports;
       try { reports = await loadCheckins(checkinDir); } catch { reports = Object.fromEntries(['Maya', 'Sam', 'Quinn', 'Theo', 'Susie'].map(name => [name, { error: true }])); }

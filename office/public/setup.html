@@ -3,62 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Clone Agent Village publicly, start a local project, and understand restricted hosted office access.">
   <meta name="referrer" content="no-referrer">
-  <title>Set up Agent Village</title>
+  <title>Access and setup | Agent Village</title>
+  <link rel="canonical" href="https://agent-village.startupsandcode.com/setup">
   <link rel="stylesheet" href="/setup.css">
 </head>
 <body>
   <div class="setup-shell">
-    <header><a class="brand" href="/">✳ Agent Village</a><span>Setup guide</span></header>
+    <header>
+      <a class="brand" href="https://agent-village.startupsandcode.com/" aria-label="Agent Village public demo">Agent Village</a>
+      <nav aria-label="Page navigation"><a href="https://agent-village.startupsandcode.com/">Team demo</a><a href="/workflow">Workflow</a></nav>
+    </header>
     <main>
-      <p class="eyebrow">Your own village</p>
-      <h1>Start with Maya on your computer.</h1>
-      <p class="lede">A learner can clone the project, use their own OpenAI or Anthropic API key, and build a small site with Maya. The hosted Preview needs separate owner setup before sign-in or paid runs work.</p>
-      <div class="callout"><strong>Keys stay on the server.</strong> Enter an API key in your ignored <code>.env.local</code> file or a silent terminal prompt. Never put it in this page, chat, a Git commit, or browser storage. API usage can be billed by your provider.</div>
+      <p class="eyebrow">Access and setup</p>
+      <h1>Explore the workflow. Know what it takes to start.</h1>
+      <p class="lede">Agent Village's public pages introduce the team and explain a design-led route from an agreed goal to reviewable proof. The Workflow controls are a demonstration; they do not launch agents or publish a site.</p>
 
-      <section id="local"><div class="section-title"><span>01</span><h2>Start on your computer</h2></div>
-        <p>You need Node.js 20.12 or newer and access to this repository. While the interface is in draft PR #30, clone its branch:</p>
-        <pre><code>git clone --branch village-interface-20261011-01 --single-branch https://github.com/startupsandcode/agent-village.git
-cd agent-village</code></pre>
-        <p>Create an <a href="https://platform.openai.com/api-keys" rel="noopener noreferrer">OpenAI API key</a> in your OpenAI developer account. This is separate from a ChatGPT subscription. For Anthropic, create a key in your Anthropic Console instead.</p>
-        <p>Make a file named <code>.env.local</code> at the repository root, then run <code>chmod 600 .env.local</code> so only your account can read it. It is ignored by Git. Put only your own provider choice and key there:</p>
-        <pre><code>VILLAGE_PROVIDER=openai
-OPENAI_API_KEY=your-own-key-here</code></pre>
-        <p>For Anthropic, use <code>VILLAGE_PROVIDER=anthropic</code> and <code>ANTHROPIC_API_KEY</code>. Keep this file private on your computer. The server reads the file at the root of the clone you start, not from another checkout or <code>office/</code>. An already exported shell variable takes precedence over the file.</p>
-        <pre><code>node local/server.mjs</code></pre>
-        <p>Open <a href="http://127.0.0.1:4174/">http://127.0.0.1:4174/</a>. Name your office, answer the short domain interview, and describe a small website to Maya. The status line confirms only that a key is present; the first request verifies live access. If it says <em>Missing OPENAI_API_KEY</em>, check the filename, location, provider choice, and restart the server.</p>
+      <div class="callout"><strong>Public source. Restricted hosted office.</strong> The Agent Village GitHub repository and issue queue are public. Anyone can read or clone the source without an invitation. A public clone does not grant hosted office access or authorize autonomous missions.</div>
+
+      <section id="public">
+        <div class="section-title"><span>01</span><h2>What you can explore here</h2></div>
+        <p>The <a href="https://agent-village.startupsandcode.com/">team demo</a> uses sample activity to introduce the Village. The <a href="/workflow">Workflow page</a> explains the intended Maya, Susie, Sam, and Quinn handoffs. Its buttons only illustrate retry, cancellation, and reset behavior.</p>
       </section>
 
-      <section id="publish"><div class="section-title"><span>02</span><h2>Publish a reviewed local site</h2></div>
-        <p>After Maya, Sam, and Quinn finish, choose <strong>Prepare reviewed files</strong>. The interface then shows two separate publish actions. Neither action runs until you press its button and enter an exact target.</p>
-        <p>For GitHub, use an existing private repository with an existing branch other than its default branch. Put a fine-grained, single-repository token with Contents read/write in the local server’s <code>.env.local</code> as <code>VILLAGE_PUBLISH_GITHUB_TOKEN</code>. For Vercel, use an existing static project in your own team and add <code>VILLAGE_PUBLISH_VERCEL_TOKEN</code> to the local server environment. Give that token the narrowest available team scope. Restart the local server after changing the file.</p>
-        <p>The GitHub action commits the receipt-checked files to that branch. The Vercel action checks for an existing ready Production deployment and Vercel Authentication set to <strong>All Deployments</strong>, then uploads the reviewed HTML and CSS for a <strong>Preview</strong> deployment and shows its actual state. Vercel makes a project's first deployment Production even when the target is omitted, so an empty destination project is refused. Check Deployment Protection Exceptions separately; an exception can make a domain public.</p>
+      <section id="prerequisites">
+        <div class="section-title"><span>02</span><h2>Start with a public clone</h2></div>
+        <p>Browse the <a href="https://github.com/startupsandcode/agent-village">source and README</a> and <a href="https://github.com/startupsandcode/agent-village/issues">public issue queue</a>, or clone it locally:</p>
+        <pre><code>git clone https://github.com/startupsandcode/agent-village.git</code></pre>
+        <p>A clone lets you inspect and adapt the source, run deterministic tests with fake providers, and run the local single-user interface. Follow the <a href="https://github.com/startupsandcode/agent-village/blob/main/docs/first-user-setup.md">Windows and local setup guide</a> or <a href="https://github.com/startupsandcode/agent-village/blob/main/local/README.md">local interface guide</a>.</p>
+        <ul>
+          <li>The local interface needs Node.js 20.12 or newer. It does not require GitHub login or a GitHub token.</li>
+          <li>Live local projects require your own OpenAI or Anthropic API key and can incur provider charges. A ChatGPT subscription is not an API key. Set a provider spending limit before a live run.</li>
+          <li>The supported local flow clarifies a goal, plans, builds a bounded static website, reviews the files, and exports approved files. Submitting a goal starts a provider call; building requires a separate explicit action.</li>
+          <li>Export does not publish. GitHub and Vercel publication require separate credentials, target checks, and explicit actions.</li>
+        </ul>
+        <p>For the Codex issue-to-PR workflow, use VS Code with Codex and authenticate to GitHub for issue or pull request actions. Work in your own fork or an authorized repository; public read access does not grant upstream push or merge permission. Agree on an issue and acceptance criteria before implementation.</p>
       </section>
 
-      <section id="preview"><div class="section-title"><span>03</span><h2>Configure the Village Office Preview</h2></div>
-        <p>Preview sign-in uses <strong>Sign in with Vercel</strong>, not a Google OAuth integration in this app. A Google account may be one way you sign in to Vercel; it does not configure the office. A Preview that says “Private office sign-in is not configured” needs the app’s server-side auth settings.</p>
-        <ol>
-          <li>Create your own confidential OAuth app in Vercel Team Settings → Apps. Use <code>client_secret_post</code> and the <code>openid</code> and <code>email</code> scopes. Register the exact callback <code>https://YOUR-PREVIEW-HOST/api/auth/callback</code>.</li>
-          <li>In the Vercel project’s <strong>Settings → Environment Variables</strong>, select <strong>Preview</strong>. Add <code>VERCEL_APP_CLIENT_ID</code>, <code>VERCEL_APP_CLIENT_SECRET</code>, a random <code>OFFICE_SESSION_SECRET</code> of at least 32 bytes, and <code>OFFICE_ALLOWED_EMAILS</code> with your invited email address.</li>
-          <li>Add <code>OFFICE_ALLOWED_ORIGINS=https://YOUR-PREVIEW-HOST</code> with no path or trailing slash. It must match the Preview you open. Register every allowed origin’s callback in the OAuth app. Use secret/server-only settings for credential values.</li>
-          <li>Redeploy that Preview so the new settings reach the server. Open <code>/office</code> again and sign in with an email on the invite list.</li>
-        </ol>
-        <p>A branch-specific Preview host can change. Check the exact URL in Vercel before setting the allowed origin and callback. A configured sign-in permits viewing the office; it does not turn on Maya’s hosted build.</p>
-        <p>If the private work board says GitHub could not be reached, an invited operator listed in <code>OFFICE_RUN_ALLOWED_EMAILS</code> can open <code>/api/maya-issues-health</code> on the same signed-in Preview once. It returns only a failure category and, when GitHub responded, its HTTP status; a healthy result returns an issue count. Check the repository and a token with Issues read access on the server. Never paste the token or a GitHub response body into chat. If the result says <code>rate_limited</code>, wait the reported <code>retryAfterSeconds</code> before checking again.</p>
-      </section>
-
-      <section id="runs"><div class="section-title"><span>04</span><h2>Enable a hosted test run only when ready</h2></div>
-        <p>Use a new database dedicated to Agent Village for the hosted Preview. In that database’s SQL editor, run the complete contents of <code>office/hosted/001_projects.sql</code> once. Confirm that <code>village_projects</code>, <code>village_monthly_budget</code>, and <code>village_budget_claims</code> appear. Use an application database role limited to those tables where your database permits it. Keep the connection string in Preview server-side settings as <code>VILLAGE_DATABASE_URL</code>; do not paste it into this page or chat.</p>
-        <p>After running <code>001_projects.sql</code>, run the additive <code>office/hosted/002_usage.sql</code> and <code>office/hosted/003_domain_profiles.sql</code> migrations in that order in the same database before enabling this version of hosted Maya. They create owner-scoped provider-call and domain-answer records without changing existing project or budget rows. See the <a href="https://github.com/startupsandcode/agent-village/blob/village-interface-20261011-01/office/hosted/README.md">SQL editor instructions</a>. With only <code>001</code>, the health check still reads the original tables, but the updated runtime gates all hosted project actions and reads until both migrations are ready.</p>
-        <p>After redeploying with the database URL and signing in as an allowed operator, open <code>/api/maya-health</code> on that same Preview. It reads the three original tables without starting Maya or using provider credits. <code>ready: true</code> confirms those reads; <code>usageReady: true</code> and <code>domainReady: true</code> confirm the new tables are readable. These checks do not prove write access or a live model key.</p>
-        <p>For a paid Preview test, also set <code>OFFICE_RUN_ALLOWED_EMAILS</code> to your own invited email, <code>VILLAGE_PROVIDER=openai</code> or <code>anthropic</code>, and the matching <code>OPENAI_API_KEY</code> or <code>ANTHROPIC_API_KEY</code> in Preview server-side settings. Set a provider spending limit. Only after the protected Preview sign-in, database schema, and key are ready, set <code>VILLAGE_HOSTED_RUNS_ENABLED=true</code> for Preview and redeploy.</p>
-        <p>The hosted office can show publish buttons after Quinn approves. For GitHub, configure <code>VILLAGE_PUBLISH_GITHUB_TOKEN</code>, <code>VILLAGE_PUBLISH_GITHUB_OWNER</code>, <code>VILLAGE_PUBLISH_GITHUB_REPO</code>, and <code>VILLAGE_PUBLISH_GITHUB_BRANCH</code> in Preview server-side settings. Use a fine-grained Contents read/write token limited to one new private repository with an existing non-default branch. Initialize that branch with a harmless file such as <code>notes.txt</code>, not any of the six delivery filenames. Check that the repository has no Pages, Actions, webhooks, or connected production deployment, then set <code>VILLAGE_PUBLISH_GITHUB_DEDICATED_REPO_CONFIRMED=true</code>. The app checks Pages and the branch’s <code>.github</code> directory; you must check external webhooks and integrations yourself.</p>
-        <p>For hosted Vercel Preview publishing, configure <code>VILLAGE_PUBLISH_VERCEL_TOKEN</code>, <code>VILLAGE_PUBLISH_VERCEL_TEAM</code>, and <code>VILLAGE_PUBLISH_VERCEL_PROJECT</code> in Preview server-side settings. Choose a separate existing static project with an existing ready Production deployment, Vercel Authentication set to <strong>All Deployments</strong>, no Deployment Protection Exceptions or bypasses, no Git link, and no custom build, install, output, or ignore settings; do not point it at the Agent Village office project. Scope the token to the intended project as narrowly as Vercel permits. These hosted settings are separate from a clone’s <code>.env.local</code>. No credentials are entered into the office page.</p>
-        <p>Automated tests use deterministic mocks. A maintainer has also run one live provider build and review in the hosted Preview; your own key and database connection still need verification. A learner’s quickest first test is the local path above.</p>
-        <p>The usage panel tracks only API calls made by this Village. It does not show ChatGPT or Codex subscription quota. Provider-reported tokens are measured, while displayed costs are estimates using model rates checked on 2026-10-11. Pending, failed, or cancelled calls without reported usage may still be billed; check your provider dashboard for actual charges.</p>
+      <section id="access">
+        <div class="section-title"><span>03</span><h2>The hosted office remains restricted</h2></div>
+        <p>The hosted <code>/office</code> workspace and its private APIs require Vercel sign-in and an invited, verified email. Hosted runs additionally require operator authorization, server-side configuration, and explicit feature activation. Cloning the source, opening a public issue, or supplying a provider key grants none of these permissions.</p>
+        <p>This public site does not offer self-service hosted access or launch missions. Authorized operators should use the <a href="https://github.com/startupsandcode/agent-village/blob/main/office/README.md">hosted office guide</a>. Running your own local copy does not connect you to the hosted workspace or authorize work in another repository.</p>
       </section>
     </main>
-    <footer><a href="/">Back to Agent Village</a><span>Do not enter a key into this website.</span></footer>
+    <footer><a href="/workflow">Return to Workflow</a><span>Public explainer and sample demo.</span></footer>
   </div>
 </body>
 </html>

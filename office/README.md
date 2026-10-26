@@ -1,6 +1,6 @@
 # Hosted Agent Village office
 
-The Vercel `agent-village` project uses `office` as its Root Directory. It serves the [synthetic demo](https://agent-village.startupsandcode.com/) at `/` and the invited office at `/office`. `/api/office` is also private. Project-wide Vercel Authentication is disabled; the application enforces office access. The old `agent-village-demo` project has been deleted.
+The Vercel `agent-village` project uses `office` as its Root Directory. It serves the [synthetic team demo](https://agent-village.startupsandcode.com/) at `/`, the public [Workflow: Design-Led Autonomy](/workflow) explainer at `/workflow`, public access/setup guidance at `/setup`, and the invited office at `/office`. `/api/office` is also private. Project-wide Vercel Authentication is disabled; the application enforces office access. The old `agent-village-demo` project has been deleted.
 
 An anonymous visit to `/office` shows a minimal sign-in page. The viewer must choose **Sign in with Vercel** to start OAuth. **Sign out of office** clears the office session and returns to the demo; returning to `/office` shows the sign-in page even if the viewer is still signed in to Vercel. An uninvited account receives an access-denied response.
 
@@ -18,7 +18,7 @@ Set these **server-only** environment variables in the existing project for Prod
 | `OFFICE_ALLOWED_EMAILS` | Comma-separated, exact invited email addresses; compared without case on every private request |
 | `GITHUB_AGENT_TOKEN` | Existing server-only GitHub token with Issues read access (`GITHUB_ISSUES_TOKEN` takes precedence when set) |
 
-Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register the Preview's exact callback in your Vercel OAuth app and set its exact HTTPS origin in Preview-scoped `OFFICE_ALLOWED_ORIGINS` before testing. The public `/setup` page walks through this configuration.
+Do not prefix these variable names with `NEXT_PUBLIC_`, and do not place values in source files or `public/`. Redeploy after changing environment variables. A missing value denies access. Sign-in on unregistered Preview hosts fails closed. Register the Preview's exact callback in your Vercel OAuth app and set its exact HTTPS origin in Preview-scoped `OFFICE_ALLOWED_ORIGINS` before testing. The public `/setup` page links here for hosted configuration; it also links to the separate local setup guides. Public source access does not grant hosted sign-in or run authorization.
 
 ## Production access checks
 

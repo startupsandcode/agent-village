@@ -179,6 +179,18 @@ export function createLocalServer({ provider, providerError, engine = provider &
         const value = await readFile(join(here, '..', 'office', 'public', 'setup.css'));
         return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/css; charset=utf-8');
       }
+      if (path === '/workflow') {
+        const value = await readFile(join(here, '..', 'office', 'public', 'workflow.html'));
+        return send(response, 200, request.method === 'HEAD' ? '' : value, 'text/html; charset=utf-8', {
+          'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+        });
+      }
+      if (path === '/workflow.css' || path === '/workflow.js') {
+        const name = path.slice(1);
+        const value = await readFile(join(here, '..', 'office', 'public', name));
+        const type = path.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
+        return send(response, 200, request.method === 'HEAD' ? '' : value, type);
+      }
       const name = path === '/' ? 'index.html' : path.slice(1);
       if (!Object.hasOwn(types, name)) return send(response, 404, { error: 'Not found' });
       const value = await readFile(join(publicDir, name));

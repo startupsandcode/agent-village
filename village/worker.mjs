@@ -31,7 +31,7 @@ export class GitWorkspaces {
     if (!/^(?:git@github\.com:|https:\/\/github\.com\/)startupsandcode\/astra-lab(?:\.git)?\/?$/.test(origin)) {
       throw new Error('wrong Astra repository');
     }
-    const branch = `emma/issue-${issue}`;
+    const branch = `maya/issue-${issue}`;
     const parent = join(this.root, '.runtime', 'village-worktrees');
     const path = join(parent, `issue-${issue}`);
     await git(this.root, 'fetch', 'origin', '+refs/heads/*:refs/remotes/origin/*');
@@ -103,7 +103,7 @@ function record(comments, kind, question, parentIssue) {
   try { value = JSON.parse(raw); } catch { throw new Error(`malformed ${kind} JSON`); }
   const keys = kind === 'village-question' ?
     ['request_id', 'question_id', 'question', 'category', 'issue', 'requires_john'] :
-    kind === 'emma-answer' ?
+    kind === 'owner-answer' ?
       ['request_id', 'question_id', 'issue', 'status', 'answer', 'brief_basis', 'category'] :
       ['request_id', 'question_id', 'issue', 'status', 'answer', 'category'];
   exactKeys(value, keys, kind);
@@ -117,12 +117,12 @@ function record(comments, kind, question, parentIssue) {
     }
   } else {
     if (typeof value.answer !== 'string' || !value.answer.trim()) throw new Error('explicit answer required');
-    if (kind === 'emma-answer') {
+    if (kind === 'owner-answer') {
       if (!['answered', 'needs_john'].includes(value.status) ||
           value.brief_basis !== null && typeof value.brief_basis !== 'string' ||
           value.status === 'answered' && (value.category !== 'routine' ||
             typeof value.brief_basis !== 'string' || !value.brief_basis.trim())) {
-        throw new Error('invalid Emma answer');
+        throw new Error('invalid owner answer');
       }
     } else if (!['approved', 'rejected'].includes(value.status)) throw new Error('invalid John decision');
   }
@@ -134,8 +134,8 @@ function resolution(last, comments, parentIssue) {
   if (!record(comments, 'village-question', question, parentIssue)) {
     throw new Error('question record missing');
   }
-  const answer = record(comments, 'emma-answer', question, parentIssue);
-  const decision = record(comments, 'emma-john-decision', question, parentIssue);
+  const answer = record(comments, 'owner-answer', question, parentIssue);
+  const decision = record(comments, 'owner-decision', question, parentIssue);
   const needsJohn = question.requires_john || answer?.status === 'needs_john';
   if (needsJohn) {
     if (!decision) return { status: 'needs_john', role: null, answer };
@@ -144,7 +144,7 @@ function resolution(last, comments, parentIssue) {
   }
   if (decision) throw new Error('John decision lacks an escalated question');
   return answer?.status === 'answered' ? { role: last.stage, answer } :
-    { status: 'needs_emma', role: null };
+    { status: 'needs_owner', role: null };
 }
 
 function unchangedResolution(last, prior, comments, parentIssue) {
@@ -165,7 +165,7 @@ function stageTrace(comments, dispatch) {
 }
 
 function authorizationSnapshot(results, comments, dispatch, stages) {
-  const questions = results.filter(value => ['needs_emma', 'needs_john'].includes(value.status))
+  const questions = results.filter(value => ['needs_owner', 'needs_john'].includes(value.status))
     .map(value => ({ value, resolved: resolution(value, comments, dispatch.parent_issue) }));
   if (questions.some(item => !item.resolved.role)) throw new Error('prior question authorization unresolved');
   return { stages, questions };
@@ -198,7 +198,7 @@ function history(comments, dispatch) {
     const item = comments[position];
     if (!item.body?.startsWith(prefix) || !item.body.includes(`:${dispatch.request_id}:`)) continue;
     trustedComment(item, dispatch.parent_issue);
-    const match = item.body.match(/^<!-- village-stage-(start|result):(emma:[1-9]\d*:[0-9a-f]{12}):(0|[1-9]\d*) -->\n([^\n]+)$/);
+    const match = item.body.match(/^<!-- village-stage-(start|result):(maya:[1-9]\d*:[0-9a-f]{12}):(0|[1-9]\d*) -->\n([^\n]+)$/);
     if (!match || match[2] !== dispatch.request_id || Number(match[3]) !== values.length) {
       throw new Error('malformed or out-of-order stage event');
     }
@@ -212,7 +212,7 @@ function history(comments, dispatch) {
         throw new Error('stage start does not match dispatch');
       }
       const last = values.at(-1) ?? null;
-      const expected = last && ['needs_emma', 'needs_john'].includes(last.status) ?
+      const expected = last && ['needs_owner', 'needs_john'].includes(last.status) ?
         resolution(last, comments.slice(0, position), dispatch.parent_issue).role : nextRole(last);
       if (!expected || value.stage !== expected) throw new Error('invalid stored stage transition');
       pending = value;
@@ -239,13 +239,13 @@ async function freshDispatch(gh, dispatch) {
   const comments = await gh.listComments(dispatch.parent_issue);
   const current = parseDispatch({ ...parent, comments });
   if (Object.keys(current).some(key => current[key] !== dispatch[key])) throw new Error('dispatch changed');
-  if (!parent.body?.startsWith(`<!-- emma-ticket:${dispatch.request_id}:parent -->\n`)) {
+  if (!parent.body?.startsWith(`<!-- maya-ticket:${dispatch.request_id}:parent -->\n`)) {
     throw new Error('parent issue does not match dispatch');
   }
   const issue = await gh.getIssue(dispatch.first_actionable_issue);
   const opportunity = dispatch.request_id.split(':')[1];
   if (issue?.number !== dispatch.first_actionable_issue ||
-      !issue.body?.startsWith(`<!-- emma-ticket:${dispatch.request_id}:build -->\n` +
+      !issue.body?.startsWith(`<!-- maya-ticket:${dispatch.request_id}:build -->\n` +
         `Parent #${dispatch.parent_issue}; opportunity #${opportunity}.\n`) ||
       issue.title !== undefined && issue.title !== `Build smallest release for #${dispatch.parent_issue}`) {
     throw new Error('actionable issue does not match dispatch');
@@ -298,7 +298,7 @@ export class Worker {
       let answeredRole = null;
       let answerContext = null;
       let authorizationComments = comments;
-      if (last && ['needs_emma', 'needs_john'].includes(last.status)) {
+      if (last && ['needs_owner', 'needs_john'].includes(last.status)) {
         await ensureQuestion(this.gh, dispatch.parent_issue, last, comments);
         const currentComments = await this.gh.listComments(dispatch.parent_issue);
         authorizationComments = currentComments;
@@ -328,7 +328,7 @@ export class Worker {
       }
       const index = results.length;
       const start = stageRecord('start', dispatch.request_id, index,
-        { stage: role, issue: dispatch.first_actionable_issue, host: process.env.EMMA_HOST_ID ?? null });
+        { stage: role, issue: dispatch.first_actionable_issue, host: process.env.MAYA_HOST_ID ?? null });
       await this.authorize(dispatch);
       const beforeStart = await freshDispatch(this.gh, dispatch);
       revalidateTrail(snapshot, beforeStart.comments, dispatch);
@@ -345,7 +345,7 @@ export class Worker {
           : `You are Quinn. Independently review the linked PR and tests in read-only mode. ` +
             `Review exactly commit ${reviewSha}. Return reviewed_sha=${reviewSha} only if you actually reviewed that commit; ` +
             'if the commit changes or you cannot verify it, return blocked. Do not edit or merge.';
-      const answerHistory = results.filter(value => ['needs_emma', 'needs_john'].includes(value.status))
+      const answerHistory = results.filter(value => ['needs_owner', 'needs_john'].includes(value.status))
         .map(value => ({ question: questionValue(value),
           ...resolution(value, confirmed, dispatch.parent_issue) }));
       const prompt = `${roleText}\n\nRequest ${dispatch.request_id}. Parent issue #${dispatch.parent_issue}. ` +
@@ -381,7 +381,7 @@ export class Worker {
         throw new Error('stage result not confirmed');
       }
       trustedComment(resultComments[0], dispatch.parent_issue);
-      if (['needs_emma', 'needs_john'].includes(value.status)) {
+      if (['needs_owner', 'needs_john'].includes(value.status)) {
         await ensureQuestion(this.gh, dispatch.parent_issue, value,
           await this.gh.listComments(dispatch.parent_issue));
       }

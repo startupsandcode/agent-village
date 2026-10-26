@@ -4,18 +4,18 @@ This is the first portable Agent Village slice. A visitor gives Maya a plain-lan
 
 ## Start from a fresh clone
 
-You need Node.js 20.12 or newer, existing GitHub access to this private repository, and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. A normal project uses four calls (clarification, plan, build, review). If Quinn rejects the site, you may request one bounded Sam revision followed by Quinn's review; a failed revision or re-review can be retried once. The hard maximum is eight calls per project. Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal or choose a stage action.
+You need Node.js 20.12 or newer, a clone of this public repository (no invitation or GitHub login required), and an API key from either OpenAI or Anthropic. An **OpenAI API key** is a credential for the OpenAI developer API; it is separate from a ChatGPT subscription. Provider API calls may be billed to your provider account. A normal project uses four calls (clarification, plan, build, review). If Quinn rejects the site, you may request one bounded Sam revision followed by Quinn's review; a failed revision or re-review can be retried once. The hard maximum is eight calls per project. Each call has a 45-second timeout, a 32,768-byte input cap including instructions, and an 1,800 output-token cap; actual input and provider charges vary. This interface does not make calls until you submit a goal or choose a stage action.
 
 ```sh
-git clone --branch village-interface-20261011-01 --single-branch https://github.com/startupsandcode/agent-village.git
+git clone https://github.com/startupsandcode/agent-village.git
 cd agent-village
 ```
 
-While [draft PR #30](https://github.com/startupsandcode/agent-village/pull/30) is unmerged, the branch option above is required. After merge, a normal clone of `main` will contain the interface.
+The interface is on `main`. This local single-user workflow needs no GitHub token; publication is a separate explicit action. A clone does not grant access to the restricted hosted `/office` or authorize autonomous missions in other repositories. For Windows, follow the [Windows and local setup guide](../docs/first-user-setup.md).
 
 In a local `zsh` terminal, choose **one** provider and enter the key at a silent prompt. Do not paste it into the browser, chat, a command line argument, a tracked file, or a Git commit:
 
-Alternatively, create a private `.env.local` file at the root of **this clone** with `VILLAGE_PROVIDER=openai` and `OPENAI_API_KEY=your-own-key` (or `VILLAGE_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=your-own-key`). A file in another checkout or in `office/` will not be read. Run `chmod 600 .env.local` before starting the server; startup rejects files readable by other local users. `node local/server.mjs` loads it at startup. Git ignores `.env.local`; keep the file private on your computer and never share it. Already exported shell variables take precedence. The setup guide at `/setup` explains both methods and the hosted Preview separately.
+Alternatively, create a private `.env.local` file at the root of **this clone** with `VILLAGE_PROVIDER=openai` and `OPENAI_API_KEY=your-own-key` (or `VILLAGE_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=your-own-key`). A file in another checkout or in `office/` will not be read. Run `chmod 600 .env.local` before starting the server; startup rejects files readable by other local users. `node local/server.mjs` loads it at startup. Git ignores `.env.local`; keep the file private on your computer and never share it. Already exported shell variables take precedence. The local `/setup` page links to the [Windows setup guide](../docs/first-user-setup.md), this guide, and the separate [hosted office configuration](../office/README.md).
 
 ```sh
 export VILLAGE_PROVIDER=openai
