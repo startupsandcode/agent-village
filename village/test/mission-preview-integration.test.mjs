@@ -10,9 +10,9 @@ import { VercelPreviewDeployer, vercelPreviewDestination } from '../vercel-previ
 import { readMissionInput } from '../mission-cli.mjs';
 import { BrowserPreviewVerifier } from '../browser-verifier.mjs';
 
-const target = { provider: 'vercel', projectId: 'prj_WhRBN1KcJAXHBhqfespJ07sWkcOt',
+const target = { provider: 'vercel', projectId: 'prj_hqDvuARsAvqpov17V7Z5N8C1clJM',
   teamId: 'team_xJDjjY2EmFRQpfvzV9yGoNWI', environment: 'preview',
-  projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
+  projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
 const destination = vercelPreviewDestination(target);
 const goal = 'Build a polished, responsive volunteer signup page';
 const criteria = ['The volunteer opportunity is clear at a glance.',
@@ -20,7 +20,7 @@ const criteria = ['The volunteer opportunity is clear at a glance.',
 const roles = { design: 'susie', build: 'sam', functional_review: 'quinn', visual_review: 'susie' };
 const team = { id: 'design-led-single-team', roles };
 const artifactId = 'preview-mission-artifact';
-const previewUrl = 'https://astra-lab-deployment-42-jmanns-projects.vercel.app';
+const previewUrl = 'https://agent-village-deployment-42-jmanns-projects.vercel.app';
 const guide = { concept: 'A warm editorial volunteer invitation with a clear, confident signup path.',
   sections: ['Hero', 'Opportunity', 'Signup'], typeScale: ['display', 'heading', 'body'], spacing: [4, 8, 16, 24],
   responsiveStates: ['Use a split hero on wide screens.', 'Stack the signup action on narrow screens.'],
@@ -108,7 +108,7 @@ test('Maya intake agreement binds the exact Vercel project/team preview scope', 
     constraints: ['No production release'], team };
   const proposal = await intake.propose(input);
   assert.equal(proposal.status, 'agreed');
-  assert.match(prompt, /projectId.*prj_WhRBN1KcJAXHBhqfespJ07sWkcOt/);
+  assert.match(prompt, /projectId.*prj_hqDvuARsAvqpov17V7Z5N8C1clJM/);
   const accepted = intake.accept(proposal.proposalId, `I agree to mission ${proposal.proposalId}`);
   assert.equal(accepted.mayaAgreement.destination, destination);
   assert.deepEqual(accepted.mayaAgreement.previewTarget, target);

@@ -35,10 +35,10 @@ test('final review call increase requires the explicit user-approved 8-to-9 flag
 });
 
 test('preview evidence URL comparison accepts only equivalent clean HTTP(S) locations', () => {
-  assert.equal(samePreviewUrl('https://astra.example.test', 'https://astra.example.test/'), true);
-  assert.equal(samePreviewUrl('https://astra.example.test/path/', 'https://astra.example.test/path'), true);
-  assert.equal(samePreviewUrl('https://astra.example.test/path?x=1', 'https://astra.example.test/path'), false);
-  assert.equal(samePreviewUrl('https://other.example.test', 'https://astra.example.test'), false);
+  assert.equal(samePreviewUrl('https://agent-village.example.test', 'https://agent-village.example.test/'), true);
+  assert.equal(samePreviewUrl('https://agent-village.example.test/path/', 'https://agent-village.example.test/path'), true);
+  assert.equal(samePreviewUrl('https://agent-village.example.test/path?x=1', 'https://agent-village.example.test/path'), false);
+  assert.equal(samePreviewUrl('https://other.example.test', 'https://agent-village.example.test'), false);
 });
 
 test('mission worker permits only the reconciled mission output folder to remain untracked', async t => {
@@ -139,8 +139,8 @@ test('recover-preview deploys only the accepted mission output after the exact p
   const home = join(root, 'mission-home');
   const storeRoot = join(home, 'missions');
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const missionGoal = 'Build a bounded design-led preview demo.';
   const criteria = ['Keep output inside the mission folder.', 'Use a clear responsive hierarchy.', 'Verify the rendered preview.'];
   const roleTeam = { id: 'design-led-single-team', roles: { design: 'susie', build: 'sam', functional_review: 'quinn', visual_review: 'susie' } };
@@ -172,7 +172,7 @@ test('recover-preview deploys only the accepted mission output after the exact p
     artifactId, artifactFingerprint: 'a'.repeat(64), projectId: target.projectId, teamId: target.teamId,
     projectSlug: target.projectSlug, teamSlug: target.teamSlug, target: 'preview', status: 'uncertain',
     createdAt: new Date().toISOString(), deploymentId: null, url: null, attempts: 1,
-    error: 'Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.' }));
+    error: 'Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\office" does not exist.' }));
   const canonicalWorkspace = await realpath(workspace);
   const lockRoot = workspaceStateRoot(home, canonicalWorkspace);
   const lease = await reserveWorkspaceMission({ root: lockRoot, missionId, storeRoot, branch: 'mission-preview-recovery' });
@@ -185,7 +185,7 @@ test('recover-preview deploys only the accepted mission output after the exact p
   await updateWorkspaceMission({ root: lockRoot, missionId, storeRoot, token: lease.token, pid: deadPid });
   const inspectStoppedWorkspace = async () => ({ worker: null,
     reservation: { missionId, storeRoot, branch: 'mission-preview-recovery', pid: deadPid, processAlive: false } });
-  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const env = { VILLAGE_MISSION_HOME: home, VILLAGE_MISSION_WORKSPACE: workspace };
   let deployments = 0;
   const result = await main(['recover-preview', missionId], { env, processCheck: async () => false,

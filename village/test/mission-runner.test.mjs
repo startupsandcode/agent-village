@@ -104,8 +104,8 @@ test('stage failure is checkpointed and retries only up to the configured attemp
 
 test('one evidence-backed Quinn retry preserves the blocked review and stays inside the mission call cap', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const input = { ...missionInput, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
@@ -115,7 +115,7 @@ test('one evidence-backed Quinn retry preserves the blocked review and stays ins
   assert.equal(samFailed.status, 'blocked');
   await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
     artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
-    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    deploymentId: 'dpl_1234567890', url: 'https://agent-village-a1b2-jmanns-projects.vercel.app',
     artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
   const failed = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
     throw new Error('Quinn must record functional checks');
@@ -131,7 +131,7 @@ test('one evidence-backed Quinn retry preserves the blocked review and stays ins
   assert.equal(authorized.version, 8);
   assert.equal(authorized.events.at(-1).error, 'Quinn must record functional checks');
   assert.equal(authorized.functionalReviewRecovery.status, 'authorized');
-  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed verified desktop and narrow captures.'],
       artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
@@ -147,8 +147,8 @@ test('one evidence-backed Quinn retry preserves the blocked review and stays ins
 
 test('an operator-approved uncertain Quinn retry preserves both failures and reserves the final call for Susie', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
@@ -158,7 +158,7 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   assert.equal(samFailed.status, 'blocked');
   await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
     artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
-    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    deploymentId: 'dpl_1234567890', url: 'https://agent-village-a1b2-jmanns-projects.vercel.app',
     artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
   const failed = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
     throw new Error('Quinn must record functional checks');
@@ -182,7 +182,7 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   assert.equal(authorized.uncertainFunctionalRetry.status, 'authorized');
   assert.equal(authorized.events.filter(event => event.stage === 'quinn_functional').length, 2);
   assert.equal(authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0), 6);
-  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the recorded desktop and narrow renders.'],
       artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
@@ -197,8 +197,8 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
 
 test('a user-approved 8-to-9 call extension preserves seven calls and audits Quinn before Susie', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
@@ -208,7 +208,7 @@ test('a user-approved 8-to-9 call extension preserves seven calls and audits Qui
   assert.equal(samFailed.status, 'blocked');
   await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
     artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
-    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    deploymentId: 'dpl_1234567890', url: 'https://agent-village-a1b2-jmanns-projects.vercel.app',
     artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
   const first = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
     throw new Error('Quinn must record functional checks');
@@ -240,7 +240,7 @@ test('a user-approved 8-to-9 call extension preserves seven calls and audits Qui
   assert.equal(authorized.finalQuinnRetry.status, 'authorized');
   assert.deepEqual(authorized.events, previousEvents);
   assert.equal(authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0), 7);
-  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the desktop and narrow renders.'],
       artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },
@@ -257,8 +257,8 @@ test('a user-approved 8-to-9 call extension preserves seven calls and audits Qui
 
 test('a failed final Quinn retry blocks before consuming the reserved Susie call', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
@@ -267,7 +267,7 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   } }));
   await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
     artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
-    deploymentId: 'dpl_1234567890', url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app',
+    deploymentId: 'dpl_1234567890', url: 'https://agent-village-a1b2-jmanns-projects.vercel.app',
     artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
   const evidence = { evidenceSha256: 'a'.repeat(64), functionalChecks: ['one', 'two', 'three', 'four', 'five', 'six'],
     screenshotRefs: { desktop: `sha256:${'b'.repeat(64)}`, narrow: `sha256:${'c'.repeat(64)}` } };
@@ -349,8 +349,8 @@ test('operator recovery permits one proven pre-execution Susie schema retry and 
 
 test('verified empty-list Vercel preflight recovery records Sam output and resumes at Quinn without another role call', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' };
-  const destination = 'vercel-preview://jmanns-projects/astra-lab';
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
   const input = { ...missionInput, maxAttempts: 1, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
@@ -360,7 +360,7 @@ test('verified empty-list Vercel preflight recovery records Sam output and resum
   assert.equal(paused.status, 'blocked');
   const deployment = { status: 'ready', missionId: f.mission.id, artifactId: f.mission.artifactId,
     projectId: target.projectId, teamId: target.teamId, target: 'preview', deploymentId: 'dpl_1234567890',
-    url: 'https://astra-lab-a1b2-jmanns-projects.vercel.app', artifactFingerprint: 'a'.repeat(64),
+    url: 'https://agent-village-a1b2-jmanns-projects.vercel.app', artifactFingerprint: 'a'.repeat(64),
     reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } };
   const recovered = await f.store.recordPreviewDeploymentRecovery(f.mission.id, deployment);
   assert.equal(recovered.status, 'ready');

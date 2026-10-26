@@ -7,13 +7,13 @@ import { isKnownRootDirectoryPreflightFailure, vercelPreviewOrigin, VercelCliCli
 
 const projectId = 'prj_1234567890abcdef';
 const teamId = 'team_1234567890abcdef';
-const previewUrl = 'https://astra-lab-preview-abc-jmanns-projects.vercel.app';
+const previewUrl = 'https://agent-village-preview-abc-jmanns-projects.vercel.app';
 const baseMission = {
   id: 'mission-preview-1', repo: 'startupsandcode/agent-village', artifactId: 'artifact-preview-1',
   previewTarget: { provider: 'vercel', projectId, teamId, environment: 'preview',
-    projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' },
+    projectSlug: 'agent-village', teamSlug: 'jmanns-projects' },
   mayaAgreement: { acceptedByUser: true, previewTarget: { provider: 'vercel', projectId, teamId,
-    environment: 'preview', projectSlug: 'astra-lab', teamSlug: 'jmanns-projects' } },
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' } },
 };
 
 async function fixture(t, { mission = baseMission, targetOverride, cliOverride } = {}) {
@@ -29,11 +29,11 @@ async function fixture(t, { mission = baseMission, targetOverride, cliOverride }
     async whoami() { calls.push({ kind: 'whoami' }); return 'test-user'; },
     async deploy(options) {
       const outputConfig = await readFile(join(options.artifactPath, '.vercel', 'output', 'config.json'), 'utf8');
-      const appOutputConfig = await readFile(join(options.artifactPath, 'app', '.vercel', 'output', 'config.json'), 'utf8');
+      const officeOutputConfig = await readFile(join(options.artifactPath, 'office', '.vercel', 'output', 'config.json'), 'utf8');
       const linkedProject = JSON.parse(await readFile(join(options.artifactPath, '.vercel', 'project.json'), 'utf8'));
       const staticFiles = await import('node:fs/promises').then(({ readdir }) => readdir(join(options.artifactPath, '.vercel', 'output', 'static')));
-      const appStaticFiles = await import('node:fs/promises').then(({ readdir }) => readdir(join(options.artifactPath, 'app', '.vercel', 'output', 'static')));
-      calls.push({ kind: 'deploy', options, outputConfig, appOutputConfig, linkedProject, staticFiles, appStaticFiles });
+      const officeStaticFiles = await import('node:fs/promises').then(({ readdir }) => readdir(join(options.artifactPath, 'office', '.vercel', 'output', 'static')));
+      calls.push({ kind: 'deploy', options, outputConfig, officeOutputConfig, linkedProject, staticFiles, officeStaticFiles });
       return { id: 'dpl_1234567890abcdef', url: previewUrl };
     },
     async inspect(id) {
@@ -62,40 +62,40 @@ test('submits only an accepted preview deployment to the exact allowlisted proje
   assert.equal(deployment.options.projectId, projectId);
   assert.equal(deployment.options.teamId, teamId);
   assert.equal(deployment.outputConfig, '{"version":3}\n');
-  assert.equal(deployment.appOutputConfig, '{"version":3}\n');
+  assert.equal(deployment.officeOutputConfig, '{"version":3}\n');
   assert.deepEqual(deployment.linkedProject, { projectId, orgId: teamId });
   assert.deepEqual(deployment.staticFiles, ['index.html']);
-  assert.deepEqual(deployment.appStaticFiles, ['index.html']);
+  assert.deepEqual(deployment.officeStaticFiles, ['index.html']);
 });
 
-test('classifies only the exact missing app root as a definite pre-submission CLI failure', () => {
-  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist. To change your Project Settings, open Vercel.'), true);
-  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project…\nError: The provided path “~\\AppData\\Local\\Temp\\stage\\app” does not exist. To change your Project Settings, open Vercel.'), true);
-  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Upload failed…\nError: The provided path “C:\\Temp\\stage\\app” does not exist.'), false);
+test('classifies only the exact missing office root as a definite pre-submission CLI failure', () => {
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\office" does not exist. To change your Project Settings, open Vercel.'), true);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project…\nError: The provided path “~\\AppData\\Local\\Temp\\stage\\office” does not exist. To change your Project Settings, open Vercel.'), true);
+  assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Upload failed…\nError: The provided path “C:\\Temp\\stage\\office” does not exist.'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: connection closed after upload'), false);
   assert.equal(isKnownRootDirectoryPreflightFailure('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\web" does not exist.'), false);
 });
 
 test('normalizes bare Vercel CLI hostnames while enforcing the approved deployment host', () => {
-  assert.equal(vercelPreviewOrigin('astra-lab-preview-abc-jmanns-projects.vercel.app', baseMission.previewTarget), previewUrl);
-  assert.equal(vercelPreviewOrigin('astra-4idr0wopp-jmanns-projects.vercel.app', baseMission.previewTarget),
-    'https://astra-4idr0wopp-jmanns-projects.vercel.app');
+  assert.equal(vercelPreviewOrigin('agent-village-preview-abc-jmanns-projects.vercel.app', baseMission.previewTarget), previewUrl);
+  assert.equal(vercelPreviewOrigin('agent-village-4idr0wopp-jmanns-projects.vercel.app', baseMission.previewTarget),
+    'https://agent-village-4idr0wopp-jmanns-projects.vercel.app');
   assert.throws(() => vercelPreviewOrigin('evil.example.org', baseMission.previewTarget), /not allowlisted/);
-  assert.throws(() => vercelPreviewOrigin('astra-lab-preview-abc-other-team.vercel.app', baseMission.previewTarget), /not allowlisted/);
+  assert.throws(() => vercelPreviewOrigin('agent-village-preview-abc-other-team.vercel.app', baseMission.previewTarget), /not allowlisted/);
 });
 
 test('Vercel inspect maps the API deployment owner and combines preview, project, and artifact identity', async () => {
   const calls = [];
   const client = new VercelCliClient({ run: async args => {
     calls.push(args);
-    if (args[0] === 'inspect') return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app',
+    if (args[0] === 'inspect') return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'agent-village-abc-jmanns-projects.vercel.app',
       target: 'preview', readyState: 'READY' });
-    return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app',
+    return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'agent-village-abc-jmanns-projects.vercel.app',
       projectId, target: null, readyState: 'READY', meta: { villageMissionId: baseMission.id,
         villageArtifactId: baseMission.artifactId, villageArtifactSha256: 'a'.repeat(64) },
       ownerId: teamId });
   } });
-  const previewRef = 'astra-abc-jmanns-projects.vercel.app';
+  const previewRef = 'agent-village-abc-jmanns-projects.vercel.app';
   const details = await client.inspect(previewRef, { teamId });
   assert.equal(details.projectId, projectId);
   assert.equal(details.teamId, teamId);
@@ -108,7 +108,7 @@ test('Vercel inspect maps the API deployment owner and combines preview, project
 
 test('Vercel inspect leaves deployments without an owner identity unverified', async () => {
   const client = new VercelCliClient({ run: async args => JSON.stringify(args[0] === 'inspect' ?
-    { id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app', target: 'preview', readyState: 'READY' } :
+    { id: 'dpl_1234567890abcdef', url: 'agent-village-abc-jmanns-projects.vercel.app', target: 'preview', readyState: 'READY' } :
     { id: 'dpl_1234567890abcdef', projectId, target: 'preview', readyState: 'READY' }) });
 
   const details = await client.inspect('dpl_1234567890abcdef', { teamId });
@@ -262,15 +262,15 @@ test('fails closed after an uncertain deployment submission and never retries it
   assert.equal(journal.status, 'uncertain');
 });
 
-test('reconciles only the exact missing-app-root preflight via an empty Vercel metadata listing before one retry', async t => {
+test('reconciles only the exact missing-office-root preflight via an empty Vercel metadata listing before one retry', async t => {
   let submissions = 0;
   let reconciliations = 0;
   const f = await fixture(t, { cliOverride: {
     async deploy(options) {
       submissions++;
       if (submissions === 1) {
-        assert.equal(await readFile(join(options.artifactPath, 'app', '.vercel', 'output', 'config.json'), 'utf8'), '{"version":3}\n');
-        const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.');
+        assert.equal(await readFile(join(options.artifactPath, 'office', '.vercel', 'output', 'config.json'), 'utf8'), '{"version":3}\n');
+        const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\office" does not exist.');
         error.submitted = true;
         throw error;
       }
@@ -300,7 +300,7 @@ test('a matching Vercel mission deployment blocks reconciliation and retry', asy
   const f = await fixture(t, { cliOverride: {
     async deploy() {
       submissions++;
-      const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\app" does not exist.');
+      const error = new Error('Vercel CLI failed: Retrieving project.\nError: The provided path "C:\\Temp\\stage\\office" does not exist.');
       error.submitted = true;
       throw error;
     },
@@ -314,7 +314,7 @@ test('a matching Vercel mission deployment blocks reconciliation and retry', asy
 test('reconciles an existing READY mission deployment when Vercel omitted the ID, without a second submission', async t => {
   let submissions = 0;
   let listCalls = 0;
-  const bareUrl = 'astra-lab-preview-abc-jmanns-projects.vercel.app';
+  const bareUrl = 'agent-village-preview-abc-jmanns-projects.vercel.app';
   let fingerprint;
   const f = await fixture(t, { cliOverride: {
     async whoami() { return 'test-user'; },

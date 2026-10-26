@@ -72,9 +72,8 @@ export function vercelPreviewOrigin(value, target) {
     'Vercel preview URL must be an HTTPS origin without credentials, port, query, or fragment');
   const host = url.hostname.toLowerCase();
   const teamSuffix = `-${target.teamSlug.toLowerCase()}.vercel.app`;
-  // Vercel's generated deployment hostname can use a shortened project label
-  // (for example, `astra-<hash>` for the `astra-lab` project). Bind the host to
-  // the approved team domain here; callers must additionally verify the exact
+  // Vercel's generated deployment hostname can use a project label plus a hash.
+  // Bind the host to the approved team domain here; callers must verify the exact
   // project ID and mission metadata with Vercel's authenticated inspect API.
   const deploymentName = host.endsWith(teamSuffix) ? host.slice(0, -teamSuffix.length) : '';
   requireValue(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(deploymentName),
@@ -142,10 +141,10 @@ async function stageArtifact(files, artifactId, target) {
   const fingerprint = fingerprintArtifact(files, artifactId);
   const stageRoot = await mkdtemp(join(tmpdir(), 'village-preview-artifact-'));
   try {
-    // The approved Astra Lab project has rootDirectory="app". Keep a root-level
+    // Agent Village's Vercel project has rootDirectory="office". Keep a root-level
     // prebuilt output for root-based projects and stage the exact same static
-    // bytes under app/ so Vercel CLI honors this project's existing root setting.
-    for (const projectRoot of [stageRoot, join(stageRoot, 'app')]) {
+    // bytes under office/ so Vercel CLI honors this project's existing root setting.
+    for (const projectRoot of [stageRoot, join(stageRoot, 'office')]) {
       const outputRoot = join(projectRoot, '.vercel', 'output');
       const staticRoot = join(outputRoot, 'static');
       await mkdir(staticRoot, { recursive: true });
@@ -251,7 +250,7 @@ async function runCli(args, { cwd, timeoutMs = CLI_TIMEOUT_MS }) {
 }
 
 export function isKnownRootDirectoryPreflightFailure(message) {
-  return typeof message === 'string' && /^Vercel CLI failed:\s*Retrieving project(?:\.|\u2026)\s*Error: The provided path ["“].*[\\/]app["”] does not exist\./is.test(message);
+  return typeof message === 'string' && /^Vercel CLI failed:\s*Retrieving project(?:\.|\u2026)\s*Error: The provided path ["“].*[\\/]office["”] does not exist\./is.test(message);
 }
 
 export class VercelCliClient {
