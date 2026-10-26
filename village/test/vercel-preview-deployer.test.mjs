@@ -84,7 +84,7 @@ test('normalizes bare Vercel CLI hostnames while enforcing the approved deployme
   assert.throws(() => vercelPreviewOrigin('astra-lab-preview-abc-other-team.vercel.app', baseMission.previewTarget), /not allowlisted/);
 });
 
-test('Vercel inspect combines CLI preview state with read-only API project and artifact identity', async () => {
+test('Vercel inspect maps the API deployment owner and combines preview, project, and artifact identity', async () => {
   const calls = [];
   const client = new VercelCliClient({ run: async args => {
     calls.push(args);
@@ -93,7 +93,7 @@ test('Vercel inspect combines CLI preview state with read-only API project and a
     return JSON.stringify({ id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app',
       projectId, target: null, readyState: 'READY', meta: { villageMissionId: baseMission.id,
         villageArtifactId: baseMission.artifactId, villageArtifactSha256: 'a'.repeat(64) },
-      oidcTokenClaims: { owner_id: teamId, environment: 'preview' } });
+      ownerId: teamId });
   } });
   const previewRef = 'astra-abc-jmanns-projects.vercel.app';
   const details = await client.inspect(previewRef, { teamId });
@@ -104,6 +104,16 @@ test('Vercel inspect combines CLI preview state with read-only API project and a
   assert.deepEqual(calls.map(args => args[0]), ['inspect', 'api']);
   assert.equal(calls[0][1], previewRef);
   assert.equal(calls[1][1], '/v13/deployments/dpl_1234567890abcdef');
+});
+
+test('Vercel inspect leaves deployments without an owner identity unverified', async () => {
+  const client = new VercelCliClient({ run: async args => JSON.stringify(args[0] === 'inspect' ?
+    { id: 'dpl_1234567890abcdef', url: 'astra-abc-jmanns-projects.vercel.app', target: 'preview', readyState: 'READY' } :
+    { id: 'dpl_1234567890abcdef', projectId, target: 'preview', readyState: 'READY' }) });
+
+  const details = await client.inspect('dpl_1234567890abcdef', { teamId });
+
+  assert.equal(details.teamId, null);
 });
 
 test('rejects production and any project/team/hostname outside the explicit allowlist before submission', async t => {
@@ -346,6 +356,8 @@ test('rejects successful submission if Vercel reports production, a different pr
   for (const invalid of [
     { target: 'production', projectId, url: previewUrl },
     { target: 'preview', projectId: 'prj_other', url: previewUrl },
+    { target: 'preview', projectId, url: previewUrl, teamId: 'team_other12345678' },
+    { target: 'preview', projectId, url: previewUrl, teamId: null },
     { target: 'preview', projectId, url: 'https://evil.example.org' },
     { target: 'preview', projectId, url: `${previewUrl}/unapproved-path` },
   ]) {
@@ -353,7 +365,8 @@ test('rejects successful submission if Vercel reports production, a different pr
       async whoami() { return 'test-user'; },
       async deploy() { return { id: 'dpl_1234567890abcdef', url: previewUrl }; },
       async inspect() { return { id: 'dpl_1234567890abcdef', url: invalid.url, projectId: invalid.projectId,
-        teamId, target: invalid.target, readyState: 'READY', meta: {
+        teamId: Object.hasOwn(invalid, 'teamId') ? invalid.teamId : teamId,
+        target: invalid.target, readyState: 'READY', meta: {
           villageMissionId: fMission.id, villageArtifactId: fMission.artifactId,
           villageArtifactSha256: 'f'.repeat(64),
         } }; },

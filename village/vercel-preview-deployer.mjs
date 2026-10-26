@@ -297,7 +297,7 @@ export class VercelCliClient {
       { cwd: process.cwd(), timeoutMs: 30000 }), 'deployment API inspection');
     return { ...cliDetails, ...apiDetails,
       target: apiDetails.target ?? cliDetails.target ?? (apiDetails.oidcTokenClaims?.environment === 'preview' ? 'preview' : null),
-      teamId: apiDetails.teamId ?? apiDetails.oidcTokenClaims?.owner_id ?? null };
+      teamId: apiDetails.teamId ?? apiDetails.ownerId ?? apiDetails.oidcTokenClaims?.owner_id ?? null };
   }
 
   async listMissionDeployments({ missionId, target, cwd = process.cwd() }) {
