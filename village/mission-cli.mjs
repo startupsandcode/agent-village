@@ -150,7 +150,7 @@ async function askForAgreement(proposalId, summary, criteria) {
 
 export async function main(argv = process.argv.slice(2), { env = process.env, codex = new CodexRunner(),
   confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker, processCheck,
-  inspectBackgroundStatus = readMissionBackgroundStatus, previewDeployer = null } = {}) {
+  inspectBackgroundStatus = readMissionBackgroundStatus, browserVerifier = null, previewDeployer = null } = {}) {
   const [command, ...args] = argv;
   const paths = missionPaths(env);
   const store = new MissionStore(paths.root);
@@ -594,7 +594,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       const mission = await store.create(missionInput);
       if (!background) {
         const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
-          workspacePath: workspace.root, codex });
+          workspacePath: workspace.root, codex, browserVerifier });
         return await runtime.runner.run(mission.id, runtime.handlers);
       }
       const lease = await reserveWorkspaceMission({ root: lockRoot, missionId: mission.id,

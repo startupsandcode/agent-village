@@ -198,12 +198,23 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   assert.equal(uncertain.attempts['0:quinn_functional'], 2);
   assert.deepEqual(uncertain.events.filter(event => event.stage === 'quinn_functional').map(event => event.status), ['failed', 'failed']);
   await assert.rejects(f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence), /explicit operator approval/);
-  const authorized = await f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence, { operatorApproved: true });
+  await assert.rejects(() => f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence,
+    { operatorApproved: true }), /explicit user approval to raise the mission call limit/);
+  await assert.rejects(() => f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence,
+    { operatorApproved: true, userApprovedCallLimitIncrease: 'yes' }), /explicit user approval to raise the mission call limit/);
+  const authorized = await f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence,
+    { operatorApproved: true, userApprovedCallLimitIncrease: true });
   assert.equal(authorized.status, 'ready');
   assert.equal(authorized.version, 9);
+  assert.equal(authorized.roleCallLimit, 9);
+  assert.deepEqual(authorized.roleCallLimitIncrease, {
+    previousLimit: 8, newLimit: 9, operatorApproved: true,
+    authorizedAt: authorized.roleCallLimitIncrease.authorizedAt,
+  });
+  assert.ok(Number.isFinite(Date.parse(authorized.roleCallLimitIncrease.authorizedAt)));
   assert.equal(authorized.uncertainFunctionalRetry.status, 'authorized');
   assert.equal(authorized.events.filter(event => event.stage === 'quinn_functional').length, 2);
-  assert.equal(authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0), 6);
+  assert.equal(authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0), 7);
   const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the recorded desktop and narrow renders.'],
@@ -214,14 +225,49 @@ test('an operator-approved uncertain Quinn retry preserves both failures and res
   assert.deepEqual(completed.events.filter(event => event.stage === 'quinn_functional').map(event => event.status), ['failed', 'failed', 'done']);
   assert.equal(completed.attempts['0:quinn_functional'], 3);
   assert.equal(completed.uncertainFunctionalRetry.status, 'consumed');
-  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 8);
+  assert.equal(completed.mayaIntakeCalls + Object.values(completed.attempts).reduce((sum, attempt) => sum + attempt, 0), 9);
+});
+
+test('uncertain retry cannot exceed the one-call increase ceiling after Maya uses three intake calls', async t => {
+  const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
+    environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
+  const destination = 'vercel-preview://jmanns-projects/agent-village';
+  const input = { ...missionInput, mayaIntakeCalls: 3, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+    mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
+  const f = await fixture(t, input);
+  await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
+  await f.store.authorizePreExecutionSchemaRetry(f.mission.id, { sessionId: '01a16ed9-f8cb-73f2-836b-61c8445aa29e',
+    evidenceSha256: 'd'.repeat(64), errorCode: 'invalid_json_schema', missingField: 'artifactPath', stage: 'susie_design' });
+  await f.runner.run(f.mission.id, successfulHandlers({ sam_implementation: async () => {
+    throw new Error('preview deployment outcome is uncertain; reconcile the existing operation before retrying');
+  } }));
+  await f.store.recordPreviewDeploymentRecovery(f.mission.id, { status: 'ready', missionId: f.mission.id,
+    artifactId: f.mission.artifactId, projectId: target.projectId, teamId: target.teamId, target: 'preview',
+    deploymentId: 'dpl_1234567890', url: 'https://agent-village-a1b2-jmanns-projects.vercel.app',
+    artifactFingerprint: 'a'.repeat(64), reconciliation: { method: 'vercel-list-mission-metadata', matchingDeployments: 0 } });
+  const evidence = { evidenceSha256: 'a'.repeat(64), functionalChecks: ['HTTP 200', 'artifact identity matches',
+    'retry state one', 'retry state two', 'retry limit disables control', 'cancel disables attempts'],
+    screenshotRefs: { desktop: `sha256:${'b'.repeat(64)}`, narrow: `sha256:${'c'.repeat(64)}` } };
+  await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
+    throw new Error('Quinn must record functional checks');
+  } }));
+  await f.store.authorizeFunctionalReviewRetry(f.mission.id, evidence);
+  await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => { throw new Error('Codex stage failed'); } }));
+  const blocked = await f.store.get(f.mission.id);
+  assert.equal(blocked.mayaIntakeCalls + Object.values(blocked.attempts).reduce((sum, attempt) => sum + attempt, 0), 8);
+  await assert.rejects(() => f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence,
+    { operatorApproved: true, userApprovedCallLimitIncrease: true }), /cannot reserve Quinn and Susie/);
+  const unchanged = await f.store.get(f.mission.id);
+  assert.equal(unchanged.status, 'blocked');
+  assert.equal(unchanged.roleCallLimit, undefined);
+  assert.equal(unchanged.attempts['0:quinn_functional'], 2);
 });
 
 test('a user-approved 8-to-9 call extension preserves seven calls and audits Quinn before Susie', async t => {
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
     environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
   const destination = 'vercel-preview://jmanns-projects/agent-village';
-  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+  const input = { ...missionInput, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
   await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
@@ -246,6 +292,8 @@ test('a user-approved 8-to-9 call extension preserves seven calls and audits Qui
   const second = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
     throw new Error('Codex stage failed');
   } }));
+  await assert.rejects(() => f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence,
+    { operatorApproved: true, userApprovedCallLimitIncrease: true }), /call limit increase approval is not needed/);
   await f.store.authorizeUncertainFunctionalRetry(f.mission.id, evidence, { operatorApproved: true });
   const third = await f.runner.run(f.mission.id, successfulHandlers({ quinn_functional: async () => {
     throw new Error('Quinn must record functional checks');
@@ -284,7 +332,7 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   const target = { provider: 'vercel', projectId: 'prj_1234567890', teamId: 'team_1234567890',
     environment: 'preview', projectSlug: 'agent-village', teamSlug: 'jmanns-projects' };
   const destination = 'vercel-preview://jmanns-projects/agent-village';
-  const input = { ...missionInput, mayaIntakeCalls: 2, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
+  const input = { ...missionInput, mayaIntakeCalls: 1, maxAttempts: 1, maxRevisions: 0, previewTarget: target, destination,
     mayaAgreement: { ...missionInput.mayaAgreement, previewTarget: target, destination } };
   const f = await fixture(t, input);
   await f.runner.run(f.mission.id, successfulHandlers({ susie_design: async () => { throw new Error('Codex stage failed'); } }));
@@ -346,7 +394,7 @@ test('a failed final Quinn retry blocks before consuming the reserved Susie call
   assert.equal(finalAuthorization.roleCallLimit, 11);
   assert.deepEqual(finalAuthorization.events, instrumentedFailure.events);
   assert.equal(finalAuthorization.thirdFinalQuinnRetry.retryAttempt, 6);
-  const previewUrl = 'https://astra-lab-a1b2-jmanns-projects.vercel.app';
+  const previewUrl = 'https://agent-village-a1b2-jmanns-projects.vercel.app';
   const completed = await f.runner.run(f.mission.id, successfulHandlers({
     susie_visual: async () => ({ status: 'done', evidence: ['Susie reviewed the desktop and narrow renders.'],
       artifactId: f.mission.artifactId, rendered: { ...rendered, destination: previewUrl, previewUrl },

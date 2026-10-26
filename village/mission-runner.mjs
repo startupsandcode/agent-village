@@ -124,7 +124,18 @@ function validateTransition(previous, next) {
     previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.error === 'Codex stage failed' &&
     previous.functionalReviewRecovery?.status === 'consumed' && previous.functionalReviewRecovery.retryAttempt === 2 &&
     previous.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
-    roleCallsUsed(previous) + 2 <= MAX_MISSION_ROLE_CALLS &&
+    (() => {
+      const currentLimit = missionCallLimit(previous);
+      const neededCalls = roleCallsUsed(previous) + 2;
+      const increased = next.roleCallLimit !== undefined;
+      const authorizedLimit = increased ? next.roleCallLimit : currentLimit;
+      return neededCalls <= authorizedLimit &&
+        (increased ? currentLimit === MAX_MISSION_ROLE_CALLS && authorizedLimit === currentLimit + 1 &&
+          authorizedLimit <= 11 && next.roleCallLimitIncrease?.previousLimit === currentLimit &&
+          next.roleCallLimitIncrease?.newLimit === authorizedLimit && next.roleCallLimitIncrease?.operatorApproved === true &&
+          Number.isFinite(Date.parse(next.roleCallLimitIncrease.authorizedAt)) :
+          next.roleCallLimit === undefined && next.roleCallLimitIncrease === undefined);
+    })() &&
     next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
     same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
     next.error === null && next.uncertainFunctionalRetry?.status === 'authorized' &&
@@ -363,6 +374,7 @@ function validateState(value, id) {
   if (value?.version >= 7) stateKeys.push('previewDeploymentRecovery');
   if (value?.version >= 8) stateKeys.push('functionalReviewRecovery');
   if (value?.version >= 9) stateKeys.push('uncertainFunctionalRetry');
+  if (value?.version === 9 && Object.hasOwn(value, 'roleCallLimit')) stateKeys.push('roleCallLimit', 'roleCallLimitIncrease');
   if (value?.version >= 10) stateKeys.push('roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry');
   if (value?.version >= 11) stateKeys.push('secondRoleCallLimitIncrease', 'secondFinalQuinnRetry');
   if (value?.version >= 12) stateKeys.push('thirdRoleCallLimitIncrease', 'thirdFinalQuinnRetry');
@@ -500,6 +512,11 @@ function validateState(value, id) {
     (value.uncertainFunctionalRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
       value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 2 :
       value.attempts['0:quinn_functional'] >= 3), 'invalid uncertain functional retry record');
+  assert(value.version !== 9 || !Object.hasOwn(value, 'roleCallLimit') ||
+    value.roleCallLimit === 9 && value.roleCallLimitIncrease && Object.keys(value.roleCallLimitIncrease).length === 4 &&
+    value.roleCallLimitIncrease.previousLimit === MAX_MISSION_ROLE_CALLS && value.roleCallLimitIncrease.newLimit === 9 &&
+    value.roleCallLimitIncrease.operatorApproved === true && Number.isFinite(Date.parse(value.roleCallLimitIncrease.authorizedAt)),
+  'invalid approved call limit record');
   assert(value.version < 10 || (value.version < 11 ? value.roleCallLimit === 9 : value.version < 12 ? value.roleCallLimit === 10 : value.roleCallLimit === 11) && value.roleCallLimitIncrease &&
     Object.keys(value.roleCallLimitIncrease).length === 4 && value.roleCallLimitIncrease.previousLimit === 8 &&
     value.roleCallLimitIncrease.newLimit === 9 && value.roleCallLimitIncrease.operatorApproved === true &&
@@ -825,7 +842,8 @@ export class MissionStore {
     return await this.save(state);
   }
 
-  async authorizeUncertainFunctionalRetry(id, evidence, { operatorApproved = false } = {}) {
+  async authorizeUncertainFunctionalRetry(id, evidence,
+    { operatorApproved = false, userApprovedCallLimitIncrease = false } = {}) {
     const state = await this.get(id);
     assert(operatorApproved === true, 'explicit operator approval is required for an uncertain Quinn retry');
     assert(state.version === 8 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
@@ -837,11 +855,25 @@ export class MissionStore {
       state.functionalReviewRecovery?.status === 'consumed' && state.functionalReviewRecovery.retryAttempt === 2 &&
       state.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
       !(await this.isCancelled(id)), 'mission is not eligible for an operator-approved uncertain Quinn retry');
-    assert(roleCallsUsed(state) + 2 <= MAX_MISSION_ROLE_CALLS,
-      'mission cannot reserve one Quinn call and one final Susie visual review within the eight-call limit');
+    const currentLimit = missionCallLimit(state);
+    const neededCalls = roleCallsUsed(state) + 2;
+    const increaseRequired = neededCalls > currentLimit;
+    if (increaseRequired) {
+      assert(userApprovedCallLimitIncrease === true,
+        'explicit user approval to raise the mission call limit is required');
+      assert(currentLimit === MAX_MISSION_ROLE_CALLS && neededCalls <= currentLimit + 1 && currentLimit + 1 <= 11,
+        'approved call limit cannot reserve Quinn and Susie within the one-call increase ceiling');
+    } else {
+      assert(userApprovedCallLimitIncrease === false, 'call limit increase approval is not needed for this retry');
+    }
     assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
       'same verified browser evidence is required for the uncertain Quinn retry');
     state.version = 9;
+    if (increaseRequired) {
+      state.roleCallLimit = currentLimit + 1;
+      state.roleCallLimitIncrease = { previousLimit: currentLimit, newLimit: currentLimit + 1,
+        operatorApproved: true, authorizedAt: new Date().toISOString() };
+    }
     state.uncertainFunctionalRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 2, retryAttempt: 3,
       evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized',
       authorizedAt: new Date().toISOString() };

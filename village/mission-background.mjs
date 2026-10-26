@@ -21,9 +21,9 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-export async function isMissionProcessAlive(pid) {
-  if (process.platform === 'win32') {
-    const output = await new Promise((resolveOutput, reject) => execFile('tasklist',
+export async function isMissionProcessAlive(pid, { runTasklist = null } = {}) {
+  if (process.platform === 'win32' || runTasklist) {
+    const output = runTasklist ? await runTasklist(pid) : await new Promise((resolveOutput, reject) => execFile('tasklist',
       ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 5000 },
       (error, stdout) => error ? reject(error) : resolveOutput(stdout)));
     return output.split(/\r?\n/).some(line => new RegExp(`^"[^"]+","${pid}"(?:,|$)`).test(line.trim()));

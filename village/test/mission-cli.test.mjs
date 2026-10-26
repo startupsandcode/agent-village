@@ -218,11 +218,18 @@ test('recover-preview deploys only the accepted mission output after the exact p
   assert.equal(recovered.events.at(-1).output.previewUrl, previewUrl);
 });
 
-test('mission process probe recognizes the current process', async () => {
-  assert.equal(await isMissionProcessAlive(process.pid), true);
+test('mission process probe parses a matching Windows process row through its test adapter', async () => {
+  let requestedPid;
+  const alive = await isMissionProcessAlive(4321, { runTasklist: async pid => {
+    requestedPid = pid;
+    return `"node.exe","${pid}","Console","1","5,000 K"`;
+  } });
+  assert.equal(requestedPid, 4321);
+  assert.equal(alive, true);
+  assert.equal(await isMissionProcessAlive(4321, { runTasklist: async () => 'INFO: No tasks are running which match the specified criteria.' }), false);
 });
 
-test('start runs mocked roles in order and accepts only a real rendered local preview', async t => {
+test('start runs mocked roles in order and accepts preview evidence from its verifier adapter', async t => {
   const root = await mkdtemp(join(tmpdir(), 'village-mission-cli-'));
   const priorBrowserPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
   process.env.PLAYWRIGHT_BROWSERS_PATH = 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright';
@@ -267,16 +274,41 @@ test('start runs mocked roles in order and accepts only a real rendered local pr
       evidence: ['Real Chromium desktop and narrow screenshots match the design guide.'],
       designGuide: null, previewUrl: null, functionalChecks: [], visualFindings: [] };
   } };
+  const browserVerifier = {
+    async capture({ mission, previewUrl: renderedUrl }) {
+      const directory = join(evidence, mission.id, `revision-${mission.revisions ?? 0}`);
+      await mkdir(directory, { recursive: true });
+      const screenshot = async name => {
+        const screenshotPath = join(directory, `${name}.png`);
+        await writeFile(screenshotPath, `${name} screenshot`);
+        return { passed: true, evidenceRef: `sha256:${'a'.repeat(64)}`, screenshotPath,
+          metrics: { width: name === 'desktop' ? 1280 : 390, documentWidth: name === 'desktop' ? 1280 : 390,
+            documentHeight: 900, heading: true, title: 'Volunteer preview', imagesMissingAlt: 0, fontStatus: 'loaded' } };
+      };
+      const captures = { desktop: await screenshot('desktop'), narrow: await screenshot('narrow') };
+      const rendered = { artifactId: mission.artifactId, destination: renderedUrl, previewUrl: renderedUrl,
+        desktop: { passed: true, evidenceRef: captures.desktop.evidenceRef },
+        narrow: { passed: true, evidenceRef: captures.narrow.evidenceRef },
+        screenshotRef: captures.desktop.screenshotPath, screenshotSha256: 'a'.repeat(64),
+        sameOriginRequestCount: 1, blockedExternalOrigins: [] };
+      return { rendered, captures };
+    },
+    async verifyRenderedEvidence({ mission, rendered }) {
+      return { verified: true, artifactId: mission.artifactId, destination: rendered.destination,
+        previewUrl: rendered.previewUrl, screenshotRef: rendered.screenshotRef };
+    },
+  };
   const result = await main(['start', inputPath], { env: { VILLAGE_MISSION_WORKSPACE: workspace,
     VILLAGE_MISSION_ROOT: missions, VILLAGE_MISSION_EVIDENCE_ROOT: evidence,
+    VILLAGE_MISSION_HOME: join(root, 'mission-home'),
     PLAYWRIGHT_BROWSERS_PATH: 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright' }, codex,
-    background: false,
+    background: false, browserVerifier,
     confirm: async (_proposalId, summary, criteria) => {
       assert.match(summary, /approved local destination/);
       assert.equal(criteria.length, 3);
       return 'YES';
     } });
-  assert.equal(result.status, 'accepted_preview');
+  assert.equal(result.status, 'accepted_preview', result.error ?? '');
   assert.deepEqual(responses.map(item => item.readOnly), [true, true, false, true, true]);
   assert.deepEqual(responses[4].images.map(path => path.split(/[\\/]/).at(-1)), ['desktop.png', 'narrow.png']);
   assert.equal(result.events.length, 4);
@@ -287,7 +319,8 @@ test('start runs mocked roles in order and accepts only a real rendered local pr
   await writeFile(unboundedInput, JSON.stringify({ id: 'mission-cli-over-limit', goal: 'Build a preview.',
     destination, artifactId, constraints: [], maxAttempts: 3 }));
   await assert.rejects(() => main(['start', unboundedInput], { env: { VILLAGE_MISSION_WORKSPACE: workspace,
-    VILLAGE_MISSION_ROOT: missions, VILLAGE_MISSION_EVIDENCE_ROOT: evidence }, codex,
+    VILLAGE_MISSION_ROOT: missions, VILLAGE_MISSION_EVIDENCE_ROOT: evidence,
+    VILLAGE_MISSION_HOME: join(root, 'mission-home') }, codex,
     confirm: async () => { throw new Error('should not request approval'); } }), /attempt limit must be 1-2/);
   assert.equal(responses.length, 5, 'a CLI request outside the hard execution bounds does not call Maya or a worker role');
 });
@@ -325,6 +358,7 @@ test('start persists a queued mission, detaches one worker and refuses a duplica
   const agreement = new Promise(resolve => { acceptAgreement = resolve; });
   const options = { env: { VILLAGE_MISSION_WORKSPACE: workspace, VILLAGE_MISSION_ROOT: missions,
     VILLAGE_MISSION_EVIDENCE_ROOT: join(root, 'evidence'), VILLAGE_MISSION_HOME: join(root, 'home') }, codex,
+    processCheck: async pid => pid === 4321,
     confirm: async () => { await agreement; return 'YES'; }, spawnWorker: async ({ missionId, expectedBranch }) => {
       launched += 1;
       assert.equal(missionId, 'queued-first-46');
@@ -375,7 +409,8 @@ test('a worker launch failure is durably recorded and permits a safe resume retr
     destination: 'http://127.0.0.1:3000/preview', artifactId: 'launch-retry-46' }));
   const codex = { async runStructured() { return { status: 'agreed', summary: 'Build one preview.',
     acceptanceCriteria: ['Render the page cleanly.', 'Check the preview on desktop.', 'Check the preview on mobile.'], questions: [] }; } };
-  const base = { env: { VILLAGE_MISSION_WORKSPACE: workspace, VILLAGE_MISSION_ROOT: missions }, codex,
+  const base = { env: { VILLAGE_MISSION_WORKSPACE: workspace, VILLAGE_MISSION_ROOT: missions,
+    VILLAGE_MISSION_HOME: join(root, 'home') }, codex, processCheck: async () => true,
     confirm: async () => 'YES' };
   await assert.rejects(() => main(['start', input], { ...base, spawnWorker: async () => { throw new Error('spawn denied'); } }), /spawn denied/);
   const feed = await main(['notifications'], base);
