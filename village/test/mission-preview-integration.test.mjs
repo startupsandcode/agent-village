@@ -97,6 +97,32 @@ async function fixture(t, { reviseVisualOnce = false } = {}) {
   return { root, workspace, artifactRoot, store, mission, runner, handlers, calls, deployCalls };
 }
 
+function makeBrowserProbe({ status = 200, pageArtifactId = artifactId } = {}) {
+  let routeHandler;
+  let sentHeaders;
+  const browser = { async newContext() {
+    let viewport = { width: 1280, height: 800 };
+    return { async route(_pattern, handler) { routeHandler = handler; },
+      async newPage() { return {
+        async goto() {
+          await routeHandler({ request: () => ({ url: () => previewUrl, headers: () => ({ accept: 'text/html' }) }),
+            async continue(options) { sentHeaders = options?.headers; }, async abort() { throw new Error('approved origin blocked'); } });
+          return { status: () => status };
+        },
+        url: () => previewUrl,
+        locator: () => ({ async getAttribute() { return pageArtifactId; } }),
+        async evaluate(callback) {
+          if (String(callback).includes('document.fonts?.ready')) return undefined;
+          return { width: viewport.width, documentWidth: viewport.width, documentHeight: 700, heading: true,
+            title: 'Volunteer', imagesMissingAlt: 0, fontStatus: 'loaded' };
+        },
+        async setViewportSize(value) { viewport = value; },
+        async screenshot({ path }) { const bytes = Buffer.from(`screenshot-${viewport.width}`); await writeFile(path, bytes); return bytes; },
+      }; }, async close() {} };
+  }, async close() {} };
+  return { browser, get sentHeaders() { return sentHeaders; } };
+}
+
 test('Maya intake agreement binds the exact Vercel project/team preview scope', async () => {
   let prompt;
   const intake = new MayaMissionIntake({ workspacePath: 'C:/workspace', codex: { async runStructured(options) {
@@ -171,6 +197,36 @@ test('one bounded visual revision creates a separate idempotent preview before f
   assert.equal(deployments[0].meta.villageArtifactSha256 === deployments[1].meta.villageArtifactSha256, false);
   assert.equal(accepted.revisions, 1);
   assert.equal(accepted.events.filter(event => event.stage === 'susie_visual' && event.status === 'needs_revision').length, 1);
+});
+
+test('public Vercel previews can be verified without a token provider or auth header', async t => {
+  for (const tokenProvider of [null, async () => { throw new Error('Vercel CLI login unavailable'); }]) {
+    const root = await mkdtemp(join(tmpdir(), 'village-preview-public-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const probe = makeBrowserProbe();
+    const options = { evidenceRoot: root, chromium: { async launch() { return probe.browser; } } };
+    if (tokenProvider) options.oidcTokenProvider = tokenProvider;
+    const verifier = new BrowserPreviewVerifier(options);
+    const mission = { id: tokenProvider ? 'public-preview-token-failure' : 'public-preview-no-provider',
+      artifactId, revisions: 0, destination, previewTarget: target, goal };
+
+    const result = await verifier.capture({ mission, previewUrl });
+
+    assert.equal(probe.sentHeaders, undefined);
+    assert.equal(result.rendered.artifactId, artifactId);
+    assert.equal((await verifier.verifyRenderedEvidence({ mission, rendered: result.rendered })).verified, true);
+  }
+});
+
+test('a protected Vercel preview without a token still fails its HTTP status check', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'village-preview-protected-no-token-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const probe = makeBrowserProbe({ status: 401, pageArtifactId: null });
+  const verifier = new BrowserPreviewVerifier({ evidenceRoot: root, chromium: { async launch() { return probe.browser; } } });
+  const mission = { id: 'protected-preview-no-token', artifactId, revisions: 0, destination, previewTarget: target, goal };
+
+  await assert.rejects(verifier.capture({ mission, previewUrl }), /preview returned an unsuccessful HTTP status/);
+  assert.equal(probe.sentHeaders, undefined);
 });
 
 test('protected Vercel browser uses the short-lived OIDC header only for its approved preview origin', async t => {

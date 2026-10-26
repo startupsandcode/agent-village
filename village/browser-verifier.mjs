@@ -66,11 +66,14 @@ export class BrowserPreviewVerifier {
     requireValue(canonicalDestination(destination.href) === canonicalDestination(target.href),
       'preview URL does not match the approved destination');
     let oidcToken = null;
-    if (mission.previewTarget) {
-      requireValue(typeof this.oidcTokenProvider === 'function', 'protected Vercel preview browser authentication is unavailable');
-      oidcToken = await this.oidcTokenProvider({ target: structuredClone(mission.previewTarget) });
-      requireValue(typeof oidcToken === 'string' && oidcToken.length >= 20 && oidcToken.length <= 8192,
-        'Vercel preview browser authentication token is unavailable');
+    if (mission.previewTarget && typeof this.oidcTokenProvider === 'function') {
+      try {
+        const candidate = await this.oidcTokenProvider({ target: structuredClone(mission.previewTarget) });
+        if (typeof candidate === 'string' && candidate.length >= 20 && candidate.length <= 8192) oidcToken = candidate;
+      } catch {
+        // Public previews need no token. A protected preview still has to pass
+        // the ordinary response, destination, and artifact checks below.
+      }
     }
 
     const evidenceDir = join(this.evidenceRoot, id, `revision-${mission.revisions ?? 0}`);
