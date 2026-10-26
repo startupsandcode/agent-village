@@ -19,7 +19,7 @@ function localMissionStatusLabel(mission) {
 }
 
 function statusDescription(mission) {
-  if (mission.needsAttention) return 'The worker reported an error or the mission needs reconciliation. Check CLI status for details.';
+  if (mission.needsAttention) return mission.attentionReason || 'The worker reported an error or the mission needs reconciliation. Check CLI status for details.';
   if (mission.status === 'accepted_preview') return 'Design and functional checks passed, and Susie reviewed the rendered preview.';
   if (mission.status === 'cancelled') return 'The mission was cancelled at a safe checkpoint.';
   if (mission.status === 'running') return `Current stage: ${mission.currentStage.replaceAll('_', ' ')}.`;

@@ -1,6 +1,8 @@
 import { mkdir, open, readFile, readdir, truncate, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { sameVercelPreviewTarget, validateVercelPreviewTarget, vercelPreviewDestination,
+  vercelPreviewOrigin } from './vercel-preview-deployer.mjs';
 
 const REPO = 'startupsandcode/agent-village';
 const stages = ['susie_design', 'sam_implementation', 'quinn_functional', 'susie_visual'];
@@ -13,6 +15,10 @@ function roleCallsUsed(state) {
   return (state.mayaIntakeCalls ?? 1) + Object.values(state.attempts).reduce((total, attempt) => total + attempt, 0);
 }
 
+function missionCallLimit(state) {
+  return state.roleCallLimit ?? MAX_MISSION_ROLE_CALLS;
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -23,7 +29,7 @@ function validateEvidence(evidence) {
   return evidence.map(item => item.trim());
 }
 
-function validateStageOutput(stage, status, output) {
+function validateStageOutput(stage, status, output, mission = null) {
   assert(output && typeof output === 'object' && !Array.isArray(output), 'stage deliverable required');
   if (stage === 'susie_design') {
     const guide = output.kind === 'design_guide' && output.guide;
@@ -42,6 +48,11 @@ function validateStageOutput(stage, status, output) {
   } else if (stage === 'sam_implementation') {
     assert(output.kind === 'implementation' && typeof output.previewUrl === 'string' &&
       /^https?:\/\//.test(output.previewUrl), 'Sam must provide a preview URL');
+    if (mission?.previewTarget) {
+      assert(vercelPreviewOrigin(output.previewUrl, mission.previewTarget) === output.previewUrl &&
+        /^dpl_[A-Za-z0-9]{8,}$/.test(output.deploymentId ?? '') && /^[a-f0-9]{64}$/.test(output.artifactFingerprint ?? ''),
+      'Vercel preview checkpoint must bind the accepted target, deployment ID, and artifact fingerprint');
+    }
   } else if (stage === 'quinn_functional') {
     assert(output.kind === 'functional_review' && Array.isArray(output.checks) && output.checks.length > 0 &&
       output.checks.every(check => typeof check === 'string' && check.trim()), 'Quinn functional checks required');
@@ -58,11 +69,148 @@ function same(left, right) {
 }
 
 function validateTransition(previous, next) {
-  const immutable = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination',
+  const recoveryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    (previous.version === 5 || previous.version === 6) && next.version === 6 &&
+    next.preExecutionRecovery?.status === 'authorized' &&
+    next.preExecutionRecovery.stage === 'susie_design' && next.preExecutionRecovery.revision === previous.revisions &&
+    next.preExecutionRecovery.failedAttempt === previous.maxAttempts &&
+    next.preExecutionRecovery.retryAttempt === previous.maxAttempts + 1 &&
+    previous.mayaIntakeCalls + Object.values(previous.attempts).reduce((total, attempt) => total + attempt, 0) + 1 <=
+      MAX_MISSION_ROLE_CALLS &&
+    next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+    same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && previous.inFlight?.stage === 'susie_design' &&
+    previous.inFlight.attempt === next.preExecutionRecovery.failedAttempt &&
+    previous.events.at(-1)?.stage === 'susie_design' && previous.events.at(-1)?.status === 'failed' &&
+    previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.attempt === previous.inFlight.attempt &&
+    previous.events.at(-1)?.error === 'Codex stage failed';
+  const previewRecoveryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 6 && next.version === 7 && previous.currentStage === 'sam_implementation' &&
+    previous.revisions === 0 && Number.isSafeInteger(previous.maxAttempts) && previous.maxAttempts >= 1 &&
+    previous.maxAttempts <= 2 && previous.inFlight?.stage === 'sam_implementation' &&
+    previous.inFlight.attempt === 1 && previous.attempts['0:sam_implementation'] === 1 &&
+    previous.events.at(-1)?.stage === 'sam_implementation' && previous.events.at(-1)?.attempt === 1 &&
+    previous.events.at(-1)?.status === 'failed' && next.currentStage === 'quinn_functional' &&
+    next.revisions === previous.revisions && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && next.events.length === previous.events.length + 1 &&
+    same(next.events.slice(0, -1), previous.events) &&
+    next.events.at(-1)?.stage === 'sam_implementation' && next.events.at(-1)?.revision === 0 &&
+    next.events.at(-1)?.attempt === 1 && next.events.at(-1)?.status === 'done' &&
+    next.previewDeploymentRecovery?.status === 'consumed' &&
+    next.previewDeploymentRecovery.stage === 'sam_implementation' &&
+    next.previewDeploymentRecovery.revision === 0 && next.previewDeploymentRecovery.failedAttempt === 1 &&
+    [0, 1].includes(next.previewDeploymentRecovery.matchingDeployments) &&
+    next.previewDeploymentRecovery.deploymentId === next.events.at(-1)?.output?.deploymentId &&
+    next.previewDeploymentRecovery.artifactFingerprint === next.events.at(-1)?.output?.artifactFingerprint &&
+    next.previewDeploymentRecovery.url === next.events.at(-1)?.output?.previewUrl;
+  const functionalReviewRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 7 && next.version === 8 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 1 && previous.attempts['0:quinn_functional'] === 1 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.attempt === 1 &&
+    previous.events.at(-1)?.status === 'failed' && previous.events.at(-1)?.error === 'Quinn must record functional checks' &&
+    previous.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+    next.currentStage === 'quinn_functional' &&
+    next.revisions === previous.revisions && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && same(next.events, previous.events) &&
+    next.functionalReviewRecovery?.status === 'authorized' && next.functionalReviewRecovery.stage === 'quinn_functional' &&
+    next.functionalReviewRecovery.revision === 0 && next.functionalReviewRecovery.failedAttempt === 1 &&
+    next.functionalReviewRecovery.retryAttempt === 2;
+  const uncertainFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 8 && next.version === 9 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 2 && previous.attempts['0:quinn_functional'] === 2 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.revision === 0 &&
+    previous.events.at(-1)?.attempt === 2 && previous.events.at(-1)?.status === 'failed' &&
+    previous.events.at(-1)?.retryable === false && previous.events.at(-1)?.error === 'Codex stage failed' &&
+    previous.functionalReviewRecovery?.status === 'consumed' && previous.functionalReviewRecovery.retryAttempt === 2 &&
+    previous.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+    (() => {
+      const currentLimit = missionCallLimit(previous);
+      const neededCalls = roleCallsUsed(previous) + 2;
+      const increased = next.roleCallLimit !== undefined;
+      const authorizedLimit = increased ? next.roleCallLimit : currentLimit;
+      return neededCalls <= authorizedLimit &&
+        (increased ? currentLimit === MAX_MISSION_ROLE_CALLS && authorizedLimit === currentLimit + 1 &&
+          authorizedLimit <= 11 && next.roleCallLimitIncrease?.previousLimit === currentLimit &&
+          next.roleCallLimitIncrease?.newLimit === authorizedLimit && next.roleCallLimitIncrease?.operatorApproved === true &&
+          Number.isFinite(Date.parse(next.roleCallLimitIncrease.authorizedAt)) :
+          next.roleCallLimit === undefined && next.roleCallLimitIncrease === undefined);
+    })() &&
+    next.currentStage === previous.currentStage && next.revisions === previous.revisions &&
+    same(next.events, previous.events) && same(next.attempts, previous.attempts) && next.inFlight === null &&
+    next.error === null && next.uncertainFunctionalRetry?.status === 'authorized' &&
+    next.uncertainFunctionalRetry.stage === 'quinn_functional' && next.uncertainFunctionalRetry.revision === 0 &&
+    next.uncertainFunctionalRetry.failedAttempt === 2 && next.uncertainFunctionalRetry.retryAttempt === 3 &&
+    next.uncertainFunctionalRetry.operatorApproved === true &&
+    next.uncertainFunctionalRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256;
+  const finalFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 9 && next.version === 10 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 3 && previous.attempts['0:quinn_functional'] === 3 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.attempt === 3 &&
+    previous.events.at(-1)?.status === 'failed' && previous.events.at(-1)?.retryable === false &&
+    previous.events.at(-1)?.error === 'Quinn must record functional checks' &&
+    previous.functionalReviewRecovery?.status === 'consumed' && previous.uncertainFunctionalRetry?.status === 'consumed' &&
+    roleCallsUsed(previous) === 7 && next.roleCallLimit === 9 &&
+    next.roleCallLimitIncrease?.previousLimit === 8 && next.roleCallLimitIncrease?.newLimit === 9 &&
+    next.roleCallLimitIncrease?.operatorApproved === true &&
+    next.finalQuinnRetry?.status === 'authorized' && next.finalQuinnRetry.stage === 'quinn_functional' &&
+    next.finalQuinnRetry.failedAttempt === 3 && next.finalQuinnRetry.retryAttempt === 4 &&
+    next.finalQuinnRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256 &&
+    next.finalQuinnRetry.operatorApproved === true && next.currentStage === previous.currentStage &&
+    next.revisions === previous.revisions && same(next.events, previous.events) &&
+    same(next.attempts, previous.attempts) && next.inFlight === null && next.error === null;
+  const secondFinalFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 10 && next.version === 11 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 4 && previous.attempts['0:quinn_functional'] === 4 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.attempt === 4 &&
+    previous.events.at(-1)?.status === 'failed' && previous.events.at(-1)?.retryable === false &&
+    previous.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)' &&
+    previous.finalQuinnRetry?.status === 'consumed' && previous.finalQuinnRetry.retryAttempt === 4 &&
+    previous.roleCallLimit === 9 && roleCallsUsed(previous) === 8 &&
+    next.roleCallLimit === 10 && next.secondRoleCallLimitIncrease?.previousLimit === 9 &&
+    next.secondRoleCallLimitIncrease?.newLimit === 10 && next.secondRoleCallLimitIncrease?.operatorApproved === true &&
+    next.secondFinalQuinnRetry?.status === 'authorized' && next.secondFinalQuinnRetry.stage === 'quinn_functional' &&
+    next.secondFinalQuinnRetry.failedAttempt === 4 && next.secondFinalQuinnRetry.retryAttempt === 5 &&
+    next.secondFinalQuinnRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256 &&
+    next.secondFinalQuinnRetry.operatorApproved === true && next.currentStage === previous.currentStage &&
+    next.revisions === previous.revisions && same(next.events, previous.events) &&
+    same(next.attempts, previous.attempts) && next.inFlight === null && next.error === null;
+  const thirdFinalFunctionalRetryGranted = previous.status === 'blocked' && next.status === 'ready' &&
+    previous.version === 11 && next.version === 12 && previous.currentStage === 'quinn_functional' &&
+    previous.revisions === 0 && previous.maxAttempts === 1 && previous.inFlight?.stage === 'quinn_functional' &&
+    previous.inFlight.attempt === 5 && previous.attempts['0:quinn_functional'] === 5 &&
+    previous.events.at(-1)?.stage === 'quinn_functional' && previous.events.at(-1)?.attempt === 5 &&
+    previous.events.at(-1)?.status === 'failed' && previous.events.at(-1)?.retryable === false &&
+    previous.events.at(-1)?.error?.startsWith('Codex stage failed (exit 1):') &&
+    previous.secondFinalQuinnRetry?.status === 'consumed' && previous.secondFinalQuinnRetry.retryAttempt === 5 &&
+    previous.roleCallLimit === 10 && roleCallsUsed(previous) === 9 &&
+    next.roleCallLimit === 11 && next.thirdRoleCallLimitIncrease?.previousLimit === 10 &&
+    next.thirdRoleCallLimitIncrease?.newLimit === 11 && next.thirdRoleCallLimitIncrease?.operatorApproved === true &&
+    next.thirdFinalQuinnRetry?.status === 'authorized' && next.thirdFinalQuinnRetry.stage === 'quinn_functional' &&
+    next.thirdFinalQuinnRetry.failedAttempt === 5 && next.thirdFinalQuinnRetry.retryAttempt === 6 &&
+    next.thirdFinalQuinnRetry.evidenceSha256 === previous.functionalReviewRecovery.evidenceSha256 &&
+    next.thirdFinalQuinnRetry.operatorApproved === true && next.currentStage === previous.currentStage &&
+    next.revisions === previous.revisions && same(next.events, previous.events) &&
+    same(next.attempts, previous.attempts) && same(next.finalQuinnRetry, previous.finalQuinnRetry) &&
+    same(next.secondRoleCallLimitIncrease, previous.secondRoleCallLimitIncrease) &&
+    same(next.secondFinalQuinnRetry, previous.secondFinalQuinnRetry) &&
+    next.inFlight === null && next.error === null;
+  const immutable = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'previewTarget',
     'artifactId', 'team', 'constraints', 'maxAttempts', 'maxRevisions', 'createdAt', 'mayaIntakeCalls'];
   if (previous.version >= 3) immutable.push('workspaceBranch');
+  if (previous.version >= 10) immutable.push('roleCallLimitIncrease');
+  if (previous.version >= 10 && !secondFinalFunctionalRetryGranted && !thirdFinalFunctionalRetryGranted) immutable.push('roleCallLimit');
+  if (previous.version === next.version) immutable.push('version');
+  else assert(recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted || secondFinalFunctionalRetryGranted || thirdFinalFunctionalRetryGranted,
+    'invalid mission checkpoint transition');
   assert(immutable.every(key => same(previous[key], next[key])), 'invalid mission checkpoint transition');
-  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error'];
+  if (recoveryGranted || previewRecoveryGranted || functionalReviewRetryGranted || uncertainFunctionalRetryGranted || finalFunctionalRetryGranted || secondFinalFunctionalRetryGranted || thirdFinalFunctionalRetryGranted) return;
+  const unchanged = ['currentStage', 'revisions', 'events', 'attempts', 'inFlight', 'error', 'previewDeploymentRecovery',
+    'functionalReviewRecovery', 'uncertainFunctionalRetry', 'roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry',
+    'secondRoleCallLimitIncrease', 'secondFinalQuinnRetry', 'thirdRoleCallLimitIncrease', 'thirdFinalQuinnRetry'];
   const stageKey = `${previous.revisions}:${previous.currentStage}`;
   const prevAttempt = previous.attempts[stageKey] ?? 0;
   const nextAttempt = next.attempts[stageKey] ?? 0;
@@ -72,15 +220,59 @@ function validateTransition(previous, next) {
     (previous.attempts[key] ?? 0) === (next.attempts[key] ?? 0)), 'invalid mission checkpoint transition');
 
   if (attemptDelta === 1) {
+    const recoveryAttempt = previous.preExecutionRecovery?.status === 'authorized' &&
+      previous.preExecutionRecovery.stage === previous.currentStage &&
+      previous.preExecutionRecovery.revision === previous.revisions &&
+      previous.preExecutionRecovery.retryAttempt === nextAttempt &&
+      next.preExecutionRecovery?.status === 'consumed' &&
+      same({ ...previous.preExecutionRecovery, status: 'consumed' }, next.preExecutionRecovery);
+    const functionalRetry = previous.functionalReviewRecovery?.status === 'authorized' &&
+      previous.functionalReviewRecovery.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.functionalReviewRecovery.revision === previous.revisions &&
+      previous.functionalReviewRecovery.retryAttempt === nextAttempt && nextAttempt === 2 &&
+      next.functionalReviewRecovery?.status === 'consumed' &&
+      same({ ...previous.functionalReviewRecovery, status: 'consumed' }, next.functionalReviewRecovery);
+    const uncertainFunctionalRetry = previous.uncertainFunctionalRetry?.status === 'authorized' &&
+      previous.uncertainFunctionalRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.uncertainFunctionalRetry.revision === previous.revisions &&
+      previous.uncertainFunctionalRetry.retryAttempt === nextAttempt && nextAttempt === 3 &&
+      next.uncertainFunctionalRetry?.status === 'consumed' &&
+      same({ ...previous.uncertainFunctionalRetry, status: 'consumed' }, next.uncertainFunctionalRetry);
+    const finalQuinnRetry = previous.finalQuinnRetry?.status === 'authorized' &&
+      previous.finalQuinnRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.finalQuinnRetry.revision === previous.revisions && previous.finalQuinnRetry.retryAttempt === nextAttempt &&
+      nextAttempt === 4 && next.finalQuinnRetry?.status === 'consumed' &&
+      same({ ...previous.finalQuinnRetry, status: 'consumed' }, next.finalQuinnRetry);
+    const secondFinalQuinnRetry = previous.secondFinalQuinnRetry?.status === 'authorized' &&
+      previous.secondFinalQuinnRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.secondFinalQuinnRetry.revision === previous.revisions &&
+      previous.secondFinalQuinnRetry.retryAttempt === nextAttempt && nextAttempt === 5 &&
+      next.secondFinalQuinnRetry?.status === 'consumed' &&
+      same({ ...previous.secondFinalQuinnRetry, status: 'consumed' }, next.secondFinalQuinnRetry);
+    const thirdFinalQuinnRetry = previous.thirdFinalQuinnRetry?.status === 'authorized' &&
+      previous.thirdFinalQuinnRetry.stage === previous.currentStage && previous.currentStage === 'quinn_functional' &&
+      previous.thirdFinalQuinnRetry.revision === previous.revisions &&
+      previous.thirdFinalQuinnRetry.retryAttempt === nextAttempt && nextAttempt === 6 &&
+      next.thirdFinalQuinnRetry?.status === 'consumed' &&
+      same({ ...previous.thirdFinalQuinnRetry, status: 'consumed' }, next.thirdFinalQuinnRetry);
     assert(['ready', 'failed'].includes(previous.status) && previous.inFlight === null &&
       next.status === 'running' && next.currentStage === previous.currentStage &&
       next.revisions === previous.revisions && same(next.events, previous.events) &&
       next.inFlight?.stage === previous.currentStage && next.inFlight.attempt === nextAttempt &&
-      nextAttempt <= previous.maxAttempts && next.error === previous.error,
+      (nextAttempt <= previous.maxAttempts || recoveryAttempt || functionalRetry || uncertainFunctionalRetry || finalQuinnRetry || secondFinalQuinnRetry || thirdFinalQuinnRetry) &&
+      next.error === previous.error &&
+      (recoveryAttempt || same(previous.preExecutionRecovery, next.preExecutionRecovery)) &&
+      (functionalRetry || same(previous.functionalReviewRecovery, next.functionalReviewRecovery)) &&
+      (uncertainFunctionalRetry || same(previous.uncertainFunctionalRetry, next.uncertainFunctionalRetry)) &&
+      (finalQuinnRetry || same(previous.finalQuinnRetry, next.finalQuinnRetry)) &&
+      (secondFinalQuinnRetry || same(previous.secondFinalQuinnRetry, next.secondFinalQuinnRetry)) &&
+      (thirdFinalQuinnRetry || same(previous.thirdFinalQuinnRetry, next.thirdFinalQuinnRetry)),
     'invalid mission checkpoint transition');
     return;
   }
   assert(attemptDelta === 0, 'invalid mission checkpoint transition');
+  assert(same(previous.preExecutionRecovery, next.preExecutionRecovery), 'invalid mission checkpoint transition');
+  assert(same(previous.finalQuinnRetry, next.finalQuinnRetry), 'invalid mission checkpoint transition');
 
   const eventDelta = next.events.length - previous.events.length;
   assert(eventDelta === 0 || eventDelta === 1, 'invalid mission checkpoint transition');
@@ -177,10 +369,19 @@ function validateState(value, id) {
     'maxAttempts', 'maxRevisions', 'revisions', 'status', 'currentStage', 'events', 'attempts', 'inFlight',
     'error', 'createdAt', 'updatedAt'];
   if (value?.version === 3) stateKeys.push('workspaceBranch');
-  if (value?.version === 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
+  if (value?.version >= 4) stateKeys.push('workspaceBranch', 'mayaIntakeCalls');
+  if (value?.version >= 5) stateKeys.push('previewTarget');
+  if (value?.version >= 6) stateKeys.push('preExecutionRecovery');
+  if (value?.version >= 7) stateKeys.push('previewDeploymentRecovery');
+  if (value?.version >= 8) stateKeys.push('functionalReviewRecovery');
+  if (value?.version >= 9) stateKeys.push('uncertainFunctionalRetry');
+  if (value?.version === 9 && Object.hasOwn(value, 'roleCallLimit')) stateKeys.push('roleCallLimit', 'roleCallLimitIncrease');
+  if (value?.version >= 10) stateKeys.push('roleCallLimit', 'roleCallLimitIncrease', 'finalQuinnRetry');
+  if (value?.version >= 11) stateKeys.push('secondRoleCallLimitIncrease', 'secondFinalQuinnRetry');
+  if (value?.version >= 12) stateKeys.push('thirdRoleCallLimitIncrease', 'thirdFinalQuinnRetry');
   assert(value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).length === stateKeys.length && stateKeys.every(key => Object.hasOwn(value, key)) &&
-    [2, 3, 4].includes(value.version) && value.id === id && value.repo === REPO &&
+    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(value.version) && value.id === id && value.repo === REPO &&
     typeof value.goal === 'string' && value.goal.trim() &&
     Array.isArray(value.acceptanceCriteria) && value.acceptanceCriteria.length >= 3 &&
     value.acceptanceCriteria.every(item => typeof item === 'string' && item.trim()) &&
@@ -191,11 +392,17 @@ function validateState(value, id) {
     same(value.mayaAgreement.acceptanceCriteria, value.acceptanceCriteria) &&
     value.mayaAgreement.repo === value.repo && same(value.mayaAgreement.constraints, value.constraints) &&
     same(value.mayaAgreement.team, value.team) && value.mayaAgreement.destination === value.destination &&
+    (value.version < 5 || (value.previewTarget === null && !Object.hasOwn(value.mayaAgreement, 'previewTarget')) ||
+      value.previewTarget && sameVercelPreviewTarget(value.previewTarget, value.mayaAgreement.previewTarget)) &&
     value.mayaAgreement.artifactId === value.artifactId &&
     (value.version === 2 || typeof value.workspaceBranch === 'string' &&
       /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(value.workspaceBranch) &&
       value.mayaAgreement.workspaceBranch === value.workspaceBranch) &&
     typeof value.destination === 'string' && value.destination.trim() &&
+    (value.version < 5 || value.previewTarget === null || value.previewTarget && (() => {
+      try { validateVercelPreviewTarget(value.previewTarget, [value.previewTarget]);
+        return value.destination === vercelPreviewDestination(value.previewTarget); } catch { return false; }
+    })()) &&
     typeof value.artifactId === 'string' && value.artifactId.trim() &&
     value.team && Object.keys(value.team).length === 2 && Object.hasOwn(value.team, 'id') &&
     Object.hasOwn(value.team, 'roles') && typeof value.team.id === 'string' && value.team.id.trim() &&
@@ -207,7 +414,7 @@ function validateState(value, id) {
     stageNames.has(value.currentStage) && Number.isSafeInteger(value.revisions) && value.revisions >= 0 &&
     Number.isSafeInteger(value.maxRevisions) && value.maxRevisions >= 0 &&
     Number.isSafeInteger(value.maxAttempts) && value.maxAttempts >= 1 && value.maxAttempts <= 5 &&
-    (value.version !== 4 || Number.isSafeInteger(value.mayaIntakeCalls) && value.mayaIntakeCalls >= 1 &&
+    (value.version < 4 || Number.isSafeInteger(value.mayaIntakeCalls) && value.mayaIntakeCalls >= 1 &&
       value.mayaIntakeCalls <= MAX_MISSION_ROLE_CALLS) &&
     Array.isArray(value.constraints) && value.constraints.every(item => typeof item === 'string') &&
     Array.isArray(value.events) && value.events.every(event => event && stageNames.has(event.stage) &&
@@ -217,12 +424,140 @@ function validateState(value, id) {
     Object.entries(value.attempts).every(([key, attempt]) => {
       const match = /^(\d+):([a-z_]+)$/.exec(key);
       return match && stageNames.has(match[2]) && Number(match[1]) <= value.maxRevisions &&
-        Number.isSafeInteger(attempt) && attempt >= 1 && attempt <= value.maxAttempts;
+        Number.isSafeInteger(attempt) && attempt >= 1 && (attempt <= value.maxAttempts ||
+          value.preExecutionRecovery?.stage === match[2] && value.preExecutionRecovery.revision === Number(match[1]) &&
+          attempt === value.preExecutionRecovery.retryAttempt ||
+          value.functionalReviewRecovery?.stage === match[2] && value.functionalReviewRecovery.revision === Number(match[1]) &&
+          attempt === value.functionalReviewRecovery.retryAttempt ||
+          value.uncertainFunctionalRetry?.stage === match[2] && value.uncertainFunctionalRetry.revision === Number(match[1]) &&
+          attempt === value.uncertainFunctionalRetry.retryAttempt ||
+          value.finalQuinnRetry?.stage === match[2] && value.finalQuinnRetry.revision === Number(match[1]) &&
+          attempt === value.finalQuinnRetry.retryAttempt ||
+          value.secondFinalQuinnRetry?.stage === match[2] && value.secondFinalQuinnRetry.revision === Number(match[1]) &&
+          attempt === value.secondFinalQuinnRetry.retryAttempt ||
+          value.thirdFinalQuinnRetry?.stage === match[2] && value.thirdFinalQuinnRetry.revision === Number(match[1]) &&
+          attempt === value.thirdFinalQuinnRetry.retryAttempt);
     }) &&
     (value.inFlight === null || value.inFlight && Object.keys(value.inFlight).length === 2 &&
       stageNames.has(value.inFlight.stage) && Number.isSafeInteger(value.inFlight.attempt)) &&
     (value.error === null || typeof value.error === 'string') &&
     typeof value.createdAt === 'string' && typeof value.updatedAt === 'string', 'invalid mission checkpoint');
+  assert(value.version < 6 || value.preExecutionRecovery === null || value.preExecutionRecovery &&
+    Object.keys(value.preExecutionRecovery).length === 7 &&
+    ['stage', 'revision', 'failedAttempt', 'retryAttempt', 'sessionId', 'evidenceSha256', 'status']
+      .every(key => Object.hasOwn(value.preExecutionRecovery, key)) &&
+    value.preExecutionRecovery.stage === 'susie_design' &&
+    Number.isSafeInteger(value.preExecutionRecovery.revision) && value.preExecutionRecovery.revision >= 0 &&
+    value.preExecutionRecovery.revision <= value.maxRevisions &&
+    Number.isSafeInteger(value.preExecutionRecovery.failedAttempt) &&
+    value.preExecutionRecovery.failedAttempt === value.maxAttempts &&
+    value.preExecutionRecovery.retryAttempt === value.preExecutionRecovery.failedAttempt + 1 &&
+    /^[0-9a-f-]{36}$/i.test(value.preExecutionRecovery.sessionId) &&
+    /^[0-9a-f]{64}$/i.test(value.preExecutionRecovery.evidenceSha256) &&
+    ['authorized', 'consumed'].includes(value.preExecutionRecovery.status) &&
+    value.events.some(event => event.stage === value.preExecutionRecovery.stage &&
+      event.revision === value.preExecutionRecovery.revision && event.attempt === value.preExecutionRecovery.failedAttempt &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Codex stage failed') &&
+    (value.preExecutionRecovery.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === value.preExecutionRecovery.stage && value.revisions === value.preExecutionRecovery.revision &&
+      value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] === value.preExecutionRecovery.failedAttempt :
+      value.attempts[`${value.preExecutionRecovery.revision}:${value.preExecutionRecovery.stage}`] >=
+        value.preExecutionRecovery.retryAttempt), 'invalid pre-execution recovery record');
+  assert(value.version < 7 || value.previewDeploymentRecovery === null || value.previewDeploymentRecovery &&
+    Object.keys(value.previewDeploymentRecovery).length === 8 &&
+    ['stage', 'revision', 'failedAttempt', 'matchingDeployments', 'deploymentId', 'url', 'artifactFingerprint', 'status']
+      .every(key => Object.hasOwn(value.previewDeploymentRecovery, key)) &&
+    value.previewDeploymentRecovery.stage === 'sam_implementation' && value.previewDeploymentRecovery.revision === 0 &&
+    value.previewDeploymentRecovery.failedAttempt === 1 && [0, 1].includes(value.previewDeploymentRecovery.matchingDeployments) &&
+    /^dpl_[A-Za-z0-9]{8,}$/.test(value.previewDeploymentRecovery.deploymentId) &&
+    /^https:\/\//.test(value.previewDeploymentRecovery.url) && /^[a-f0-9]{64}$/.test(value.previewDeploymentRecovery.artifactFingerprint) &&
+    value.previewDeploymentRecovery.status === 'consumed' && value.events.some(event => event.stage === 'sam_implementation' &&
+      event.revision === 0 && event.attempt === 1 && event.status === 'done' &&
+      event.output?.deploymentId === value.previewDeploymentRecovery.deploymentId &&
+      event.output?.previewUrl === value.previewDeploymentRecovery.url &&
+      event.output?.artifactFingerprint === value.previewDeploymentRecovery.artifactFingerprint),
+  'invalid preview deployment recovery record');
+  assert(value.version < 8 || value.functionalReviewRecovery === null || value.functionalReviewRecovery &&
+    Object.keys(value.functionalReviewRecovery).length === 8 &&
+    ['stage', 'revision', 'failedAttempt', 'retryAttempt', 'evidenceSha256', 'functionalChecks', 'screenshotRefs', 'status']
+      .every(key => Object.hasOwn(value.functionalReviewRecovery, key)) &&
+    value.functionalReviewRecovery.stage === 'quinn_functional' && value.functionalReviewRecovery.revision === 0 &&
+    value.functionalReviewRecovery.failedAttempt === 1 && value.functionalReviewRecovery.retryAttempt === 2 &&
+    /^[a-f0-9]{64}$/.test(value.functionalReviewRecovery.evidenceSha256) &&
+    Array.isArray(value.functionalReviewRecovery.functionalChecks) && value.functionalReviewRecovery.functionalChecks.length >= 6 &&
+    value.functionalReviewRecovery.functionalChecks.every(check => typeof check === 'string' && check.trim() && check.length <= 500) &&
+    value.functionalReviewRecovery.screenshotRefs && Object.keys(value.functionalReviewRecovery.screenshotRefs).length === 2 &&
+    ['desktop', 'narrow'].every(name => /^sha256:[a-f0-9]{64}$/.test(value.functionalReviewRecovery.screenshotRefs[name] ?? '')) &&
+    ['authorized', 'consumed'].includes(value.functionalReviewRecovery.status) &&
+    value.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+    value.events.some(event => event.stage === 'quinn_functional' && event.revision === 0 && event.attempt === 1 &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Quinn must record functional checks') &&
+    (value.functionalReviewRecovery.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 1 :
+      value.attempts['0:quinn_functional'] >= 2), 'invalid functional review retry record');
+  assert(value.version < 9 || value.uncertainFunctionalRetry === null || value.uncertainFunctionalRetry &&
+    Object.keys(value.uncertainFunctionalRetry).length === 8 &&
+    ['stage', 'revision', 'failedAttempt', 'retryAttempt', 'evidenceSha256', 'operatorApproved', 'status', 'authorizedAt']
+      .every(key => Object.hasOwn(value.uncertainFunctionalRetry, key)) &&
+    value.uncertainFunctionalRetry.stage === 'quinn_functional' && value.uncertainFunctionalRetry.revision === 0 &&
+    value.uncertainFunctionalRetry.failedAttempt === 2 && value.uncertainFunctionalRetry.retryAttempt === 3 &&
+    /^[a-f0-9]{64}$/.test(value.uncertainFunctionalRetry.evidenceSha256) &&
+    value.uncertainFunctionalRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.uncertainFunctionalRetry.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.uncertainFunctionalRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.uncertainFunctionalRetry.status) &&
+    value.events.some(event => event.stage === 'quinn_functional' && event.revision === 0 && event.attempt === 1 &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Quinn must record functional checks') &&
+    value.events.some(event => event.stage === 'quinn_functional' && event.revision === 0 && event.attempt === 2 &&
+      event.status === 'failed' && event.retryable === false && event.error === 'Codex stage failed') &&
+    (value.uncertainFunctionalRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 2 :
+      value.attempts['0:quinn_functional'] >= 3), 'invalid uncertain functional retry record');
+  assert(value.version !== 9 || !Object.hasOwn(value, 'roleCallLimit') ||
+    value.roleCallLimit === 9 && value.roleCallLimitIncrease && Object.keys(value.roleCallLimitIncrease).length === 4 &&
+    value.roleCallLimitIncrease.previousLimit === MAX_MISSION_ROLE_CALLS && value.roleCallLimitIncrease.newLimit === 9 &&
+    value.roleCallLimitIncrease.operatorApproved === true && Number.isFinite(Date.parse(value.roleCallLimitIncrease.authorizedAt)),
+  'invalid approved call limit record');
+  assert(value.version < 10 || (value.version < 11 ? value.roleCallLimit === 9 : value.version < 12 ? value.roleCallLimit === 10 : value.roleCallLimit === 11) && value.roleCallLimitIncrease &&
+    Object.keys(value.roleCallLimitIncrease).length === 4 && value.roleCallLimitIncrease.previousLimit === 8 &&
+    value.roleCallLimitIncrease.newLimit === 9 && value.roleCallLimitIncrease.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.roleCallLimitIncrease.authorizedAt)) && value.finalQuinnRetry &&
+    Object.keys(value.finalQuinnRetry).length === 8 && value.finalQuinnRetry.stage === 'quinn_functional' &&
+    value.finalQuinnRetry.revision === 0 && value.finalQuinnRetry.failedAttempt === 3 &&
+    value.finalQuinnRetry.retryAttempt === 4 && /^[a-f0-9]{64}$/.test(value.finalQuinnRetry.evidenceSha256 ?? '') &&
+    value.finalQuinnRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.finalQuinnRetry.operatorApproved === true && Number.isFinite(Date.parse(value.finalQuinnRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.finalQuinnRetry.status) && value.uncertainFunctionalRetry?.status === 'consumed' &&
+    value.attempts['0:quinn_functional'] >= (value.finalQuinnRetry.status === 'authorized' ? 3 : 4),
+  'invalid final Quinn retry record');
+  assert(value.version < 11 || (value.version < 12 ? value.roleCallLimit === 10 : value.roleCallLimit === 11) && value.secondRoleCallLimitIncrease &&
+    Object.keys(value.secondRoleCallLimitIncrease).length === 4 && value.secondRoleCallLimitIncrease.previousLimit === 9 &&
+    value.secondRoleCallLimitIncrease.newLimit === 10 && value.secondRoleCallLimitIncrease.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.secondRoleCallLimitIncrease.authorizedAt)) && value.secondFinalQuinnRetry &&
+    Object.keys(value.secondFinalQuinnRetry).length === 8 && value.secondFinalQuinnRetry.stage === 'quinn_functional' &&
+    value.secondFinalQuinnRetry.revision === 0 && value.secondFinalQuinnRetry.failedAttempt === 4 &&
+    value.secondFinalQuinnRetry.retryAttempt === 5 && /^[a-f0-9]{64}$/.test(value.secondFinalQuinnRetry.evidenceSha256 ?? '') &&
+    value.secondFinalQuinnRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.secondFinalQuinnRetry.operatorApproved === true && Number.isFinite(Date.parse(value.secondFinalQuinnRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.secondFinalQuinnRetry.status) && value.finalQuinnRetry?.status === 'consumed' &&
+    (value.secondFinalQuinnRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 4 :
+      value.attempts['0:quinn_functional'] >= 5),
+  'invalid second final Quinn retry record');
+  assert(value.version < 12 || value.roleCallLimit === 11 && value.thirdRoleCallLimitIncrease &&
+    Object.keys(value.thirdRoleCallLimitIncrease).length === 4 && value.thirdRoleCallLimitIncrease.previousLimit === 10 &&
+    value.thirdRoleCallLimitIncrease.newLimit === 11 && value.thirdRoleCallLimitIncrease.operatorApproved === true &&
+    Number.isFinite(Date.parse(value.thirdRoleCallLimitIncrease.authorizedAt)) && value.thirdFinalQuinnRetry &&
+    Object.keys(value.thirdFinalQuinnRetry).length === 8 && value.thirdFinalQuinnRetry.stage === 'quinn_functional' &&
+    value.thirdFinalQuinnRetry.revision === 0 && value.thirdFinalQuinnRetry.failedAttempt === 5 &&
+    value.thirdFinalQuinnRetry.retryAttempt === 6 && /^[a-f0-9]{64}$/.test(value.thirdFinalQuinnRetry.evidenceSha256 ?? '') &&
+    value.thirdFinalQuinnRetry.evidenceSha256 === value.functionalReviewRecovery?.evidenceSha256 &&
+    value.thirdFinalQuinnRetry.operatorApproved === true && Number.isFinite(Date.parse(value.thirdFinalQuinnRetry.authorizedAt)) &&
+    ['authorized', 'consumed'].includes(value.thirdFinalQuinnRetry.status) && value.secondFinalQuinnRetry?.status === 'consumed' &&
+    (value.thirdFinalQuinnRetry.status === 'authorized' ? value.status === 'ready' && value.inFlight === null &&
+      value.currentStage === 'quinn_functional' && value.attempts['0:quinn_functional'] === 5 :
+      value.attempts['0:quinn_functional'] >= 6),
+  'invalid third final Quinn retry record');
   assert(value.events.every(event => {
     if (!event || !stageNames.has(event.stage) || !Number.isSafeInteger(event.revision) ||
         !Number.isSafeInteger(event.attempt) || !['done', 'needs_revision', 'failed'].includes(event.status) ||
@@ -235,15 +570,18 @@ function validateState(value, id) {
         event.evidence.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000) ||
         event.artifactId !== value.artifactId) return false;
     if (event.stage !== 'susie_visual') return Object.keys(event).length === 7 &&
-      (() => { try { validateStageOutput(event.stage, event.status, event.output); return true; } catch { return false; } })();
-    try { validateStageOutput(event.stage, event.status, event.output); } catch { return false; }
+      (() => { try { validateStageOutput(event.stage, event.status, event.output, value); return true; } catch { return false; } })();
+    try { validateStageOutput(event.stage, event.status, event.output, value); } catch { return false; }
+    const implementation = value.events.findLast(item => item.stage === 'sam_implementation' && item.status === 'done' &&
+      item.revision === event.revision);
+    const expectedDestination = value.previewTarget ? implementation?.output?.previewUrl : value.destination;
     return Object.keys(event).length === 9 && event.rendered?.artifactId === value.artifactId &&
-      event.rendered?.destination === value.destination && typeof event.rendered?.previewUrl === 'string' &&
+      event.rendered?.destination === expectedDestination && typeof event.rendered?.previewUrl === 'string' &&
       event.rendered.desktop?.passed === true && typeof event.rendered.desktop.evidenceRef === 'string' &&
       event.rendered.narrow?.passed === true && typeof event.rendered.narrow.evidenceRef === 'string' &&
       typeof event.rendered.screenshotRef === 'string' && event.renderVerification?.verified === true &&
       event.renderVerification.artifactId === value.artifactId &&
-      event.renderVerification.destination === value.destination &&
+      event.renderVerification.destination === expectedDestination &&
       event.renderVerification.previewUrl === event.rendered.previewUrl &&
       event.renderVerification.screenshotRef === event.rendered.screenshotRef;
   }), 'invalid mission checkpoint');
@@ -273,11 +611,17 @@ export class MissionStore {
     assert(Array.isArray(acceptanceCriteria) && acceptanceCriteria.length >= 3 &&
       acceptanceCriteria.every(item => typeof item === 'string' && item.trim()), 'Maya acceptance criteria required');
     assert(typeof input.destination === 'string' && input.destination.trim(), 'preview destination required');
-    let destinationUrl;
-    try { destinationUrl = new URL(input.destination.trim()); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
-    assert(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
-      !destinationUrl.search && !destinationUrl.hash,
-    'preview destination must be an HTTP URL without credentials, query, or fragment');
+    if (input.previewTarget) {
+      validateVercelPreviewTarget(input.previewTarget, [input.previewTarget]);
+      assert(input.destination.trim() === vercelPreviewDestination(input.previewTarget),
+        'preview destination must identify the approved Vercel project and team');
+    } else {
+      let destinationUrl;
+      try { destinationUrl = new URL(input.destination.trim()); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
+      assert(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
+        !destinationUrl.search && !destinationUrl.hash,
+      'preview destination must be an HTTP URL without credentials, query, or fragment');
+    }
     assert(typeof input.artifactId === 'string' && input.artifactId.trim(), 'artifact identity required');
     const maxAttempts = input.maxAttempts ?? 2;
     const maxRevisions = input.maxRevisions ?? 2;
@@ -300,16 +644,20 @@ export class MissionStore {
       agreement.goal === input.goal.trim() && same(agreement.acceptanceCriteria, acceptanceCriteria) &&
       agreement.destination === input.destination.trim() && agreement.artifactId === input.artifactId.trim() &&
       agreement.repo === input.repo && same(agreement.constraints, input.constraints ?? []) && same(agreement.team, team) &&
+      (input.previewTarget ? sameVercelPreviewTarget(input.previewTarget, agreement.previewTarget) :
+        !Object.hasOwn(agreement, 'previewTarget')) &&
       typeof input.workspaceBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(input.workspaceBranch) &&
       agreement.workspaceBranch === input.workspaceBranch &&
       typeof agreement.acceptedAt === 'string' && Number.isFinite(Date.parse(agreement.acceptedAt)),
     'a user-accepted Maya agreement for this exact mission is required');
-    const state = { version: 4, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
+    const state = { version: 6, workspaceBranch: input.workspaceBranch, mayaIntakeCalls,
       id, repo: REPO, goal: input.goal.trim(), acceptanceCriteria: [...acceptanceCriteria],
       mayaAgreement: structuredClone(agreement), destination: input.destination.trim(),
+      previewTarget: input.previewTarget ? structuredClone(input.previewTarget) : null,
       artifactId: input.artifactId.trim(), team: structuredClone(team), constraints: [...constraints], maxAttempts, maxRevisions,
       revisions: 0, status: 'ready', currentStage: 'susie_design', events: [], attempts: {}, inFlight: null,
-      error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      error: null, preExecutionRecovery: null,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     await mkdir(this.root, { recursive: true });
     try {
       const handle = await open(path, 'wx');
@@ -340,9 +688,17 @@ export class MissionStore {
       catch { throw new Error('invalid mission checkpoint'); }
       validateState(value, id);
       if (previous) {
-        const immutableKeys = ['version', 'id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
+        const immutableKeys = ['id', 'repo', 'goal', 'acceptanceCriteria', 'mayaAgreement', 'destination', 'artifactId', 'team',
           'constraints', 'maxAttempts', 'maxRevisions', 'createdAt'];
+        if (!((previous.version === 5 && value.version === 6) || (previous.version === 6 && value.version === 7) ||
+          (previous.version === 7 && value.version === 8) || (previous.version === 8 && value.version === 9) ||
+          (previous.version === 9 && value.version === 10) || (previous.version === 10 && value.version === 11) ||
+          (previous.version === 11 && value.version === 12))) immutableKeys.push('version');
         if (previous.version >= 3) immutableKeys.push('workspaceBranch');
+        if (previous.version >= 5) immutableKeys.push('previewTarget');
+        if (previous.version >= 10) immutableKeys.push('roleCallLimitIncrease');
+        if (previous.version >= 10 && !((previous.version === 10 && value.version === 11) ||
+          (previous.version === 11 && value.version === 12))) immutableKeys.push('roleCallLimit');
         for (const key of immutableKeys) {
           if (JSON.stringify(value[key]) !== JSON.stringify(previous[key])) throw new Error('invalid mission checkpoint');
         }
@@ -402,6 +758,215 @@ export class MissionStore {
     catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
 
+  async authorizePreExecutionSchemaRetry(id, proof) {
+    const state = await this.get(id);
+    assert((state.version === 5 || state.version === 6) && state.status === 'blocked' &&
+      state.currentStage === 'susie_design' && state.revisions === 0 && state.maxAttempts === 1 &&
+      state.inFlight?.stage === 'susie_design' && state.inFlight.attempt === 1 &&
+      state.attempts['0:susie_design'] === 1 && state.events.at(-1)?.stage === 'susie_design' &&
+      state.events.at(-1)?.revision === 0 && state.events.at(-1)?.attempt === 1 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error === 'Codex stage failed' && state.events.length === 1 &&
+      !state.preExecutionRecovery && !(await this.isCancelled(id)),
+    'mission is not eligible for a definite pre-execution Susie schema retry');
+    assert(proof && proof.errorCode === 'invalid_json_schema' && proof.missingField === 'artifactPath' &&
+      proof.stage === 'susie_design' && /^[0-9a-f-]{36}$/i.test(proof.sessionId ?? '') &&
+      /^[0-9a-f]{64}$/i.test(proof.evidenceSha256 ?? ''), 'verified Codex schema rejection evidence required');
+    assert(roleCallsUsed(state) < missionCallLimit(state), `mission reached the ${missionCallLimit(state)}-call Codex CLI limit`);
+    state.version = 6;
+    state.preExecutionRecovery = { stage: 'susie_design', revision: 0, failedAttempt: 1, retryAttempt: 2,
+      sessionId: proof.sessionId, evidenceSha256: proof.evidenceSha256, status: 'authorized' };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async recordPreviewDeploymentRecovery(id, deployment) {
+    const state = await this.get(id);
+    assert(state.version === 6 && state.status === 'blocked' && state.currentStage === 'sam_implementation' &&
+      state.revisions === 0 && Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
+      state.inFlight?.stage === 'sam_implementation' &&
+      state.inFlight.attempt === 1 && state.attempts['0:sam_implementation'] === 1 &&
+      state.events.at(-1)?.stage === 'sam_implementation' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.status === 'failed' &&
+      !state.previewDeploymentRecovery && !(await this.isCancelled(id)),
+    'mission is not eligible for bounded Sam preview deployment recovery');
+    assert(deployment?.status === 'ready' && deployment.reconciliation?.method === 'vercel-list-mission-metadata' &&
+      [0, 1].includes(deployment.reconciliation.matchingDeployments) && deployment.missionId === id &&
+      deployment.artifactId === state.artifactId && deployment.projectId === state.previewTarget?.projectId &&
+      deployment.teamId === state.previewTarget?.teamId && deployment.target === 'preview' &&
+      /^dpl_[A-Za-z0-9]{8,}$/.test(deployment.deploymentId ?? '') &&
+      vercelPreviewOrigin(deployment.url, state.previewTarget) === deployment.url &&
+      /^[a-f0-9]{64}$/.test(deployment.artifactFingerprint ?? ''),
+    'verified same-mission preview recovery evidence required');
+    assert(roleCallsUsed(state) <= missionCallLimit(state), `mission exceeded the ${missionCallLimit(state)}-call Codex CLI limit`);
+    state.version = 7;
+    state.previewDeploymentRecovery = { stage: 'sam_implementation', revision: 0, failedAttempt: 1,
+      matchingDeployments: deployment.reconciliation.matchingDeployments, deploymentId: deployment.deploymentId, url: deployment.url,
+      artifactFingerprint: deployment.artifactFingerprint, status: 'consumed' };
+    state.events.push({ stage: 'sam_implementation', revision: 0, attempt: 1, status: 'done',
+      evidence: ['Existing Sam static output was deployed after exact preflight reconciliation; Vercel verified the approved preview target, artifact identity, and READY state.'],
+      artifactId: state.artifactId, output: { kind: 'implementation', previewUrl: deployment.url,
+        deploymentId: deployment.deploymentId, artifactFingerprint: deployment.artifactFingerprint } });
+    state.currentStage = 'quinn_functional';
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async authorizeFunctionalReviewRetry(id, evidence) {
+    const state = await this.get(id);
+    assert(state.version === 7 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 1 && state.attempts['0:quinn_functional'] === 1 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Quinn must record functional checks' &&
+      state.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+      !state.functionalReviewRecovery && !(await this.isCancelled(id)),
+    'mission is not eligible for a bounded Quinn evidence-backed retry');
+    assert(roleCallsUsed(state) < missionCallLimit(state), `mission reached the ${missionCallLimit(state)}-call Codex CLI limit`);
+    assert(evidence && /^[a-f0-9]{64}$/.test(evidence.evidenceSha256 ?? '') &&
+      Array.isArray(evidence.functionalChecks) && evidence.functionalChecks.length >= 6 &&
+      evidence.functionalChecks.every(check => typeof check === 'string' && check.trim() && check.length <= 500) &&
+      evidence.screenshotRefs && /^sha256:[a-f0-9]{64}$/.test(evidence.screenshotRefs.desktop ?? '') &&
+      /^sha256:[a-f0-9]{64}$/.test(evidence.screenshotRefs.narrow ?? ''),
+    'verified browser and functional evidence required for Quinn retry');
+    state.version = 8;
+    state.functionalReviewRecovery = { stage: 'quinn_functional', revision: 0, failedAttempt: 1, retryAttempt: 2,
+      evidenceSha256: evidence.evidenceSha256, functionalChecks: [...evidence.functionalChecks],
+      screenshotRefs: structuredClone(evidence.screenshotRefs), status: 'authorized' };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async authorizeUncertainFunctionalRetry(id, evidence,
+    { operatorApproved = false, userApprovedCallLimitIncrease = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for an uncertain Quinn retry');
+    assert(state.version === 8 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 2 && state.attempts['0:quinn_functional'] === 2 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 2 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Codex stage failed' &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.functionalReviewRecovery.retryAttempt === 2 &&
+      state.events.some(event => event.stage === 'sam_implementation' && event.status === 'done' && event.revision === 0) &&
+      !(await this.isCancelled(id)), 'mission is not eligible for an operator-approved uncertain Quinn retry');
+    const currentLimit = missionCallLimit(state);
+    const neededCalls = roleCallsUsed(state) + 2;
+    const increaseRequired = neededCalls > currentLimit;
+    if (increaseRequired) {
+      assert(userApprovedCallLimitIncrease === true,
+        'explicit user approval to raise the mission call limit is required');
+      assert(currentLimit === MAX_MISSION_ROLE_CALLS && neededCalls <= currentLimit + 1 && currentLimit + 1 <= 11,
+        'approved call limit cannot reserve Quinn and Susie within the one-call increase ceiling');
+    } else {
+      assert(userApprovedCallLimitIncrease === false, 'call limit increase approval is not needed for this retry');
+    }
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the uncertain Quinn retry');
+    state.version = 9;
+    if (increaseRequired) {
+      state.roleCallLimit = currentLimit + 1;
+      state.roleCallLimitIncrease = { previousLimit: currentLimit, newLimit: currentLimit + 1,
+        operatorApproved: true, authorizedAt: new Date().toISOString() };
+    }
+    state.uncertainFunctionalRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 2, retryAttempt: 3,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized',
+      authorizedAt: new Date().toISOString() };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async authorizeFinalFunctionalReviewRetry(id, evidence, { operatorApproved = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for the 8-to-9 mission call increase');
+    assert(state.version === 9 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 3 && state.attempts['0:quinn_functional'] === 3 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 3 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Quinn must record functional checks' &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.uncertainFunctionalRetry?.status === 'consumed' &&
+      state.previewDeploymentRecovery?.status === 'consumed' && roleCallsUsed(state) === 7 &&
+      !state.roleCallLimit && !state.finalQuinnRetry && !(await this.isCancelled(id)),
+    'mission is not eligible for the one-time approved Quinn and Susie call extension');
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the final Quinn review');
+    const authorizedAt = new Date().toISOString();
+    state.version = 10;
+    state.roleCallLimit = 9;
+    state.roleCallLimitIncrease = { previousLimit: 8, newLimit: 9, operatorApproved: true, authorizedAt };
+    state.finalQuinnRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 3, retryAttempt: 4,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized', authorizedAt };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async authorizeSecondFinalFunctionalReviewRetry(id, evidence, { operatorApproved = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for the 9-to-10 mission call increase');
+    assert(state.version === 10 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 4 && state.attempts['0:quinn_functional'] === 4 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 4 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)' &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.uncertainFunctionalRetry?.status === 'consumed' &&
+      state.finalQuinnRetry?.status === 'consumed' && state.roleCallLimit === 9 && roleCallsUsed(state) === 8 &&
+      !state.secondFinalQuinnRetry && !state.secondRoleCallLimitIncrease && !(await this.isCancelled(id)),
+    'mission is not eligible for the one-time approved Quinn call increase from nine to ten');
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the final Quinn review');
+    const authorizedAt = new Date().toISOString();
+    state.version = 11;
+    state.roleCallLimit = 10;
+    state.secondRoleCallLimitIncrease = { previousLimit: 9, newLimit: 10, operatorApproved: true, authorizedAt };
+    state.secondFinalQuinnRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 4, retryAttempt: 5,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized', authorizedAt };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
+  async authorizeThirdFinalFunctionalReviewRetry(id, evidence, { operatorApproved = false } = {}) {
+    const state = await this.get(id);
+    assert(operatorApproved === true, 'explicit operator approval is required for the 10-to-11 mission call increase');
+    assert(state.version === 11 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 5 && state.attempts['0:quinn_functional'] === 5 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.revision === 0 &&
+      state.events.at(-1)?.attempt === 5 && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.retryable === false && state.events.at(-1)?.error?.startsWith('Codex stage failed (exit 1):') &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.uncertainFunctionalRetry?.status === 'consumed' &&
+      state.finalQuinnRetry?.status === 'consumed' && state.secondFinalQuinnRetry?.status === 'consumed' &&
+      state.roleCallLimit === 10 && roleCallsUsed(state) === 9 && !state.thirdFinalQuinnRetry &&
+      !state.thirdRoleCallLimitIncrease && !(await this.isCancelled(id)),
+    'mission is not eligible for the one-time approved Quinn call increase from ten to eleven');
+    assert(evidence && evidence.evidenceSha256 === state.functionalReviewRecovery.evidenceSha256,
+      'same verified browser evidence is required for the final Quinn review');
+    const authorizedAt = new Date().toISOString();
+    state.version = 12;
+    state.roleCallLimit = 11;
+    state.thirdRoleCallLimitIncrease = { previousLimit: 10, newLimit: 11, operatorApproved: true, authorizedAt };
+    state.thirdFinalQuinnRetry = { stage: 'quinn_functional', revision: 0, failedAttempt: 5, retryAttempt: 6,
+      evidenceSha256: evidence.evidenceSha256, operatorApproved: true, status: 'authorized', authorizedAt };
+    state.status = 'ready';
+    state.inFlight = null;
+    state.error = null;
+    return await this.save(state);
+  }
+
   async isCancelled(id) {
     try { await readFile(`${this.path(id)}.cancel`); return true; }
     catch (error) { if (error.code === 'ENOENT') return false; throw error; }
@@ -436,10 +1001,12 @@ function latestDoneFor(state, stage) {
 function acceptsPreview(state) {
   const design = state.events.find(event => event.stage === 'susie_design' && event.status === 'done');
   const visual = latestDoneFor(state, 'susie_visual');
+  const implementation = latestDoneFor(state, 'sam_implementation');
+  const acceptedDestination = state.previewTarget ? implementation?.output?.previewUrl : state.destination;
   return Boolean(design && latestDoneFor(state, 'sam_implementation') &&
     latestDoneFor(state, 'quinn_functional') && visual?.renderVerification?.verified === true &&
     visual.renderVerification.artifactId === state.artifactId &&
-    visual.renderVerification.destination === state.destination && visual.rendered?.screenshotRef);
+    visual.renderVerification.destination === acceptedDestination && visual.rendered?.screenshotRef);
 }
 
 export class MissionRunner {
@@ -480,20 +1047,46 @@ export class MissionRunner {
           state.inFlight = null;
           return await this.store.save(state);
         }
-        if (roleCallsUsed(state) >= MAX_MISSION_ROLE_CALLS) {
+        if (roleCallsUsed(state) >= missionCallLimit(state)) {
           state.status = 'blocked';
-          state.error = `mission reached the ${MAX_MISSION_ROLE_CALLS}-call Codex CLI limit`;
+          state.error = `mission reached the ${missionCallLimit(state)}-call Codex CLI limit`;
           return await this.store.save(state);
         }
         const stage = state.currentStage;
         const key = `${state.revisions}:${stage}`;
         const attempt = (state.attempts[key] ?? 0) + 1;
-        if (attempt > state.maxAttempts) {
+        const authorizedPreExecutionRetry = state.preExecutionRecovery?.status === 'authorized' &&
+          state.preExecutionRecovery.stage === stage && state.preExecutionRecovery.revision === state.revisions &&
+          state.preExecutionRecovery.retryAttempt === attempt;
+        const authorizedFunctionalRetry = state.functionalReviewRecovery?.status === 'authorized' &&
+          state.functionalReviewRecovery.stage === stage && state.functionalReviewRecovery.revision === state.revisions &&
+          state.functionalReviewRecovery.retryAttempt === attempt;
+        const authorizedUncertainFunctionalRetry = state.uncertainFunctionalRetry?.status === 'authorized' &&
+          state.uncertainFunctionalRetry.stage === stage && state.uncertainFunctionalRetry.revision === state.revisions &&
+          state.uncertainFunctionalRetry.retryAttempt === attempt;
+        const authorizedFinalQuinnRetry = state.finalQuinnRetry?.status === 'authorized' &&
+          state.finalQuinnRetry.stage === stage && state.finalQuinnRetry.revision === state.revisions &&
+          state.finalQuinnRetry.retryAttempt === attempt;
+        const authorizedSecondFinalQuinnRetry = state.secondFinalQuinnRetry?.status === 'authorized' &&
+          state.secondFinalQuinnRetry.stage === stage && state.secondFinalQuinnRetry.revision === state.revisions &&
+          state.secondFinalQuinnRetry.retryAttempt === attempt;
+        const authorizedThirdFinalQuinnRetry = state.thirdFinalQuinnRetry?.status === 'authorized' &&
+          state.thirdFinalQuinnRetry.stage === stage && state.thirdFinalQuinnRetry.revision === state.revisions &&
+          state.thirdFinalQuinnRetry.retryAttempt === attempt;
+        if (attempt > state.maxAttempts && !authorizedPreExecutionRetry && !authorizedFunctionalRetry &&
+            !authorizedUncertainFunctionalRetry && !authorizedFinalQuinnRetry && !authorizedSecondFinalQuinnRetry &&
+            !authorizedThirdFinalQuinnRetry) {
           state.status = 'failed';
           state.error = `attempt limit reached for ${stage}`;
           return await this.store.save(state);
         }
         assert(typeof handlers[stage] === 'function', `handler required for ${stage}`);
+        if (authorizedPreExecutionRetry) state.preExecutionRecovery.status = 'consumed';
+        if (authorizedFunctionalRetry) state.functionalReviewRecovery.status = 'consumed';
+        if (authorizedUncertainFunctionalRetry) state.uncertainFunctionalRetry.status = 'consumed';
+        if (authorizedFinalQuinnRetry) state.finalQuinnRetry.status = 'consumed';
+        if (authorizedSecondFinalQuinnRetry) state.secondFinalQuinnRetry.status = 'consumed';
+        if (authorizedThirdFinalQuinnRetry) state.thirdFinalQuinnRetry.status = 'consumed';
         state.status = 'running';
         state.attempts[key] = attempt;
         state.inFlight = { stage, attempt };
@@ -507,10 +1100,11 @@ export class MissionRunner {
           assert(outcome.status !== 'needs_revision' || stage === 'susie_visual',
             'only visual review may request a revision');
           assert(outcome.artifactId === state.artifactId, 'stage artifact identity does not match the approved mission');
-          validateStageOutput(stage, outcome.status, outcome.output);
+          validateStageOutput(stage, outcome.status, outcome.output, state);
           if (stage === 'susie_visual') {
+            const acceptedDestination = state.previewTarget ? latestDoneFor(state, 'sam_implementation')?.output?.previewUrl : state.destination;
             assert(outcome.rendered && outcome.rendered.artifactId === state.artifactId &&
-              outcome.rendered.destination === state.destination &&
+              outcome.rendered.destination === acceptedDestination &&
               typeof outcome.rendered.previewUrl === 'string' && /^https?:\/\//.test(outcome.rendered.previewUrl) &&
               outcome.rendered.desktop?.passed === true && typeof outcome.rendered.desktop.evidenceRef === 'string' &&
               outcome.rendered.desktop.evidenceRef.trim() &&
@@ -521,7 +1115,7 @@ export class MissionRunner {
             renderVerification = await this.verifyRenderedEvidence({ mission: structuredClone(state),
               rendered: structuredClone(outcome.rendered) });
             assert(renderVerification?.verified === true && renderVerification.artifactId === state.artifactId &&
-              renderVerification.destination === state.destination && renderVerification.previewUrl === outcome.rendered.previewUrl &&
+              renderVerification.destination === acceptedDestination && renderVerification.previewUrl === outcome.rendered.previewUrl &&
               renderVerification.screenshotRef === outcome.rendered.screenshotRef,
             'rendered preview evidence verifier rejected the artifact');
           }

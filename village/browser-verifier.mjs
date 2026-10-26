@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { chromium as playwrightChromium } from '@playwright/test';
+import { vercelPreviewOrigin } from './vercel-preview-deployer.mjs';
 
 const viewports = [
   { name: 'desktop', width: 1280, height: 800 },
   { name: 'narrow', width: 390, height: 844 },
 ];
+export const MAX_PREVIEW_BROWSER_REQUESTS = 16;
 
 function requireValue(value, message) {
   if (!value) throw new Error(message);
@@ -29,11 +31,16 @@ function safeId(value) {
 }
 
 export class BrowserPreviewVerifier {
-  constructor({ evidenceRoot, chromium = playwrightChromium, timeoutMs = 15000 } = {}) {
+  constructor({ evidenceRoot, chromium = playwrightChromium, timeoutMs = 15000, oidcTokenProvider = null,
+    maxSameOriginRequests = MAX_PREVIEW_BROWSER_REQUESTS } = {}) {
     if (!evidenceRoot) throw new Error('browser evidence path required');
     this.evidenceRoot = resolve(evidenceRoot);
     this.chromium = chromium;
     this.timeoutMs = timeoutMs;
+    this.oidcTokenProvider = oidcTokenProvider;
+    requireValue(Number.isSafeInteger(maxSameOriginRequests) && maxSameOriginRequests >= 1 && maxSameOriginRequests <= MAX_PREVIEW_BROWSER_REQUESTS,
+      `browser verification request limit must be 1-${MAX_PREVIEW_BROWSER_REQUESTS}`);
+    this.maxSameOriginRequests = maxSameOriginRequests;
   }
 
   async capture({ mission, previewUrl }) {
@@ -43,8 +50,10 @@ export class BrowserPreviewVerifier {
     let destination;
     let target;
     try {
-      destination = new URL(mission.destination);
       target = new URL(previewUrl);
+      if (mission.previewTarget) {
+        destination = new URL(vercelPreviewOrigin(previewUrl, mission.previewTarget));
+      } else destination = new URL(mission.destination);
     } catch {
       throw new Error('preview destination and URL must be absolute HTTP URLs');
     }
@@ -56,15 +65,32 @@ export class BrowserPreviewVerifier {
     requireValue(target.username === '' && target.password === '', 'preview URL must not contain credentials');
     requireValue(canonicalDestination(destination.href) === canonicalDestination(target.href),
       'preview URL does not match the approved destination');
+    let oidcToken = null;
+    if (mission.previewTarget && typeof this.oidcTokenProvider === 'function') {
+      try {
+        const candidate = await this.oidcTokenProvider({ target: structuredClone(mission.previewTarget) });
+        if (typeof candidate === 'string' && candidate.length >= 20 && candidate.length <= 8192) oidcToken = candidate;
+      } catch {
+        // Public previews need no token. A protected preview still has to pass
+        // the ordinary response, destination, and artifact checks below.
+      }
+    }
 
     const evidenceDir = join(this.evidenceRoot, id, `revision-${mission.revisions ?? 0}`);
     await mkdir(evidenceDir, { recursive: true });
     const browser = await this.chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const blockedRequests = [];
+    let sameOriginRequestCount = 0;
     await context.route('**/*', async route => {
       const requestUrl = new URL(route.request().url());
-      if (requestUrl.origin === destination.origin) return route.continue();
+      if (requestUrl.origin === destination.origin) {
+        sameOriginRequestCount++;
+        if (sameOriginRequestCount > this.maxSameOriginRequests) return route.abort();
+        if (oidcToken) return route.continue({ headers: { ...route.request().headers(),
+          'x-vercel-trusted-oidc-idp-token': oidcToken } });
+        return route.continue();
+      }
       blockedRequests.push(requestUrl.origin);
       return route.abort();
     });
@@ -104,6 +130,8 @@ export class BrowserPreviewVerifier {
       }
       const desktop = captures.desktop;
       const narrow = captures.narrow;
+      requireValue(sameOriginRequestCount <= this.maxSameOriginRequests,
+        `preview exceeded the ${this.maxSameOriginRequests}-request browser verification budget`);
       const rendered = {
         artifactId: mission.artifactId,
         destination: destination.href.replace(/\/$/, ''),
@@ -112,6 +140,7 @@ export class BrowserPreviewVerifier {
         narrow: { passed: true, evidenceRef: narrow.evidenceRef },
         screenshotRef: desktop.screenshotPath,
         screenshotSha256: desktop.evidenceRef.slice('sha256:'.length),
+        sameOriginRequestCount,
         blockedExternalOrigins: [...new Set(blockedRequests)].sort(),
       };
       await writeFile(join(evidenceDir, 'render-evidence.json'), `${JSON.stringify({ rendered, captures }, null, 2)}\n`);
@@ -125,8 +154,9 @@ export class BrowserPreviewVerifier {
   async verifyRenderedEvidence({ mission, rendered }) {
     try {
       requireValue(rendered && rendered.artifactId === mission.artifactId, 'render evidence artifact mismatch');
-      const destination = new URL(mission.destination);
       const preview = new URL(rendered.previewUrl);
+      const destination = mission.previewTarget ? new URL(vercelPreviewOrigin(rendered.previewUrl, mission.previewTarget)) :
+        new URL(mission.destination);
       requireValue(preview.username === '' && preview.password === '' && preview.search === '' && preview.hash === '',
         'render evidence URL must not contain credentials, query parameters, or fragments');
       requireValue(rendered.destination === destination.href.replace(/\/$/, '') &&

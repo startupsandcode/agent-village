@@ -35,6 +35,7 @@ test('background launch detaches, hides the process, pins workspace and removes 
       GOOGLE_APPLICATION_CREDENTIALS: 'do-not-inherit', HTTP_PROXY: 'http://credential@proxy',
       PATH: 'C:\\Windows\\System32', CODEX_HOME: 'C:\\Users\\JMann\\.codex',
       PLAYWRIGHT_BROWSERS_PATH: 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright',
+      VILLAGE_VERCEL_PREVIEW_TARGETS: '[{"provider":"vercel","projectId":"prj_12345678","teamId":"team_12345678","environment":"preview","projectSlug":"astra-lab","teamSlug":"jmanns-projects"}]',
       SAFE_TEST_VALUE: 'do-not-inherit' },
     spawnProcess(command, args, options) {
       launched = { command, args, options };
@@ -59,6 +60,8 @@ test('background launch detaches, hides the process, pins workspace and removes 
   assert.equal(launched.options.env.PATH, 'C:\\Windows\\System32');
   assert.equal(launched.options.env.CODEX_HOME, 'C:\\Users\\JMann\\.codex');
   assert.equal(launched.options.env.PLAYWRIGHT_BROWSERS_PATH, 'C:\\Users\\JMann\\AppData\\Local\\ms-playwright');
+  assert.equal(launched.options.env.VILLAGE_VERCEL_PREVIEW_TARGETS,
+    '[{"provider":"vercel","projectId":"prj_12345678","teamId":"team_12345678","environment":"preview","projectSlug":"astra-lab","teamSlug":"jmanns-projects"}]');
   assert.equal(launched.options.env.VILLAGE_MISSION_EXPECTED_BRANCH, 'issue-46');
   assert.equal(launched.options.env.VILLAGE_MISSION_NOTIFICATIONS_ROOT, resolve('C:/notifications'));
   assert.equal(launched.options.env.VILLAGE_MISSION_WORKSPACE_STATE_ROOT, resolve('C:/locks'));

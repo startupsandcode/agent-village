@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,7 +10,7 @@ const finalStatuses = new Set([...terminalStatuses, 'failed']);
 const safeEnvironmentNames = new Set([
   'PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'TEMP', 'TMP',
   'HOME', 'USER', 'LOGNAME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
-  'LANG', 'LC_ALL', 'CODEX_HOME', 'PLAYWRIGHT_BROWSERS_PATH',
+  'LANG', 'LC_ALL', 'CODEX_HOME', 'PLAYWRIGHT_BROWSERS_PATH', 'VILLAGE_VERCEL_PREVIEW_TARGETS',
 ]);
 
 function hash(value) {
@@ -19,6 +19,17 @@ function hash(value) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+export async function isMissionProcessAlive(pid, { runTasklist = null } = {}) {
+  if (process.platform === 'win32' || runTasklist) {
+    const output = runTasklist ? await runTasklist(pid) : await new Promise((resolveOutput, reject) => execFile('tasklist',
+      ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 5000 },
+      (error, stdout) => error ? reject(error) : resolveOutput(stdout)));
+    return output.split(/\r?\n/).some(line => new RegExp(`^"[^"]+","${pid}"(?:,|$)`).test(line.trim()));
+  }
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
 }
 
 async function writeJsonAtomic(path, value) {
@@ -313,7 +324,7 @@ export class MissionBackgroundWorker {
   }
 }
 
-export async function readMissionBackgroundStatus({ root, missionId, feed } = {}) {
+export async function readMissionBackgroundStatus({ root, missionId, feed, processCheck = isMissionProcessAlive } = {}) {
   assert(root && typeof missionId === 'string' && /^[a-z0-9][a-z0-9-]{2,79}$/.test(missionId),
     'mission background status identity required');
   let lock = null;
@@ -326,17 +337,9 @@ export async function readMissionBackgroundStatus({ root, missionId, feed } = {}
   try { workerError = JSON.parse(await readFile(join(root, '.worker-errors', `${missionId}.json`), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new Error('background worker error record is unreadable'); }
   const notifications = feed ? (await feed.list()).filter(event => event.missionId === missionId) : [];
-  let processAlive = false;
-  if (Number.isSafeInteger(lock?.pid) && lock.pid > 0) {
-    try { process.kill(lock.pid, 0); processAlive = true; }
-    catch (error) { if (error.code !== 'ESRCH') processAlive = true; }
-  }
+  const processAlive = Number.isSafeInteger(lock?.pid) && lock.pid > 0 ? await processCheck(lock.pid) : false;
   const lease = await readWorkspaceLease(root);
-  let leaseProcessAlive = false;
-  if (Number.isSafeInteger(lease?.pid) && lease.pid > 0) {
-    try { process.kill(lease.pid, 0); leaseProcessAlive = true; }
-    catch (error) { if (error.code !== 'ESRCH') leaseProcessAlive = true; }
-  }
+  const leaseProcessAlive = Number.isSafeInteger(lease?.pid) && lease.pid > 0 ? await processCheck(lease.pid) : false;
   return { worker: lock ? { missionId: typeof lock.missionId === 'string' ? lock.missionId : null,
     pid: lock.pid, createdAt: lock.createdAt, processAlive } : null,
     reservation: lease ? { missionId: lease.missionId, storeRoot: lease.storeRoot,

@@ -15,7 +15,8 @@ test('local Office renders running, accepted-preview, and error mission states a
         previewUrl: 'https://preview.example.test/mission' },
       { id: 'error-local-46', goal: 'Investigate the worker failure safely.', status: 'ready',
         currentStage: 'quinn_functional', createdAt: '2026-10-24T10:00:00.000Z',
-        updatedAt: '2026-10-24T11:20:00.000Z', terminal: false, needsAttention: true },
+        updatedAt: '2026-10-24T11:20:00.000Z', terminal: false, needsAttention: true,
+        attentionReason: 'Quinn review did not approve (status=blocked); findings: Retry control stayed enabled after cancel.' },
     ] }) });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ headless: true });
@@ -31,6 +32,7 @@ test('local Office renders running, accepted-preview, and error mission states a
   assert.equal(await page.getByText('Working', { exact: true }).count(), 1);
   assert.equal(await page.getByText('Preview accepted', { exact: true }).count(), 1);
   assert.equal(await page.getByText('Needs attention', { exact: true }).count(), 1);
+  assert.equal(await page.getByText('Quinn review did not approve (status=blocked); findings: Retry control stayed enabled after cancel.').count(), 1);
   const preview = page.getByRole('link', { name: 'Open reviewed preview' });
   assert.equal(await preview.getAttribute('href'), 'https://preview.example.test/mission');
   assert.match(await panel.getByRole('status').textContent(), /3 local missions found/);

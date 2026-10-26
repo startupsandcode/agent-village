@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { MissionCodexHandlers } from '../mission-codex.mjs';
+
+test('strict role schema requires every property and allows null artifactPath outside Sam output', async () => {
+  const schema = JSON.parse(await readFile(fileURLToPath(new URL('../mission-stage.schema.json', import.meta.url)), 'utf8'));
+  assert.deepEqual(new Set(schema.required), new Set(Object.keys(schema.properties)));
+  assert.deepEqual(schema.properties.artifactPath.anyOf.map(option => option.type), ['null', 'string']);
+  for (const [name, definition] of Object.entries(schema.properties)) {
+    if (definition.type === 'object' && definition.properties) {
+      assert.deepEqual(new Set(definition.required), new Set(Object.keys(definition.properties)), `${name} strict required fields`);
+    }
+  }
+  assert.match(schema.properties.status.description, /Quinn uses done only when acceptance criteria pass/);
+  assert.match(schema.properties.functionalChecks.description, /status alone is not a reason/);
+});
 
 const guide = { concept: 'Editorial volunteer invitation with a clear service-first composition.',
   sections: ['Hero and action', 'Opportunity details', 'Signup form'],
@@ -61,10 +77,36 @@ test('mission Codex adapters execute Susie design before Sam, then Quinn and scr
   assert.equal(calls[1].readOnly, false);
   assert.match(calls[1].prompt, /Editorial volunteer invitation/);
   assert.equal(calls[2].readOnly, true);
+  assert.match(calls[2].prompt, /Set status to done only when the acceptance criteria pass/);
+  assert.match(calls[2].prompt, /status alone is not a reason/);
   assert.equal(calls[3].readOnly, true);
   assert.deepEqual(calls[3].images, ['C:/evidence/desktop.png', 'C:/evidence/narrow.png']);
   assert.equal(visual.rendered.previewUrl, mission.destination);
   assert.equal(visual.output.decision, 'approved');
+});
+
+test('Quinn receives the approved criteria, local artifact path, read-only workspace, and prior browser checks', async () => {
+  let received;
+  const handlers = new MissionCodexHandlers({ workspacePath: 'C:/approved/worktree', codex: {
+    async runStructured(options) {
+      received = options;
+      return { stage: 'quinn_functional', status: 'blocked', artifactId: mission.artifactId,
+        evidence: ['Blocked review.'], designGuide: null, previewUrl: null, artifactPath: null,
+        functionalChecks: ['Cannot verify criterion.'], visualFindings: [] };
+    },
+  } }).handlers();
+  const reviewedMission = { ...mission, functionalReviewRecovery: { status: 'consumed',
+    functionalChecks: ['HTTP 200 and exact artifact marker', 'Retry limit and status focus'] } };
+  const implementation = { stage: 'sam_implementation', revision: 0, status: 'done',
+    output: { kind: 'implementation', previewUrl: mission.destination } };
+  await assert.rejects(handlers.quinn_functional({ mission: { ...reviewedMission,
+    events: [...mission.events, implementation] }, stage: 'quinn_functional', revision: 0, attempt: 4 }));
+  assert.equal(received.cwd, resolve('C:/approved/worktree'));
+  assert.equal(received.readOnly, true);
+  assert.match(received.prompt, /validation\/mission-46\/dist/);
+  assert.match(received.prompt, /Signup works on mobile/);
+  assert.match(received.prompt, /HTTP 200 and exact artifact marker/);
+  assert.match(received.prompt, /Retry limit and status focus/);
 });
 
 test('Sam cannot launch without Susie design checkpoint and role result must match the artifact', async () => {
@@ -78,4 +120,61 @@ test('Sam cannot launch without Susie design checkpoint and role result must mat
     stage: 'susie_design', status: 'done', artifactId: 'other-artifact', evidence: ['wrong artifact'], designGuide: guide,
   }; } }, workspacePath: 'C:/workspace' }).handlers().susie_design;
   await assert.rejects(susie({ mission, stage: 'susie_design', revision: 0 }), /did not match the approved artifact/);
+});
+
+function quinnFixture({ status, functionalChecks }) {
+  const implementation = { stage: 'sam_implementation', revision: 0, status: 'done',
+    output: { kind: 'implementation', previewUrl: mission.destination } };
+  const reviewedMission = { ...mission, events: [...mission.events, implementation] };
+  const result = { stage: 'quinn_functional', status, artifactId: mission.artifactId,
+    evidence: ['Fixture evidence is intentionally not copied into failure diagnostics.'], designGuide: null,
+    previewUrl: null, artifactPath: null, functionalChecks, visualFindings: [] };
+  const handler = new MissionCodexHandlers({ codex: { async runStructured() { return result; } },
+    workspacePath: 'C:/workspace' }).handlers().quinn_functional;
+  return () => handler({ mission: reviewedMission, stage: 'quinn_functional', revision: 0, attempt: 1 });
+}
+
+test('Quinn non-approval retains bounded actionable checks while redacting secrets and private locations', async () => {
+  const checks = ['Keyboard cancellation criterion failed: cancel stayed enabled after activation. ' +
+    'Bearer secret-value https://private.example.test C:\\private\\review.txt person@example.test'];
+  await assert.rejects(quinnFixture({ status: 'blocked', functionalChecks: checks }), error => {
+    assert.match(error.message, /status=blocked/);
+    assert.match(error.message, /Keyboard cancellation criterion failed: cancel stayed enabled/);
+    assert.match(error.message, /Bearer \[redacted\]/);
+    assert.match(error.message, /\[url\]/);
+    assert.match(error.message, /\[path\]/);
+    assert.match(error.message, /\[email\]/);
+    assert.ok(error.message.length <= 500);
+    assert.doesNotMatch(error.message, /Fixture evidence|intentionally/);
+    assert.doesNotMatch(error.message, /secret-value|private\.example|C:\\private|person@example/);
+    return true;
+  });
+});
+
+test('Quinn blocked status without a reason explicitly reports the missing diagnostic', async () => {
+  await assert.rejects(quinnFixture({ status: 'blocked', functionalChecks: [] }), error => {
+    assert.equal(error.message, 'Quinn review did not approve (status=blocked); no actionable functionalChecks reason was returned');
+    return true;
+  });
+});
+
+test('Quinn invalid status diagnostics neither echo arbitrary status nor untrusted check text', async () => {
+  await assert.rejects(quinnFixture({ status: 'blocked Bearer secret-token-value', functionalChecks: ['unverified'] }), error => {
+    assert.equal(error.message, 'Quinn review did not approve (status=invalid); no actionable functionalChecks reason was returned');
+    assert.doesNotMatch(error.message, /unverified/);
+    assert.doesNotMatch(error.message, /secret-token-value/);
+    return true;
+  });
+});
+
+test('Quinn approval with no functional checks is distinguished from a blocked review', async () => {
+  await assert.rejects(quinnFixture({ status: 'done', functionalChecks: [] }), error => {
+    assert.equal(error.message, 'Quinn returned no functional checks (status=done)');
+    return true;
+  });
+});
+
+test('Quinn completed review carries its nonempty functional checks into the durable stage result', async () => {
+  const result = await quinnFixture({ status: 'done', functionalChecks: ['preview marker matched', 'retry control works'] })();
+  assert.deepEqual(result.output, { kind: 'functional_review', checks: ['preview marker matched', 'retry control works'] });
 });

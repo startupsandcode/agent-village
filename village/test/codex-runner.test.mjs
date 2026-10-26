@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import { roleCommand, CodexRunner } from '../codex-runner.mjs';
+import { roleCommand, CodexRunner, resolveCodexCommand, sanitizeCodexDiagnostic } from '../codex-runner.mjs';
+
+test('Windows Codex CLI launches the installed official npm entry point without a shell', async () => {
+  const checked = [];
+  const command = await resolveCodexCommand(['codex', 'login', 'status'], {
+    platform: 'win32', pathValue: 'C:\\Users\\JMann\\AppData\\Roaming\\npm;C:\\Windows\\System32',
+    nodeExecutable: 'C:\\Program Files\\nodejs\\node.exe',
+    async canAccess(path) {
+      checked.push(path);
+      if (path === 'C:\\Users\\JMann\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js') return;
+      throw new Error('not installed');
+    },
+  });
+  assert.deepEqual(command, ['C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Users\\JMann\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js', 'login', 'status']);
+  assert.equal(checked.length, 1);
+});
 
 test('write roles retain approval review and Quinn is read only', () => {
   const sam = roleCommand('codex', '/tmp/astra', '/tmp/schema.json', '/tmp/out.json', false);
@@ -51,4 +68,94 @@ test('model API keys are absent from child environment', async () => {
     env: { OPENAI_API_KEY: 'secret', CODEX_API_KEY: 'secret', PATH: '/bin' } });
   assert.equal(seen.OPENAI_API_KEY, undefined);
   assert.equal(seen.CODEX_API_KEY, undefined);
+});
+
+test('CLI nonzero exit retains a short sanitized diagnostic without exposing tokens or local paths', async () => {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => true;
+  const runner = new CodexRunner({ login: async () => true,
+    resolveCommand: async () => ['node', 'codex.js'],
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.emit('data', 'request failed: temporary write denied; Authorization: Bearer secret-token-value. ' +
+          'path C:\\Users\\JMann\\.codex\\tmp\\session.json');
+        child.emit('close', 12);
+      });
+      return child;
+    },
+  });
+  await assert.rejects(() => runner.runStructured({ cwd: 'C:\\workspace', prompt: 'Review the mission',
+    timeoutSeconds: 10, schemaPath: 'C:\\schema.json' }), error => {
+    assert.match(error.message, /Codex stage failed \(exit 12\)/);
+    assert.match(error.message, /temporary write denied/);
+    assert.doesNotMatch(error.message, /secret-token-value|C:\\\\Users/);
+    return true;
+  });
+});
+
+test('long CLI diagnostics retain a redacted head and terminal failure within the bound', () => {
+  const short = sanitizeCodexDiagnostic('request failed: fixture cause');
+  assert.equal(short, 'request failed: fixture cause');
+  assert.doesNotMatch(short, /truncated/);
+
+  const long = sanitizeCodexDiagnostic(
+    'Authorization: Bearer head-secret-value; path C:\\Users\\JMann\\private\\config.json ' +
+    'startup warning '.repeat(80) + 'FATAL: root cause missing structured result; api_key=tail-secret-value');
+  assert.ok(long.length <= 240);
+  assert.match(long, /Authorization=.*\[redacted\]/i);
+  assert.match(long, /FATAL: root cause missing structured result/);
+  assert.match(long, /diagnostic truncated/);
+  assert.doesNotMatch(long, /head-secret-value|tail-secret-value|C:\\Users|private\\config/);
+});
+
+test('bounded CLI stderr capture keeps the terminal error after an oversized startup warning prefix', async () => {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => true;
+  const runner = new CodexRunner({ login: async () => true,
+    resolveCommand: async () => ['node', 'codex.js'],
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.emit('data', 'Authorization: Bearer head-secret-value; path C:\\Users\\JMann\\private\\config.json ' +
+          'startup warning '.repeat(700));
+        child.stderr.emit('data', 'tail warning '.repeat(700) +
+          'FATAL: root cause missing structured result; api_key=tail-secret-value');
+        child.emit('close', 1);
+      });
+      return child;
+    },
+  });
+  await assert.rejects(() => runner.runStructured({ cwd: 'C:\\workspace', prompt: 'Review the mission',
+    timeoutSeconds: 10, schemaPath: 'C:\\schema.json' }), error => {
+    assert.match(error.message, /Codex stage failed \(exit 1\)/);
+    assert.match(error.message, /FATAL: root cause missing structured result/);
+    assert.match(error.message, /diagnostic truncated/);
+    assert.doesNotMatch(error.message, /head-secret-value|tail-secret-value|C:\\\\Users|private\\\\config/);
+    assert.ok(error.message.length <= 300);
+    return true;
+  });
+});
+
+test('CLI process launch failures keep a safe platform error code', async () => {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => true;
+  const runner = new CodexRunner({ login: async () => true,
+    resolveCommand: async () => ['node', 'codex.js'],
+    spawnProcess: () => {
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('access denied at C:\\Users\\JMann\\.codex'),
+        { code: 'EACCES' })));
+      return child;
+    },
+  });
+  await assert.rejects(() => runner.runStructured({ cwd: 'C:\\workspace', prompt: 'Review the mission',
+    timeoutSeconds: 10, schemaPath: 'C:\\schema.json' }), error => {
+    assert.match(error.message, /Codex stage failed \(process launch EACCES\)/);
+    assert.doesNotMatch(error.message, /C:\\\\Users/);
+    return true;
+  });
 });

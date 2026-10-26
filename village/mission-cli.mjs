@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, realpath } from 'node:fs/promises';
@@ -10,8 +11,12 @@ import { stdin, stdout } from 'node:process';
 import { CodexRunner } from './codex-runner.mjs';
 import { MayaMissionIntake } from './mission-intake.mjs';
 import { MissionStore } from './mission-runner.mjs';
+import { BrowserPreviewVerifier } from './browser-verifier.mjs';
 import { createMissionRuntime } from './mission-runtime.mjs';
+import { configuredVercelPreviewTargets, validateVercelPreviewTarget,
+  isKnownRootDirectoryPreflightFailure, vercelPreviewDestination } from './vercel-preview-deployer.mjs';
 import { reserveMissionIntakeCall } from './mission-budget.mjs';
+import { verifyCodexSchemaRejection } from './mission-preexecution-recovery.mjs';
 import { launchMissionWorker, MissionNotificationFeed, acquireLocalLock, readMissionBackgroundStatus,
   readWorkspaceLease, reserveWorkspaceMission, updateWorkspaceMission, workspaceStateRoot,
   recordMissionWorkerError } from './mission-background.mjs';
@@ -30,12 +35,30 @@ function requireValue(value, message) {
   if (!value) throw new Error(message);
 }
 
+function sameLocalPath(left, right) {
+  const first = resolve(left);
+  const second = resolve(right);
+  return process.platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
+}
+
+export function samePreviewUrl(left, right) {
+  try {
+    const first = new URL(left);
+    const second = new URL(right);
+    const path = url => url.pathname.replace(/\/+$/, '') || '/';
+    return ['http:', 'https:'].includes(first.protocol) && first.origin === second.origin &&
+      first.username === '' && first.password === '' && first.search === '' && first.hash === '' &&
+      second.username === '' && second.password === '' && second.search === '' && second.hash === '' &&
+      path(first) === path(second);
+  } catch { return false; }
+}
+
 async function git(cwd, ...args) {
   const { stdout: output } = await execFileAsync('git', args, { cwd, timeout: 15000, windowsHide: true });
   return output.trim();
 }
 
-export async function inspectMissionWorkspace(workspacePath, { requireClean = false } = {}) {
+export async function inspectMissionWorkspace(workspacePath, { requireClean = false, allowedUntrackedRoot = null } = {}) {
   const root = await realpath(workspacePath);
   const actualRoot = await git(root, 'rev-parse', '--show-toplevel');
   requireValue((await realpath(actualRoot)).toLowerCase() === root.toLowerCase(), 'mission workspace must be its repository root');
@@ -44,8 +67,27 @@ export async function inspectMissionWorkspace(workspacePath, { requireClean = fa
     'mission workspace must belong to startupsandcode/agent-village');
   const branch = await git(root, 'branch', '--show-current');
   requireValue(branch && !['main', 'master'].includes(branch), 'mission workspace must use a named feature branch');
-  if (requireClean) requireValue(!(await git(root, 'status', '--porcelain')), 'mission workspace must be clean before it starts or resumes work');
+  if (requireClean) {
+    const status = await git(root, 'status', '--porcelain', '--untracked-files=all');
+    requireValue(!status, 'mission workspace must be clean before it starts or resumes work');
+  }
+  if (allowedUntrackedRoot) {
+    const status = await git(root, 'status', '--porcelain', '--untracked-files=all');
+    const allowed = allowedUntrackedRoot.replaceAll('\\', '/').replace(/\/$/, '');
+    const rows = status ? status.split(/\r?\n/) : [];
+    requireValue(rows.length > 0 && rows.every(row => row.startsWith('?? ') &&
+      (row.slice(3).replaceAll('\\', '/').startsWith(`${allowed}/`))),
+    `only untracked ${allowed}/ mission output is allowed during preview recovery`);
+  }
   return { root, branch, remote };
+}
+
+export async function inspectMissionWorkerWorkspace(workspacePath, mission) {
+  requireValue(mission && typeof mission.id === 'string' && /^[a-z0-9][a-z0-9-]{2,79}$/.test(mission.id),
+    'mission identity required for worker workspace inspection');
+  return mission.previewDeploymentRecovery?.status === 'consumed' ?
+    await inspectMissionWorkspace(workspacePath, { allowedUntrackedRoot: `validation/${mission.id}` }) :
+    await inspectMissionWorkspace(workspacePath, { requireClean: true });
 }
 
 export function missionPaths(env = process.env) {
@@ -57,11 +99,11 @@ export function missionPaths(env = process.env) {
     workspace: env.VILLAGE_MISSION_WORKSPACE };
 }
 
-async function readMissionInput(path, workspaceBranch) {
+export async function readMissionInput(path, workspaceBranch, env = process.env) {
   const source = await readFile(path, 'utf8');
   requireValue(Buffer.byteLength(source, 'utf8') <= 64000, 'mission input exceeds 64 KiB');
   const input = JSON.parse(source);
-  const allowed = new Set(['id', 'goal', 'destination', 'artifactId', 'constraints', 'maxAttempts', 'maxRevisions']);
+  const allowed = new Set(['id', 'goal', 'destination', 'previewTarget', 'artifactId', 'constraints', 'maxAttempts', 'maxRevisions']);
   requireValue(Object.keys(input).every(key => allowed.has(key)), 'mission input contains unsupported fields');
   requireValue(input.constraints === undefined || Array.isArray(input.constraints) &&
     input.constraints.every(item => typeof item === 'string'), 'mission constraints must be a list of text');
@@ -71,11 +113,26 @@ async function readMissionInput(path, workspaceBranch) {
     'CLI attempt limit must be 1-2');
   requireValue(Number.isSafeInteger(maxRevisions) && maxRevisions >= 0 && maxRevisions <= 1,
     'CLI revision limit must be 0-1');
-  const destination = new URL(input.destination);
-  requireValue(['http:', 'https:'].includes(destination.protocol) && !destination.username && !destination.password &&
-    !destination.search && !destination.hash,
-  'mission destination must be an HTTP(S) URL without credentials, query, or fragment');
-  return { ...input, repo: REPO, destination: destination.href.replace(/\/$/, ''),
+  let destination;
+  let previewTarget;
+  if (input.previewTarget !== undefined) {
+    requireValue(typeof env.VILLAGE_VERCEL_PREVIEW_TARGETS === 'string' && env.VILLAGE_VERCEL_PREVIEW_TARGETS.trim(),
+      'VILLAGE_VERCEL_PREVIEW_TARGETS must explicitly allow this Vercel project and team');
+    const targets = configuredVercelPreviewTargets(env);
+    previewTarget = validateVercelPreviewTarget(input.previewTarget, targets);
+    destination = vercelPreviewDestination(previewTarget);
+    requireValue(input.destination === undefined || input.destination === destination,
+      'mission destination must match its configured Vercel preview project and team');
+  } else {
+    requireValue(typeof input.destination === 'string' && input.destination.trim(), 'mission preview destination required');
+    const destinationUrl = new URL(input.destination);
+    requireValue(['http:', 'https:'].includes(destinationUrl.protocol) && !destinationUrl.username && !destinationUrl.password &&
+      !destinationUrl.search && !destinationUrl.hash,
+    'mission destination must be an HTTP(S) URL without credentials, query, or fragment');
+    destination = destinationUrl.href.replace(/\/$/, '');
+  }
+  return { ...input, repo: REPO, destination,
+    ...(previewTarget ? { previewTarget: structuredClone(previewTarget) } : {}),
     workspaceBranch,
     constraints: [...new Set([...(input.constraints ?? []), ...safetyConstraints])],
     team: { id: 'design-led-single-team', roles }, maxAttempts, maxRevisions };
@@ -92,7 +149,8 @@ async function askForAgreement(proposalId, summary, criteria) {
 }
 
 export async function main(argv = process.argv.slice(2), { env = process.env, codex = new CodexRunner(),
-  confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker } = {}) {
+  confirm = askForAgreement, background = true, spawnWorker = launchMissionWorker, processCheck,
+  inspectBackgroundStatus = readMissionBackgroundStatus, browserVerifier = null, previewDeployer = null } = {}) {
   const [command, ...args] = argv;
   const paths = missionPaths(env);
   const store = new MissionStore(paths.root);
@@ -110,7 +168,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     const mission = await store.get(args[0]);
     const workspace = paths.workspace ? await inspectMissionWorkspace(paths.workspace) : null;
     const lockRoot = workspace ? workspaceStateRoot(paths.home, workspace.root) : paths.root;
-    return { mission, ...await readMissionBackgroundStatus({ root: lockRoot, missionId: args[0], feed }) };
+    return { mission, ...await inspectBackgroundStatus({ root: lockRoot, missionId: args[0], feed, processCheck }) };
   }
   if (command === 'show') {
     requireValue(args.length === 1, 'show <mission-id> required');
@@ -121,11 +179,400 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     await store.cancel(args[0]);
     return { id: args[0], status: 'cancellation_requested' };
   }
+  if (command === 'increase-final-review-cap-10') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-9-to-10',
+      'increase-final-review-cap-10 <mission-id> --user-approved-9-to-10 required');
+  }
+  if (command === 'increase-final-review-cap-11') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-10-to-11',
+      'increase-final-review-cap-11 <mission-id> --user-approved-10-to-11 required');
+  }
+  if (command === 'retry-functional-uncertain') {
+    requireValue(args.length === 2 && args[1] === '--operator-approved-uncertain-outcome',
+      'retry-functional-uncertain <mission-id> --operator-approved-uncertain-outcome required');
+  }
+  if (command === 'increase-final-review-cap') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-8-to-9',
+      'increase-final-review-cap <mission-id> --user-approved-8-to-9 required');
+  }
   requireValue(paths.workspace, 'set VILLAGE_MISSION_WORKSPACE to a clean startupsandcode/agent-village feature branch');
+  if (command === 'retry-preflight') {
+    requireValue(args.length === 2, 'retry-preflight <mission-id> <Codex-session-log> required');
+    const [id, sessionPath] = args;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+    const state = await store.get(id);
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; return to the original branch before recovery');
+    const proof = await verifyCodexSchemaRejection({ sessionPath, mission: state, workspacePath: workspace.root, codexHome: env.CODEX_HOME });
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; pre-execution recovery is blocked');
+    requireValue(lease && lease.missionId === id,
+      `workspace reservation mission ID ${lease?.missionId ?? '(missing)'} does not match ${id}`);
+    requireValue(sameLocalPath(lease.storeRoot, paths.root), 'workspace reservation store path does not match this recovery');
+    requireValue(lease.branch === workspace.branch, 'workspace reservation branch does not match this recovery');
+    requireValue(Number.isSafeInteger(lease.pid) && lease.pid > 0 && lease.pid === backgroundStatus.reservation?.pid,
+      'workspace reservation process identity is incomplete for recovery');
+    requireValue(!backgroundStatus.reservation.processAlive,
+      'workspace reservation process is still active; pre-execution recovery is blocked');
+    const recovered = await store.authorizePreExecutionSchemaRetry(id, proof);
+    return { id, status: recovered.status, retryStage: recovered.currentStage,
+      priorFailureRetained: recovered.events.at(-1)?.status === 'failed',
+      roleCallsReserved: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((total, attempt) => total + attempt, 0) };
+  }
+  if (command === 'recover-preview') {
+    requireValue(args.length === 1, 'recover-preview <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; preview recovery requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; preview recovery is blocked');
+    requireValue(lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped workspace reservation must match the mission before preview recovery');
+    requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 &&
+      Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
+      state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
+      state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
+      !state.previewDeploymentRecovery && !(await store.isCancelled(id)),
+    'mission is not eligible for this bounded preview recovery');
+    const journalPath = join(paths.root, '.preview-deployments', `${id}.json`);
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+    requireValue(journal.status === 'uncertain' && journal.missionId === id && journal.artifactId === state.artifactId &&
+      journal.projectId === state.previewTarget.projectId && journal.teamId === state.previewTarget.teamId &&
+      journal.target === 'preview' && journal.deploymentId === null && journal.url === null &&
+      isKnownRootDirectoryPreflightFailure(journal.error),
+    'preview journal does not contain the known pre-submission app-root failure');
+    const runtime = previewDeployer ? { previewDeployer } : createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
+      workspacePath: workspace.root, codex, env });
+    requireValue(runtime.previewDeployer, 'approved Vercel preview adapter is unavailable');
+    const deployed = await runtime.previewDeployer.deploy({ mission: state,
+      artifactRoot: join(workspace.root, outputRoot, 'dist') });
+    const recovered = await store.recordPreviewDeploymentRecovery(id, {
+      status: deployed.status, reconciliation: deployed.reconciliation, missionId: deployed.missionId,
+      artifactId: deployed.artifactId, projectId: deployed.projectId, teamId: deployed.teamId,
+      target: deployed.target, deploymentId: deployed.deploymentId, url: deployed.url,
+      artifactFingerprint: deployed.artifactFingerprint,
+    });
+    return { id, status: recovered.status, nextStage: recovered.currentStage,
+      previewUrl: deployed.url, deploymentId: deployed.deploymentId,
+      roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0) };
+  }
+  if (command === 'reconcile-preview') {
+    requireValue(args.length === 1, 'reconcile-preview <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; preview reconciliation requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker, 'mission worker is still active; preview reconciliation is blocked');
+    requireValue(lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped workspace reservation must match the mission before preview reconciliation');
+    requireValue(state.previewTarget && state.version === 6 && state.status === 'blocked' &&
+      state.currentStage === 'sam_implementation' && state.revisions === 0 &&
+      Number.isSafeInteger(state.maxAttempts) && state.maxAttempts >= 1 && state.maxAttempts <= 2 &&
+      state.inFlight?.stage === 'sam_implementation' && state.inFlight.attempt === 1 &&
+      state.attempts['0:sam_implementation'] === 1 && state.events.at(-1)?.stage === 'sam_implementation' &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.attempt === 1 &&
+      !state.previewDeploymentRecovery && !(await store.isCancelled(id)),
+    'mission is not eligible for existing-submission preview reconciliation');
+    const journalPath = join(paths.root, '.preview-deployments', `${id}.json`);
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'));
+    requireValue(['uncertain', 'ready'].includes(journal.status) && journal.missionId === id &&
+      journal.artifactId === state.artifactId && journal.projectId === state.previewTarget.projectId &&
+      journal.teamId === state.previewTarget.teamId && journal.target === 'preview' &&
+      Number.isSafeInteger(journal.attempts) && journal.attempts >= 1 && journal.attempts <= 2 &&
+      (journal.status === 'ready' || journal.deploymentId === null && journal.url === null &&
+        journal.error === 'Vercel response did not include a deployment ID'),
+    'preview journal does not contain the exact missing-ID response checkpoint');
+    const runtime = previewDeployer ? { previewDeployer } : createMissionRuntime({ storeRoot: paths.root,
+      evidenceRoot: paths.evidence, workspacePath: workspace.root, codex, env });
+    requireValue(runtime.previewDeployer && typeof runtime.previewDeployer.reconcileExistingSubmission === 'function',
+      'existing-submission reconciliation adapter is unavailable');
+    const reconciled = await runtime.previewDeployer.reconcileExistingSubmission({ mission: state,
+      artifactRoot: join(workspace.root, outputRoot, 'dist') });
+    const recovered = await store.recordPreviewDeploymentRecovery(id, {
+      status: reconciled.status, reconciliation: reconciled.reconciliation, missionId: reconciled.missionId,
+      artifactId: reconciled.artifactId, projectId: reconciled.projectId, teamId: reconciled.teamId,
+      target: reconciled.target, deploymentId: reconciled.deploymentId, url: reconciled.url,
+      artifactFingerprint: reconciled.artifactFingerprint,
+    });
+    return { id, status: recovered.status, nextStage: recovered.currentStage,
+      previewUrl: reconciled.url, deploymentId: reconciled.deploymentId,
+      roleCallsUsed: recovered.mayaIntakeCalls + Object.values(recovered.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      matchingDeployments: reconciled.reconciliation.matchingDeployments };
+  }
+  if (command === 'retry-functional') {
+    requireValue(args.length === 1, 'retry-functional <mission-id> required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; functional retry requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for functional retry');
+    requireValue(state.version === 7 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 1 && state.attempts['0:quinn_functional'] === 1 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.attempt === 1 && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error === 'Quinn must record functional checks' &&
+      state.previewDeploymentRecovery?.status === 'consumed' && !(await store.isCancelled(id)),
+    'mission is not eligible for a one-time evidence-backed Quinn retry');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+      functionalChecks: functional.checks,
+      screenshotRefs: { desktop: renderEvidence.rendered.desktop.evidenceRef, narrow: renderEvidence.rendered.narrow.evidenceRef },
+    });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailureRetained: true,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.functionalReviewRecovery.retryAttempt };
+  }
+  if (command === 'retry-functional-uncertain') {
+    requireValue(args.length === 2 && args[1] === '--operator-approved-uncertain-outcome',
+      'retry-functional-uncertain <mission-id> --operator-approved-uncertain-outcome required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; uncertain functional retry requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for uncertain functional retry');
+    requireValue(state.version === 8 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.revisions === 0 && state.maxAttempts === 1 && state.inFlight?.stage === 'quinn_functional' &&
+      state.inFlight.attempt === 2 && state.attempts['0:quinn_functional'] === 2 &&
+      state.events.at(-1)?.stage === 'quinn_functional' && state.events.at(-1)?.status === 'failed' &&
+      state.events.at(-1)?.attempt === 2 && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error === 'Codex stage failed' && state.events.some(event =>
+        event.stage === 'quinn_functional' && event.attempt === 1 && event.status === 'failed' &&
+        event.error === 'Quinn must record functional checks') &&
+      state.functionalReviewRecovery?.status === 'consumed' && state.functionalReviewRecovery.retryAttempt === 2 &&
+      state.previewDeploymentRecovery?.status === 'consumed' && !(await store.isCancelled(id)),
+    'mission is not eligible for the explicitly approved uncertain Quinn retry');
+    requireValue(state.mayaIntakeCalls + Object.values(state.attempts).reduce((sum, attempt) => sum + attempt, 0) + 2 <=
+      8, 'mission cannot reserve Quinn and Susie visual review within the eight-call ceiling');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeUncertainFunctionalRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+    }, { operatorApproved: true });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailuresRetained: true,
+      operatorApprovalRecorded: authorized.uncertainFunctionalRetry.operatorApproved,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.uncertainFunctionalRetry.retryAttempt };
+  }
+  if (command === 'increase-final-review-cap') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-8-to-9',
+      'increase-final-review-cap <mission-id> --user-approved-8-to-9 required');
+    const [id] = args;
+    const state = await store.get(id);
+    const outputRoot = `validation/${id}`;
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: outputRoot });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; final review authorization requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for final review authorization');
+    requireValue(state.version === 9 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.attempts['0:quinn_functional'] === 3 && state.events.at(-1)?.attempt === 3 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.error === 'Quinn must record functional checks',
+    'mission does not match the specifically approved one-call increase');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeFinalFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+    }, { operatorApproved: true });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailuresRetained: true,
+      operatorApprovalRecorded: authorized.roleCallLimitIncrease.operatorApproved,
+      roleCallLimit: authorized.roleCallLimit,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.finalQuinnRetry.retryAttempt };
+  }
+  if (command === 'increase-final-review-cap-10') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-9-to-10',
+      'increase-final-review-cap-10 <mission-id> --user-approved-9-to-10 required');
+    const [id] = args;
+    const state = await store.get(id);
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: `validation/${id}` });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; final review authorization requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for final review authorization');
+    requireValue(state.version === 10 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.attempts['0:quinn_functional'] === 4 && state.events.at(-1)?.attempt === 4 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.error === 'Quinn review did not approve (status=blocked)',
+    'mission does not match the specifically approved one-call increase');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeSecondFinalFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+    }, { operatorApproved: true });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailuresRetained: true,
+      operatorApprovalRecorded: authorized.secondRoleCallLimitIncrease.operatorApproved,
+      previousRoleCallLimit: authorized.secondRoleCallLimitIncrease.previousLimit,
+      roleCallLimit: authorized.roleCallLimit,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.secondFinalQuinnRetry.retryAttempt };
+  }
+  if (command === 'increase-final-review-cap-11') {
+    requireValue(args.length === 2 && args[1] === '--user-approved-10-to-11',
+      'increase-final-review-cap-11 <mission-id> --user-approved-10-to-11 required');
+    const [id] = args;
+    const state = await store.get(id);
+    const workspace = await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: `validation/${id}` });
+    requireValue(state.workspaceBranch === workspace.branch, 'mission branch changed; final review authorization requires its original branch');
+    const lockRoot = workspaceStateRoot(paths.home, workspace.root);
+    const feed = new MissionNotificationFeed(paths.notifications);
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id, feed, processCheck });
+    const lease = await readWorkspaceLease(lockRoot);
+    requireValue(!backgroundStatus.worker && lease && lease.missionId === id && sameLocalPath(lease.storeRoot, paths.root) &&
+      lease.branch === workspace.branch && Number.isSafeInteger(lease.pid) && lease.pid > 0 &&
+      lease.pid === backgroundStatus.reservation?.pid && !backgroundStatus.reservation?.processAlive,
+    'stopped matching workspace reservation is required for final review authorization');
+    requireValue(state.version === 11 && state.status === 'blocked' && state.currentStage === 'quinn_functional' &&
+      state.attempts['0:quinn_functional'] === 5 && state.events.at(-1)?.attempt === 5 &&
+      state.events.at(-1)?.status === 'failed' && state.events.at(-1)?.retryable === false &&
+      state.events.at(-1)?.error?.startsWith('Codex stage failed (exit 1):') && state.error === state.events.at(-1).error,
+    'mission does not match the specifically approved instrumented Quinn retry');
+    const evidenceDir = join(paths.evidence, id, 'revision-0');
+    const functionalPath = join(evidenceDir, 'functional-checks.json');
+    const renderPath = join(evidenceDir, 'render-evidence.json');
+    const [functionalRaw, renderRaw] = await Promise.all([readFile(functionalPath, 'utf8'), readFile(renderPath, 'utf8')]);
+    const [functional, renderEvidence] = [JSON.parse(functionalRaw), JSON.parse(renderRaw)];
+    const implementation = state.events.findLast(event => event.stage === 'sam_implementation' && event.status === 'done');
+    requireValue(functional.missionId === id && functional.artifactId === state.artifactId &&
+      samePreviewUrl(functional.previewUrl, implementation.output.previewUrl) && functional.httpStatus === 200 &&
+      functional.allPassed === true && Array.isArray(functional.checks) && functional.checks.length >= 6 &&
+      functional.checks.every(check => typeof check === 'string' && check.trim()) &&
+      Number.isSafeInteger(functional.sameOriginRequests) && functional.sameOriginRequests <= 16 &&
+      Array.isArray(functional.blockedExternalOrigins) && functional.blockedExternalOrigins.length === 0 &&
+      renderEvidence.rendered?.artifactId === state.artifactId &&
+      samePreviewUrl(renderEvidence.rendered?.previewUrl, implementation.output.previewUrl) &&
+      renderEvidence.captures?.desktop?.metrics?.width === 1280 && renderEvidence.captures?.narrow?.metrics?.width === 390,
+    'mission-matched browser and interaction evidence is required');
+    const verifier = new BrowserPreviewVerifier({ evidenceRoot: paths.evidence });
+    const verified = await verifier.verifyRenderedEvidence({ mission: state, rendered: renderEvidence.rendered });
+    requireValue(verified.verified === true, 'desktop and narrow screenshot evidence did not verify');
+    const authorized = await store.authorizeThirdFinalFunctionalReviewRetry(id, {
+      evidenceSha256: createHash('sha256').update(functionalRaw).digest('hex'),
+    }, { operatorApproved: true });
+    return { id, status: authorized.status, nextStage: authorized.currentStage, previousFailuresRetained: true,
+      operatorApprovalRecorded: authorized.thirdRoleCallLimitIncrease.operatorApproved,
+      previousRoleCallLimit: authorized.thirdRoleCallLimitIncrease.previousLimit,
+      roleCallLimit: authorized.roleCallLimit,
+      roleCallsUsed: authorized.mayaIntakeCalls + Object.values(authorized.attempts).reduce((sum, attempt) => sum + attempt, 0),
+      retryAttempt: authorized.thirdFinalQuinnRetry.retryAttempt };
+  }
   const workspace = await inspectMissionWorkspace(paths.workspace, { requireClean: command === 'start' });
   if (command === 'start') {
     requireValue(args.length === 1, 'start <mission-input.json> required');
-    const input = await readMissionInput(resolve(args[0]), workspace.branch);
+    const input = await readMissionInput(resolve(args[0]), workspace.branch, env);
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
     const dispatchLock = await acquireLocalLock(join(lockRoot, '.dispatch.lock'), {
       busyMessage: 'another mission is being accepted; this shared workspace permits only one mission at a time',
@@ -151,7 +598,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       const mission = await store.create(missionInput);
       if (!background) {
         const runtime = createMissionRuntime({ storeRoot: paths.root, evidenceRoot: paths.evidence,
-          workspacePath: workspace.root, codex });
+          workspacePath: workspace.root, codex, browserVerifier });
         return await runtime.runner.run(mission.id, runtime.handlers);
       }
       const lease = await reserveWorkspaceMission({ root: lockRoot, missionId: mission.id,
@@ -181,7 +628,9 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
   if (command === 'resume' || command === 'worker') {
     const state = await store.get(id);
     requireValue(['ready', 'failed'].includes(state.status), 'mission is not at a resumable stage; uncertain in-flight work needs manual reconciliation');
-    const resumeWorkspace = await inspectMissionWorkspace(paths.workspace, { requireClean: true });
+    const resumeWorkspace = state.previewDeploymentRecovery?.status === 'consumed' ?
+      await inspectMissionWorkspace(paths.workspace, { allowedUntrackedRoot: `validation/${id}` }) :
+      await inspectMissionWorkspace(paths.workspace, { requireClean: true });
     requireValue(typeof state.workspaceBranch === 'string' && resumeWorkspace.branch === state.workspaceBranch,
       'mission branch changed; return to the original branch and reconcile before resuming');
     if (command === 'worker') {
@@ -194,8 +643,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       return await worker.run(id);
     }
     const lockRoot = workspaceStateRoot(paths.home, workspace.root);
-    const backgroundStatus = await readMissionBackgroundStatus({ root: lockRoot, missionId: id,
-      feed: new MissionNotificationFeed(paths.notifications) });
+    const backgroundStatus = await inspectBackgroundStatus({ root: lockRoot, missionId: id,
+      feed: new MissionNotificationFeed(paths.notifications), processCheck });
     const activeReservation = await readWorkspaceLease(lockRoot);
     if (activeReservation && (activeReservation.missionId !== id || activeReservation.storeRoot !== paths.root)) {
       return { id, status: 'workspace_busy', activeMissionId: activeReservation.missionId };
@@ -208,7 +657,12 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
     }
     requireValue(!backgroundStatus.worker, 'a stale background worker lock remains; inspect and reconcile before resuming');
     const durableWorkerError = backgroundStatus.workerError || backgroundStatus.notifications.some(event => event.kind === 'worker_error');
-    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' && !durableWorkerError) {
+    const provenPreExecutionRecovery = state.preExecutionRecovery?.status === 'authorized' &&
+      state.preExecutionRecovery.stage === 'susie_design' && state.currentStage === 'susie_design';
+    const provenPreviewRecovery = state.previewDeploymentRecovery?.status === 'consumed' &&
+      state.currentStage === 'quinn_functional';
+    if (activeReservation && !backgroundStatus.reservation?.processAlive && state.status !== 'failed' &&
+        !durableWorkerError && !provenPreExecutionRecovery && !provenPreviewRecovery) {
       throw new Error('a queued mission reservation has no live worker; inspect status and reconcile before relaunching');
     }
     const lease = activeReservation ?? await reserveWorkspaceMission({ root: lockRoot, missionId: id,
@@ -223,7 +677,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, co
       statusCommand: `node village/mission-cli.mjs status ${id}`,
       notificationsCommand: 'node village/mission-cli.mjs notifications' };
   }
-  throw new Error('start, resume, worker, status, show, cancel, or notifications required');
+  throw new Error('start, resume, worker, retry-preflight, recover-preview, reconcile-preview, retry-functional, retry-functional-uncertain, increase-final-review-cap, increase-final-review-cap-10, increase-final-review-cap-11, status, show, cancel, or notifications required');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

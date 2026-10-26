@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { vercelPreviewDestination, validateVercelPreviewTarget } from './vercel-preview-deployer.mjs';
 
 const REPO = 'startupsandcode/agent-village';
 const schemaPath = fileURLToPath(new URL('./mission-intake.schema.json', import.meta.url));
@@ -29,10 +30,17 @@ export class MayaMissionIntake {
         Object.keys(actualRoles).length !== 4) {
       throw new Error('approved single-team role map required');
     }
-    let destination;
-    try { destination = new URL(input.destination); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
-    if (!['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password ||
-        destination.search || destination.hash) throw new Error('preview destination must not contain credentials, query, or fragment');
+    if (input.previewTarget !== undefined) {
+      validateVercelPreviewTarget(input.previewTarget, [input.previewTarget]);
+      if (input.destination !== vercelPreviewDestination(input.previewTarget)) {
+        throw new Error('Vercel preview destination must identify the approved project and team');
+      }
+    } else {
+      let destination;
+      try { destination = new URL(input.destination); } catch { throw new Error('preview destination must be an absolute HTTP URL'); }
+      if (!['http:', 'https:'].includes(destination.protocol) || destination.username || destination.password ||
+          destination.search || destination.hash) throw new Error('preview destination must not contain credentials, query, or fragment');
+    }
     if (!Array.isArray(input.constraints) || input.constraints.length > 16 ||
         input.constraints.some(item => typeof item !== 'string' || !item.trim() || item.length > 500)) {
       throw new Error('mission constraints required');
@@ -44,7 +52,9 @@ export class MayaMissionIntake {
       `If the request is clear and within scope, return agreed with a concise summary and at least three testable acceptance criteria. ` +
       `Never request new credentials or paid services.\nRepository: ${input.repo}\nGoal: ${input.goal}\n` +
       `Feature branch: ${input.workspaceBranch}\n` +
-      `Destination: ${input.destination}\nArtifact: ${input.artifactId}\nConstraints: ${input.constraints.join('; ')}\n` +
+      `Destination: ${input.destination}\n` +
+      (input.previewTarget ? `Approved Vercel target: ${JSON.stringify(input.previewTarget)}; preview-only static artifact deployment.\n` : '') +
+      `Artifact: ${input.artifactId}\nConstraints: ${input.constraints.join('; ')}\n` +
       `Team: Maya intake, Susie design then Sam build, Quinn functional review, Susie rendered review.`,
       timeoutSeconds: this.timeoutSeconds, schemaPath, readOnly: true });
     if (!raw || !['agreed', 'needs_user', 'blocked'].includes(raw.status) ||
@@ -75,7 +85,8 @@ export class MayaMissionIntake {
       repo: input.repo, goal: input.goal.trim(), acceptanceCriteria: [...pending.proposal.acceptanceCriteria],
       workspaceBranch: input.workspaceBranch,
       destination: input.destination.trim(), artifactId: input.artifactId.trim(),
-      constraints: [...input.constraints], team: structuredClone(input.team) };
+      constraints: [...input.constraints], team: structuredClone(input.team),
+      ...(input.previewTarget ? { previewTarget: structuredClone(input.previewTarget) } : {}) };
     return { ...input, goal: input.goal.trim(), destination: input.destination.trim(),
       artifactId: input.artifactId.trim(), acceptanceCriteria: [...pending.proposal.acceptanceCriteria], mayaAgreement };
   }
